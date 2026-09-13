@@ -17,9 +17,7 @@ const ENTITIES: Record<string, string> = {
 /** Article bodies are HTML. Reduce to readable plain text. */
 export function stripHtml(html: string): string {
   return html
-    .replace(/<br\s*\/?>/gi, ' ')
-    .replace(/<\/(p|div|li|tr|h[1-6])>/gi, ' ')
-    .replace(/<[^>]+>/g, '')
+    .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;|&amp;|&lt;|&gt;|&quot;|&#39;/g, (m) => ENTITIES[m] ?? m)
     .replace(/\s+/g, ' ')
     .trim()

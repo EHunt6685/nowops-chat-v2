@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeServiceNowConnector } from '../src/connectors/servicenow/search.js'
+import { makeServiceNowConnector, stripHtml } from '../src/connectors/servicenow/search.js'
 import { PlatformUnavailableError } from '../src/connectors/types.js'
 import { parseConfig } from '../src/config.js'
 
@@ -34,6 +34,22 @@ function fetchStub(payload: unknown, status = 200) {
     } as Response
   })
 }
+
+describe('stripHtml', () => {
+  it('inserts a space between adjacent table cells so words do not run together', () => {
+    expect(stripHtml('<td>foo</td><td>bar</td>')).toBe('foo bar')
+  })
+
+  it('inserts a space between adjacent inline tags', () => {
+    expect(stripHtml('<span>foo</span><span>bar</span>')).toBe('foo bar')
+  })
+
+  it('still strips nested tags and decodes entities', () => {
+    expect(stripHtml('<p>Reimage the <b>terminal</b>&nbsp;and reboot.</p>')).toBe(
+      'Reimage the terminal and reboot.',
+    )
+  })
+})
 
 describe('ServiceNow connector', () => {
   it('maps records to Articles keyed by sys_id, not number', async () => {
