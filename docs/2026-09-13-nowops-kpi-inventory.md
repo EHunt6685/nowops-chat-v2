@@ -6,8 +6,9 @@ What the existing NowOps dashboards track, and which of it is reachable through
 the API. Written as the starting input for a NowOps app spec: the dashboards
 prove the data is queryable in principle, this records what is actually there.
 
-Every number below was measured, not assumed. Where a measurement contradicts
-the dashboard, both figures are given.
+Every number below was measured against the live API, not assumed. Dashboard
+figures quoted from screenshots are snapshots and are treated as such: they are
+used to expose differences in *definition*, never as values to match. See §3.
 
 ---
 
@@ -105,38 +106,113 @@ equivalent integration.
 
 ---
 
-## 3. Verification against dashboard values
+## 3. Hidden definitions
 
-Naive queries run against the headline tiles. Three reproduced exactly:
+**The live API is the source of truth. The screenshots are not.**
 
-| KPI | Dashboard | API | Match |
+The dashboard figures below were captured at one moment; the instance moves
+continuously. Chasing exact agreement between a screenshot and a live query is
+meaningless, and no KPI should ever be validated that way. NowOps and the
+chatbot both read live.
+
+The comparison is recorded for one narrow purpose: some gaps are far too large
+to be elapsed time, and those reveal that a tile's label does not define its
+query.
+
+| KPI | Screenshot | Live API | Reading |
 |---|---|---|---|
-| Cancelled Tickets | 616 | 616 | **yes** |
-| Security Incidents | 246 | 246 | **yes** |
-| Orphaned CIs | 3.45K | 3,452 | **yes** |
-| Total Tickets | 36,023 | 36,030 | no |
-| Open Tickets | 5,390 | 5,513 | no |
-| Closed Tickets | 30,016 | 29,911 | no |
-| Open Problems | 28 | 48 | no |
-| Open Changes | 84 | 106 | no |
-| Alerts count | 4 | 2 | no |
-| Vulnerable Items | 70 | 91 | no |
-| Backlog Incidents | 1,292 | 5,377 | no |
+| Total Tickets | 36,023 | 36,030 | drift — 7 tickets |
+| Open Tickets | 5,390 | 5,513 | drift |
+| Closed Tickets | 30,016 | 29,911 | drift |
+| Cancelled Tickets | 616 | 616 | — |
+| Security Incidents | 246 | 246 | — |
+| Orphaned CIs | 3.45K | 3,452 | — |
+| Alerts count | 4 | 2 | drift (tiny population) |
+| Open Problems | 28 | 48 | **definition** |
+| Open Changes | 84 | 106 | **definition** |
+| Vulnerable Items | 70 | 91 | **definition** |
+| Backlog Incidents | 1,292 | 5,377 | **definition** |
 
-### What the mismatches mean
+Backlog is the instructive one. A 4× gap is not two days of ticket flow. The
+stored definition turns out to be:
+
+```
+active=true^u_past_incidentsISNOTEMPTY^stateIN2
+^assigned_toISNOTEMPTY^priorityNOT IN1,5
+```
+
+It requires UST's custom `u_past_incidents` field to be populated, requires an
+assignee, and excludes P1 and P5. That filter is not inferable from the tile's
+label.
+
+### The consequence
 
 **Access is not the constraint. Definition is.**
 
-Every table was reachable; no query returned a permission error. The differences
-come from widget-level filters — the QBR tabs alone expose five, and each widget
-carries its own conditions on top. "Open" in one widget is not "open" in
+Every table was reachable; no query returned a permission error. What is not
+reachable by guessing is the *meaning* of a tile. "Open" in one widget is not
+"open" in another, and the QBR tabs expose five more filters on top.
+
+So the target for any KPI the chatbot answers is a **live** number computed
+from the **same definition** NowOps uses — never a value matched against a
+screenshot. Values go stale; definitions do not. Section 8 of the chatbot spec
+follows from this: read the stored definition rather than reconstruct it.
+
+### 3.1 The definitions are stored and readable
+
+`sys_report` holds **963 saved reports**, each carrying `table`, `aggregate`,
+`field` and the literal `filter`. Every KPI definition behind the dashboards can
+be read rather than guessed:
+
+```
+Backlog Incidents Count
+  incident / COUNT / active=true^u_past_incidentsISNOTEMPTY^stateIN2
+                     ^assigned_toISNOTEMPTY^priorityNOT IN1,5
+
+SLA Adherence% Trend (Resolution) - P1
+  task_sla / COUNT / sla=35420982d732220035ae23c7ce610393^stage=completed
+                     ^sla.type=SLA^has_breached=false^task.sys_class_name=incident
+
+Ticket Volume by Priority
+  incident / COUNT / active=true^stateIN1,2,3
+```
+
+Executing a stored filter against `/api/now/stats/<table>` yields a live number
+computed the way NowOps computes it.
+
+**Properties of the 963 that matter for automation:**
+
+```
+GROUPBY (series, not a scalar)   383
+javascript: date functions        340   (fine - evaluated server-side)
+DYNAMIC (per-user) filters         25   (must be excluded)
+no filter at all                  108
+```
+
+The 25 `DYNAMIC` reports resolve against the *calling* user. "Security Incidents
+Assigned to me" executed by a service account returns the service account's
+number, confidently and wrongly. Exclude them.
+
+**Near-duplicate titles carry different filters:**
+
+```
+SLA Adherence% Trend (Resolution) - P4   ...^sys_created_on>=2022-01-01
+SLA Adherence% Trend (Resolution)-P4     ...^task.sys_class_name=incident
+```
+
+Same apparent name, different answers — the same uniqueness problem that forced
+sys_id keying for KB articles (D10). Reports must be keyed by sys_id too.
+
+**Some stored definitions are wrong.** `Tickets Approaching SLA Breach - P1` is
+`task / MAX / active=true^opened_at<gs.beginningOfLast6Months()^priority=1` — it
+never touches `task_sla`, so it measures stale tickets, not imminent breaches.
+The four MTTR reports use four different time windows (P1 last 2 quarters, P2
+this year, P3/P4 last 2 years), so those charts are not comparable with one
 another.
 
-To reproduce a dashboard figure, read the widget's saved definition
-(`sys_report`, the PA indicator, or the UI Builder data resource) rather than
-guessing the filter. A guessed filter yields a number that looks authoritative
-and is wrong — the specific failure mode that makes KPI answering riskier than
-document retrieval.
+Anything executing stored definitions faithfully will reproduce these faults
+faithfully. Surfacing the filter alongside the number is what lets a reader
+notice.
 
 ---
 
