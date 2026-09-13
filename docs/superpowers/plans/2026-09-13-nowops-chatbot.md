@@ -30,6 +30,33 @@ Every task's requirements implicitly include this section.
 
 The repo currently holds only: `.env` (live ServiceNow credentials), `.gitignore`, `docs/`, `tests/fixtures/retrieval-eval.json`, and `tools/set-gateway-env.ps1`. There is no `src/`, no `package.json`, no `node_modules`. Task 1 starts from nothing.
 
+### Building without the gateway key
+
+The UST gateway key lives in Azure Key Vault (`ustdev-az-is-ai-app-kv`, secret `codon-kvs`) and access has not been granted yet. **Every task can still be built and verified**, because only live Claude calls are blocked:
+
+| | Without the key |
+|---|---|
+| Tasks 1, 2, 3 | Fully complete, including live ServiceNow verification |
+| Task 4 | All 14 unit tests pass. Only the live preflight (step 5) waits |
+| Task 5 | All 12 tests pass — they use a fake Claude |
+| Task 6 | Runs under `LLM_MODE=stub` |
+| Task 7 | `npm run eval` works. `--with-retry` waits |
+
+Set these in `.env` to build now:
+
+```
+LLM_MODE=stub
+ANTHROPIC_API_KEY=placeholder-not-yet-available
+ANTHROPIC_BASE_URL=https://llmproxy.ustdev.com
+CLAUDE_MODEL=claude-opus-4-8-Codon
+```
+
+`ANTHROPIC_API_KEY` must be non-empty because config validation requires it, but nothing reads it in stub mode.
+
+**Stub mode is deliberately conspicuous**: a console warning at boot, a `llm.STUB_MODE` log line on every answer, an amber health pill in the UI, and answers prefixed `[STUB — no live model]`. It exists so you can click through the real UI and see real articles and real source links — not so anyone can demo it.
+
+When the key arrives: run `.\tools\set-gateway-env.ps1`, set `LLM_MODE=live`, then do Task 4 step 5 and Task 7 step 2's retry run. Nothing else changes.
+
 ---
 
 ## File Structure
@@ -136,6 +163,11 @@ describe('parseConfig', () => {
     expect(parseConfig({ ...valid, RETRY_ENABLED: 'false' }).retryEnabled).toBe(false)
   })
 
+  it('defaults to live mode, so stub must always be deliberate', () => {
+    expect(parseConfig(valid).llmMode).toBe('live')
+    expect(parseConfig({ ...valid, LLM_MODE: 'stub' }).llmMode).toBe('stub')
+  })
+
   it('strips a trailing slash from the gateway URL', () => {
     const c = parseConfig({ ...valid, ANTHROPIC_BASE_URL: 'https://llmproxy.ustdev.com/' })
     expect(c.anthropicBaseUrl).toBe('https://llmproxy.ustdev.com')
@@ -221,6 +253,8 @@ const Schema = z.object({
   GATE_MIN_COVERAGE: dec('GATE_MIN_COVERAGE').default('0.3'),
   SEARCH_LIMIT: int('SEARCH_LIMIT').default('5'),
   RETRY_ENABLED: z.enum(['true', 'false']).default('true'),
+  // 'stub' lets the whole app run before the gateway key is available.
+  LLM_MODE: z.enum(['live', 'stub']).default('live'),
 })
 
 export interface Config {
@@ -232,6 +266,7 @@ export interface Config {
   gateMinCoverage: number
   searchLimit: number
   retryEnabled: boolean
+  llmMode: 'live' | 'stub'
   sn: {
     instanceUrl: string
     clientId: string
@@ -262,6 +297,7 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     gateMinCoverage: Number(e.GATE_MIN_COVERAGE),
     searchLimit: Number(e.SEARCH_LIMIT),
     retryEnabled: e.RETRY_ENABLED === 'true',
+    llmMode: e.LLM_MODE,
     sn: {
       instanceUrl: e.SN_INSTANCE_URL.replace(/\/$/, ''),
       clientId: e.SN_CLIENT_ID,
@@ -278,7 +314,7 @@ export const loadConfig = (): Config => parseConfig(process.env)
 - [ ] **Step 7: Run to verify it passes**
 
 Run: `npx vitest run`
-Expected: PASS, 9 tests
+Expected: PASS, 10 tests
 
 - [ ] **Step 8: Write `.env.example`**
 
@@ -306,6 +342,10 @@ GATE_MIN_COVERAGE=0.3
 SEARCH_LIMIT=5
 RETRY_ENABLED=true
 PORT=3000
+
+# live | stub. Use stub ONLY while waiting for the gateway key — answers are
+# canned and no model is called. Never leave this on for a demo.
+LLM_MODE=live
 ```
 
 - [ ] **Step 9: Reconcile the real `.env`**
@@ -1061,7 +1101,35 @@ export function parseTriage(raw: string, originalQuery: string): string | null {
   return cleaned
 }
 
+/**
+ * Stand-in for the gateway, used only when LLM_MODE=stub — for building and
+ * demoing the whole app before the Key Vault secret is available.
+ *
+ * It must be loud and obviously fake. Shipping with this enabled unnoticed
+ * would be far worse than not booting at all.
+ */
+export function makeStubLlm() {
+  return {
+    async preflight(): Promise<void> {
+      log('llm.STUB_MODE', { warning: 'No real model. Answers are canned. Do not demo as real.' })
+    },
+    async answer(opts: { question: string; articles: Article[] }): Promise<string> {
+      log('llm.STUB_MODE.answer', { q: opts.question })
+      const first = opts.articles[0]
+      if (!first) return 'NO_ANSWER_IN_KB'
+      return `[STUB — no live model] The knowledge base article that matches this is ` +
+        `"${first.title}". Its content begins: ${first.body.slice(0, 200)} [1]`
+    },
+    // No rewriting without a model: stub mode declines rather than pretending.
+    async triage(): Promise<string | null> {
+      return null
+    },
+  }
+}
+
 export function makeLlm(cfg: Config) {
+  if (cfg.llmMode === 'stub') return makeStubLlm()
+
   // Two env vars, standard SDK, no wrapper (nowstudio-reference §1).
   const client = new Anthropic({ apiKey: cfg.anthropicApiKey, baseURL: cfg.anthropicBaseUrl })
 
@@ -1146,9 +1214,9 @@ export function makeLlm(cfg: Config) {
 Run: `npx vitest run tests/llm.test.ts`
 Expected: PASS, 14 tests
 
-- [ ] **Step 5: Verify preflight against the live gateway**
+- [ ] **Step 5: Verify preflight against the live gateway** — ⏸ **BLOCKED until the Key Vault secret is available**
 
-Needs a real `ANTHROPIC_API_KEY` — the outstanding input in spec §17.
+Skip this step for now and continue to Task 5; everything else in this task is done. Return here once `.\tools\set-gateway-env.ps1` has been run with the real value and `LLM_MODE=live`.
 
 ```bash
 npx tsx -e "import {loadConfig} from './src/config.js';import {makeLlm} from './src/llm/client.js';makeLlm(loadConfig()).preflight().then(()=>console.log('preflight OK')).catch(e=>{console.error(e.message);process.exit(1)})"
@@ -1420,7 +1488,13 @@ export function makeApp(deps: { cfg: Config; sn: Sn; llm: Llm }) {
 
   app.get('/api/health', async (_req, res) => {
     const servicenow = await sn.health()
-    res.json({ ok: servicenow.ok, model: cfg.claudeModel, servicenow })
+    res.json({
+      ok: servicenow.ok,
+      // Stub mode must be visible in the UI, not merely in a log file.
+      model: cfg.llmMode === 'stub' ? 'STUB — no live model' : cfg.claudeModel,
+      llmMode: cfg.llmMode,
+      servicenow,
+    })
   })
 
   app.post('/api/chat', async (req, res, next) => {
@@ -1557,8 +1631,12 @@ export function makeApp(deps: { cfg: Config; sn: Sn; llm: Llm }) {
 async function main() {
   const cfg = loadConfig()
 
+  if (cfg.llmMode === 'stub') {
+    console.warn('\n*** LLM_MODE=stub — answers are canned, no model is being called ***\n')
+  }
+
   const llm = makeLlm(cfg)
-  await llm.preflight() // fails the boot on a bad model id or key
+  await llm.preflight() // fails the boot on a bad model id or key (no-op in stub mode)
 
   const sn = makeSearch(cfg)
   const health = await sn.health()
@@ -1643,6 +1721,7 @@ h1 { font-size:1rem; margin:0; flex:1; font-weight:600; }
 .pill { font-size:.75rem; color:var(--muted); border:1px solid #2b3240; border-radius:999px; padding:.15rem .6rem; }
 .pill.ok { color:#7ee787; }
 .pill.bad { color:#ff7b72; }
+.pill.warn { color:var(--warn); border-color:#e0a45855; }
 main { flex:1; overflow-y:auto; padding:1rem; display:flex; flex-direction:column; gap:.9rem; }
 .msg { max-width:46rem; }
 .msg.user { align-self:flex-end; background:#22304a; padding:.55rem .8rem; border-radius:10px 10px 2px 10px; }
@@ -1707,7 +1786,8 @@ async function loadHealth() {
   try {
     const h = await (await fetch('/api/health')).json()
     healthEl.textContent = h.ok ? `ready · ${h.model}` : 'ServiceNow unreachable'
-    healthEl.className = `pill ${h.ok ? 'ok' : 'bad'}`
+    // Stub mode is coloured as a warning so nobody mistakes canned text for a real answer.
+    healthEl.className = `pill ${!h.ok ? 'bad' : h.llmMode === 'stub' ? 'warn' : 'ok'}`
   } catch {
     healthEl.textContent = 'server unreachable'
     healthEl.className = 'pill bad'
@@ -1744,15 +1824,17 @@ loadHealth()
 
 - [ ] **Step 4: Verify by hand**
 
+Without the gateway key, set `LLM_MODE=stub` in `.env` first. The health pill turns amber and reads *STUB — no live model*.
+
 ```bash
 npm run dev
 ```
 
 Open `http://localhost:3000` and check all three states:
 
-1. `Self-checkout lanes 1-4 down at Store #208 after image push` → an answer with a linked source; the link opens KB0010141 in abhrademo4
+1. `Self-checkout lanes 1-4 down at Store #208 after image push` → an answer with a linked source; the link opens KB0010141 in abhrademo4. **In stub mode the prose is canned, but the article, the citation and the link are all real** — which is exactly what this step is verifying
 2. `Hi Team,` → "No knowledge base match — not answered"
-3. `what is the capital of France` → the same decline
+3. `what is the capital of France` → the same decline (in stub mode this is `low_coverage`, since triage needs a live model)
 
 - [ ] **Step 5: Commit**
 
@@ -1912,8 +1994,8 @@ main()
 - [ ] **Step 2: Run the eval live, both modes**
 
 ```bash
-npm run eval
-npm run eval -- --with-retry
+npm run eval                    # works now — search only, no gateway needed
+npm run eval -- --with-retry    # ⏸ BLOCKED until the gateway key is available
 ```
 
 **First run (search only):** recall@1 at or above **26/35 (74%)** and recall@5 at or above **29/35 (83%)** — the spec §9 baseline. A lower number exits non-zero; investigate rather than lowering the baseline. If the recommended cutoff differs materially from `0.3`, update `GATE_MIN_COVERAGE` in `.env` and note it in spec §9.
@@ -1933,9 +2015,9 @@ Expected: all tests PASS, no type errors.
 - [ ] 2. `/api/health` shows ok, the model id, and ServiceNow reachable
 - [ ] 3. Five known questions answer correctly with working links. Use `inc-01`, `inc-04`, `inc-06`, `syn-09`, `syn-18` from the eval fixture
 - [ ] 4. `Hi Team,` gives `too_few_tokens` with **no Claude call at all** (confirm in the logs)
-- [ ] 5. `what is the capital of France` gives `out_of_scope` — one triage call, no second search, no answer call
-- [ ] 6. `new joiner starts on monday` is **answered correctly**, with `retried: true` and the rewritten query in the logs
-- [ ] 7. No question ever logs two retries
+- [ ] 5. ⏸ *needs the key* — `what is the capital of France` gives `out_of_scope`: one triage call, no second search, no answer call
+- [ ] 6. ⏸ *needs the key* — `new joiner starts on monday` is **answered correctly**, with `retried: true` and the rewritten query in the logs
+- [ ] 7. ⏸ *needs the key* — no question ever logs two retries
 - [ ] 8. Temporarily set `SN_INSTANCE_URL=https://invalid.example.com` and confirm the reply is "cannot reach the knowledge base", **not** "no match". Restore afterwards
 - [ ] 9. No secrets in captured logs — search them for `sk-` and for the client id
 - [ ] 10. `npm run eval` meets or beats 26/35 recall@1 and prints the sweep
