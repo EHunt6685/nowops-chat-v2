@@ -1,6 +1,6 @@
 # NowOps Chatbot — Design Spec
 
-- **Date:** 2026-09-13
+- **Date:** 2026-09-13 (revision 2 — retrieval redesigned after measurement)
 - **Status:** Approved, pending implementation plan
 - **Owner:** Sachin Chavan (UST)
 
@@ -41,13 +41,13 @@ failures are cheap to diagnose.
 ### In scope
 
 - Node/TypeScript Express service
-- Knowledge base sync from abhrademo4 over OAuth: automatic at startup, re-runnable on demand
-- In-memory keyword (BM25) retrieval index
-- Single-shot Claude call per question, grounded strictly in retrieved articles
+- **Live knowledge base search against abhrademo4** over OAuth, per question
+- A three-layer relevance gate deciding whether to answer or decline
+- Single Claude call per question, grounded strictly in retrieved articles
 - Static HTML + vanilla JS chat UI
 - A visible source line under every answer, linking cited articles back to abhrademo4
 - Model picker across the Claude models available on the gateway
-- Health endpoint and manual re-sync endpoint
+- Health endpoint
 
 ### Out of scope
 
@@ -70,26 +70,24 @@ Measured on abhrademo4, 2026-09-13:
 | Largest knowledge base | Security Incident — 489 (demo data) |
 | Content knowledge bases | Knowledge 108, IT 72, KCS 8, SOP 4, Known Error 3 |
 | Article body length | avg ~217 chars, max ~2,000 (40-article sample) |
+| Incidents | 36,023 |
 
-**Consequence:** the corpus is tiny — roughly 40k tokens for everything published. This is
-the single most important design input. It means **no vector database, no embeddings, and
-no RAG pipeline**. Keyword retrieval over an in-memory index is faster to build, easier to
-debug, and likely more accurate on articles this short. Embeddings are revisited only if a
-measured retrieval failure justifies them.
+Findings from investigation, each of which changed a decision:
 
-Two findings from follow-up investigation on 2026-09-13:
-
-- The length statistics come from a 40-article sample, not the full corpus. Still open.
 - **The ~123 articles in "unresolved" knowledge bases are the most valuable content in the
-  instance.** Their `kb_knowledge_base` records are unreadable via the API (ACL-restricted),
-  so they have no resolvable title — but the articles themselves read fine. They hold 68
-  Service Graph Connector / Dynatrace integration errors, 17 Oracle Fusion SOPs and tax
-  issues, 10 IT operations runbooks (onboarding, offboarding, licence allocation, SLA breach
-  triage), 9 payroll questions written in genuine user voice, and 8 hardware troubleshooting
-  guides. A title-based allowlist would have excluded all of it. See D9.
-- **Article numbers are not unique on this instance.** `KB0010004` identifies four different
-  articles; `KB0010141`, `KB0010145`, `KB0010147` and `KB0010005` are also duplicated across
-  knowledge bases. See D10.
+  instance.** Their `kb_knowledge_base` records are ACL-restricted, so they have no
+  resolvable title — but the articles themselves read fine. They hold 68 Service Graph
+  Connector / Dynatrace integration errors, 17 Oracle Fusion SOPs, 10 IT operations
+  runbooks, 9 payroll questions in genuine user voice, and 8 hardware guides. A
+  title-based allowlist would have excluded all of it. See D9.
+- **Article numbers are not unique.** `KB0010004` identifies four different articles;
+  `KB0010141`, `KB0010145`, `KB0010147` and `KB0010005` are also duplicated. See D10.
+- **The knowledge base contains duplicate articles** with identical titles and different
+  sys_ids (`KB0010237`/`KB0010239`; `KBSGC0000019`/`KBSGC0000021`). "The correct answer"
+  is therefore sometimes a set, not a single record.
+- **ServiceNow's own text search is good enough to use directly**, measured at 83%
+  recall@5 across the eval set. This removed the need for a local index entirely. See D2.
+- **Most incident traffic is not knowledge-base-answerable** — see section 9.
 
 The LLM gateway integration follows `nowstudio-reference.md`, distilled from the
 NowStudio/Codon platform.
@@ -103,58 +101,56 @@ Browser (static HTML + vanilla JS)
     │  POST /api/chat  { message, conversationId, model? }
     ▼
 Express server (TypeScript, Node 22)
-    ├── KB index        in-memory, built at startup
-    ├── Retriever       BM25 → top-K articles + scores
-    ├── Claude client   Anthropic SDK → UST LiteLLM gateway
-    └── Conversation    in-memory Map, process lifetime only
+    ├── Search client    live query → abhrademo4, returns ≤5 candidates
+    ├── Relevance gate   3 layers → answer or decline
+    ├── Claude client    Anthropic SDK → UST LiteLLM gateway
+    └── Conversation     in-memory Map, process lifetime only
     ▲
-    │  OAuth REST sync
-ServiceNow abhrademo4  (kb_knowledge)
+    │  OAuth REST, per question
+ServiceNow abhrademo4  (kb_knowledge text search)
 ```
 
 Four modules with distinct responsibilities, each testable in isolation:
 
 | Module | Responsibility | Depends on |
 |---|---|---|
-| `servicenow/` | OAuth token refresh, fetch articles | env config |
-| `index/` | HTML strip, tokenise, build index, score queries | nothing (pure) |
+| `servicenow/` | OAuth token refresh, knowledge base text search | env config |
+| `gate/` | Tokenise, score coverage, decide answer vs decline | nothing (pure) |
 | `llm/` | Gateway client, prompt assembly, citation verification | env config |
 | `server/` | Routes, static files, conversation state | all three |
 
-No database. Conversation state lives in memory and dies with the process. Postgres
-arrives with the standalone app, following the nowstudio-reference shape.
+No database and **no local index**. Conversation state lives in memory and dies with the
+process. Postgres arrives with the standalone app, following the nowstudio-reference shape.
 
 ### Request flow
 
 1. User sends a message.
-2. Retriever scores it against the index; returns top-K (K=5) articles with scores.
-3. **If the best score is below threshold → return "not in the knowledge base" and do not
-   call the model.** "I don't know" is a retrieval decision, not a hoped-for model
-   behaviour. Cheaper, faster, and far more reliable than a prompt instruction.
-4. Otherwise retrieved articles enter the prompt as a delimited context block carrying
-   their KB numbers.
-5. Claude answers, instructed to ground strictly in the supplied articles.
-6. Citations are verified against the supplied set; fabricated ones are stripped and logged.
+2. Search client queries abhrademo4 live, returning up to 5 candidate articles.
+3. **The relevance gate decides whether to answer at all** (section 9). If it declines,
+   return "not in the knowledge base" *without calling the model*.
+4. Surviving articles enter the prompt as a delimited context block, labelled `[1]`–`[5]`.
+5. Claude answers, instructed to ground strictly in the supplied articles and permitted to
+   decline if they do not contain the answer.
+6. Cited labels are verified against those supplied; fabrications are stripped and logged.
 7. Response returns `{ answer, sources[], grounded }`; the UI renders the source line.
 
 ---
 
 ## 5. Decisions
 
-Each was chosen over stated alternatives during design.
-
 | # | Decision | Chosen | Rejected alternatives and why |
 |---|---|---|---|
 | D1 | Backend language | **TypeScript + Node/Express** | Python/FastAPI — would diverge from the NowStudio/Codon stack this may later be hosted on |
-| D2 | Retrieval source | **Sync to local index at startup** | Live query per question (couples every turn to instance uptime); whole corpus in cached prompt (no relevance signal, won't scale to client KBs) |
+| D2 | Retrieval | **Live ServiceNow text search (`123TEXTQUERY321`) per question** | *Revised in rev 2.* A hand-rolled BM25 index over a synced corpus was the original choice; measurement showed the instance's own search reaches 83% recall@5 with no index, no sync job, no staleness, and no failure mode when the instance is unreachable at boot. Rebuilding it locally would be reinventing a working wheel — and copying each client's knowledge base does not scale to the standalone app, where clients connect their own systems |
 | D3 | Frontend | **Static HTML + vanilla JS** | React/Vite (build step before a working chat box); embeddable widget (solves embedding before the pipeline is proven) |
 | D4 | Fallback when KB has no answer | **Say so; no fallback** | Model-knowledge answers (unsourced answers look authoritative); web search (gateway support for Anthropic server-side tools is unverified, and egress is default-deny) |
 | D5 | Corpus | **Curated, configurable allowlist** | Everything published (67% security-incident demo noise); Knowledge+SOP only (loses 72 IT how-tos) |
-| D6 | Retrieval/LLM wiring | **Single-shot** | Tool-use (2-3x calls, nondeterministic, harder to debug); two-pass query rewrite (extra latency for a corpus this small) |
-| D7 | Article ingestion | **Node performs its own OAuth** | PowerShell exports `kb.json` (manual refresh, proves nothing about live integration). Node cannot read the DPAPI-encrypted PowerShell token store |
+| D6 | Retrieval/LLM wiring | **Single-shot** | Tool-use (2-3x calls, nondeterministic, harder to debug). Note: tool use does *not* mean Claude searches the instance — our server always executes the query either way; the only difference is who decides when to search |
+| D7 | Article ingestion | **None — no ingestion** | *Revised in rev 2.* Follows from D2: with live search there is nothing to ingest, so the OAuth refresh token is used per request rather than at startup sync |
 | D8 | Project location | **`C:\dev\nowops-chat`** | Inside OneDrive — `node_modules` sync-thrash, and `.env` secrets uploaded to cloud version history |
-| D9 | Corpus allowlist keyed by | **Knowledge base `sys_id`** | Title — 9 knowledge bases holding 123 of the most relevant articles have ACL-restricted records and no readable title, so a title-based allowlist silently drops them |
+| D9 | Corpus allowlist keyed by | **Knowledge base `sys_id`** | Title — 9 knowledge bases holding 123 of the most relevant articles have ACL-restricted records and no readable title |
 | D10 | Citation and identity key | **Article `sys_id`**, with `[n]` labels in the prompt | Article `number` — not unique on this instance, so number-based citation can resolve to the wrong article |
+| D11 | Relevance gate | **Three layers: token-count guard, coverage floor, then Claude** | A single coverage threshold — measured, and the distributions overlap too much (section 9). No single cutoff both keeps good answers and rejects noise |
 
 ---
 
@@ -170,21 +166,23 @@ nowops-chat/
 ├── src/
 │   ├── config.ts          load + validate env (zod), fail fast
 │   ├── servicenow/
-│   │   ├── auth.ts        refresh-token grant → access token
-│   │   └── articles.ts    fetch kb_knowledge for allowlisted KBs
-│   ├── index/
-│   │   ├── build.ts       strip HTML, tokenise, build BM25 index
-│   │   └── search.ts      score query → top-K + scores
+│   │   ├── auth.ts        refresh-token grant → cached access token
+│   │   └── search.ts      live kb_knowledge text search, allowlisted KBs
+│   ├── gate/
+│   │   ├── tokenise.ts    lowercase, strip punctuation, stopwords
+│   │   └── decide.ts      token guard + coverage floor → answer or decline
 │   ├── llm/
 │   │   └── client.ts      Anthropic SDK → gateway; prompts; citation checks
 │   └── server/
 │       ├── app.ts         Express, static, middleware
-│       └── routes.ts      /api/chat, /api/sync, /api/health
+│       └── routes.ts      /api/chat, /api/health
 ├── public/
 │   ├── index.html
 │   ├── app.js
 │   └── styles.css
 └── tests/
+    └── fixtures/
+        └── retrieval-eval.json
 ```
 
 **No virtualenv equivalent is needed.** `node_modules/` is project-local and isolated by
@@ -192,9 +190,7 @@ default with no activation step. `.nvmrc` pins the Node version; `package-lock.j
 dependencies exactly.
 
 Dependencies stay thin: `express`, `@anthropic-ai/sdk`, `dotenv`, `zod`; dev-only
-`typescript`, `tsx`, `vitest`. **BM25 is hand-rolled (~40 lines)** rather than taken as a
-dependency — over a ~195-article corpus the code must be readable when retrieval
-misbehaves.
+`typescript`, `tsx`, `vitest`.
 
 ---
 
@@ -211,16 +207,17 @@ CLAUDE_MODEL_CHOICES     optional, comma-separated, powers the UI model picker
 SN_INSTANCE_URL          https://abhrademo4.service-now.com
 SN_CLIENT_ID
 SN_CLIENT_SECRET
-SN_REFRESH_TOKEN         exported once from the existing PowerShell connection
+SN_REFRESH_TOKEN         exported from the existing connection via Export-SnEnvFile
 SN_KB_ALLOWLIST          comma-separated knowledge base sys_ids (NOT titles — see D9)
 
-# Retrieval
-RETRIEVAL_TOP_K          default 5
-RETRIEVAL_MIN_SCORE      set by calibration (section 9)
+# Relevance gate
+GATE_MIN_TOKENS          default 2
+GATE_MIN_COVERAGE        default 0.3
+SEARCH_LIMIT             default 5
 ```
 
 Gateway base URL and model IDs are **inputs supplied at implementation time**, not open
-design questions. They are held by the project owner.
+design questions.
 
 ### Gateway rules
 
@@ -232,109 +229,135 @@ Taken directly from `nowstudio-reference.md`, where each cost real debugging tim
 2. **Never assume a public Anthropic model id works.** The gateway renames them and a wrong
    id is a *silent wrong answer*, not an error. Therefore **startup preflight**: one cheap
    call against the configured model, and the server refuses to start if it fails.
-3. **Runtime-repointable config.** `config.ts` resolves `override ?? env ?? throw`, so a
-   gateway move needs no code change.
-4. **Mask keys in logs** (`sk-abc12…wxyz`), with an explicit deny-list of secret env names
-   in the logger.
+3. **Runtime-repointable config.** `config.ts` resolves `override ?? env ?? throw`.
+4. **Mask keys in logs** (`sk-abc12…wxyz`), with an explicit deny-list of secret env names.
 
 ### Startup sequence
 
 ```
-load+validate config → preflight gateway → SN token refresh
-→ fetch articles → build index → listen
+load+validate config → preflight gateway → ServiceNow token refresh + one probe search
+→ listen
 ```
 
-Each step fails fast with a specific, actionable message.
+Each step fails fast with a specific, actionable message. Note the probe search verifies
+connectivity and credentials; unlike rev 1 there is no corpus to load.
 
 ---
 
-## 8. ServiceNow ingestion
+## 8. ServiceNow search
 
-Fields fetched per published article in an allowlisted knowledge base: `number`,
-`short_description`, `text`, `kb_category`, `kb_knowledge_base`, `sys_id`.
+Per question, one query against `kb_knowledge`:
 
-Authentication uses the OAuth **refresh-token grant** against
-`https://abhrademo4.service-now.com/oauth_token.do`. The instance is already configured
-with an authorization-code OAuth client; the refresh token is exported once from the
-existing working connection and placed in `.env`. Refresh tokens last ~100 days.
+```
+sysparm_query = workflow_state=published
+                ^kb_knowledge_baseIN<allowlisted sys_ids>
+                ^123TEXTQUERY321=<user question>
+sysparm_fields = number,short_description,text,sys_id,kb_knowledge_base
+sysparm_limit  = 5
+```
 
-Two instance-specific behaviours already confirmed and relevant to future work:
+`123TEXTQUERY321` invokes ServiceNow's own indexed text search with relevance ordering.
+The user's question is passed through after stripping `^`, `=` and `&`, which would
+otherwise break query syntax.
+
+Authentication uses the OAuth **refresh-token grant** against `/oauth_token.do`. Access
+tokens are cached in memory until expiry rather than refreshed per request.
+
+Two instance behaviours confirmed and relevant:
 
 - The instance **enforces the OAuth `state` parameter** on authorize requests.
-- Basic authentication against the REST API returns 401 with responses byte-identical to
-  sending no credentials at all; OAuth is the supported path.
+- The Knowledge Management API (`/api/sn_km_api/...`) is **not activated** here — it
+  returns `Requested URI does not represent any resource`. The Table API text search is
+  the available path.
 
 ---
 
-## 9. Retrieval
+## 9. Relevance gate
 
-### Indexing
+Search returns something for almost any input, so the gate — not search — is what makes
+"I don't know" possible.
 
-Article bodies are HTML: ingestion strips tags and decodes entities. Tokenisation is
-lowercase, punctuation-stripped, stopword-filtered. **No stemming initially** — on
-~217-character articles it hurts about as often as it helps; add it only if the eval says
-otherwise.
+### Measured baseline (2026-09-13, 45 eval questions, live)
 
-### Scoring
+| Metric | Result |
+|---|---|
+| Recall@1 | 26/35 (74%) |
+| Recall@3 and @5 | 29/35 (83%) |
+| Synthetic questions | 18/20 (90%) |
+| **Real incident questions** | **11/15 (73%)** |
+| Real incident, high-confidence only | **10/11 (91%)** |
 
-BM25 with two corpus-specific adjustments:
+The 90%/73% split is the title-vocabulary bias made visible: questions authored from
+article titles score better than real user text. **73% is the number to trust**, and the
+91% on high-confidence tickets is the realistic ceiling for questions the knowledge base
+genuinely covers.
 
-- **Title weighting** — `short_description` scores ~3x the body. On articles this short the
-  title carries most of the signal.
-- **Exact-code boost** — identifiers such as `KB0010096` or bracketed failure codes get a
-  large boost on literal match. Users paste error codes, and BM25 under-weights rare tokens
-  that constitute the entire question.
+Three of the four remaining misses are `medium`-confidence entries — cases where no article
+really answers the ticket and the eval nominates a best-available stretch.
 
-Top-K = 5, capped by a total context character budget so a few long articles cannot crowd
-out the prompt.
+Two instructive failures: `"windows security pop up everytime i try to use outlook."` and
+`"new joiner starts on monday"` both returned *"What is the Windows key?"* — the search
+matched on "windows" and "starts/monday". No scoring scheme fixes that; it is a recall
+limitation to improve on, not a gate problem.
 
-### Threshold calibration
+### Why a single threshold does not work
 
-The "I don't know" threshold is **not** a guessed constant. It is set by an eval set:
+Term coverage — the fraction of a question's meaningful tokens appearing in the top
+article — separates well on average and badly in the tails:
 
-- 15-20 realistic questions, each with the article that should be returned
-- 5 deliberately out-of-scope questions that must return nothing
+```
+In-scope  coverage: avg 0.68
+Out-scope coverage: avg 0.26, max 1.00
+```
 
-The threshold is chosen where in-scope questions pass and out-of-scope questions do not.
-The eval set then lives on as a regression test, so future scoring changes are measurable
-rather than vibes.
+Threshold sweep:
 
-**The eval set is written:** `tests/fixtures/retrieval-eval.json` — 35 in-scope questions
-and 10 out-of-scope, each in-scope entry naming its expected article by `sys_id`.
+| Cutoff | Keeps good answers | Rejects noise |
+|---|---|---|
+| 0.3 | 31/35 | 7/10 |
+| 0.5 | 26/35 | 8/10 |
+| 0.7 | 20/35 | 9/10 |
 
-Every question carries a `source`:
+At 0.7 a third of correct answers are discarded to reject 90% of noise. The degenerate
+case shows why: `"Hi Team,"` scores **1.00**, because after stopword removal only "team"
+remains and it appears in the article. Short queries saturate the metric.
 
-- **`incident` (15 in-scope, 7 out-of-scope)** — verbatim `short_description` text from real
-  tickets on this instance, matched by hand to the article that answers them. Spelling,
-  casing and truncation left exactly as users wrote them (`"windows security pop up
-  everytime i try to use outlook."`).
-- **`synthetic` (20 in-scope, 3 out-of-scope)** — authored from article titles and
-  paraphrased. Retained for coverage of topics real tickets did not exercise, notably the
-  Service Graph Connector and Oracle Fusion articles.
+### The three-layer gate (D11)
 
-Entries also carry a `confidence` of `high` (the article directly answers the ticket) or
-`medium` (best available match, should rank first, does not fully resolve). Medium cases
-test graceful degradation rather than precision.
+1. **Token-count guard** — fewer than `GATE_MIN_TOKENS` (2) meaningful terms → decline
+   immediately, without searching. Eliminates `"Hi Team,"`, `"nan"`, `"Bky OLO"`.
+2. **Coverage floor** — top candidate below `GATE_MIN_COVERAGE` (0.3) → decline. Removes
+   `"what is the capital of France"` (0.00) and `"Critical alert…"` (0.11) while keeping
+   31/35 good answers.
+3. **Claude as final judge** — survivors go to the model, which is explicitly permitted to
+   decline. Not trusted alone; it is the last line behind two mechanical filters.
 
-`syn-20` and `inc-01`/`inc-02` form a paired regression test for D10: they target the two
-*different* articles that both carry the number `KB0010141`, proving resolution must happen
-by `sys_id`.
+Applied to the measured run, this rejects 9–10 of 10 noise cases while keeping 31 of 35
+good answers. The sole survivor is `"EOM JOB STATUS"` → *"SOP – Resolving Batch Job Non-OK
+Status"*, which is arguably a fair answer.
+
+### The eval set
+
+`tests/fixtures/retrieval-eval.json` — 35 in-scope and 10 out-of-scope questions. Each
+carries a `source` (`incident` = verbatim ticket text, `synthetic` = authored from titles)
+and a `confidence` (`high` / `medium`).
+
+Because the knowledge base contains duplicate articles, expected answers are expressed as
+`acceptableSysIds` — a set, not a single record. Measurement proved this necessary:
+`inc-14` was scored a miss when search returned a Salesforce login SOP that is a *better*
+answer than the article originally nominated.
 
 ### The finding that should shape demo expectations
 
-The instance holds 36,023 incidents, and **most of them are not knowledge-base-answerable.**
-The dominant traffic is machine-generated monitoring alerts
+Of 36,023 incidents, the dominant traffic is machine-generated monitoring alerts
 (`Critical alert [Alert2276070] . Created on Node: []…`), reported-phishing emails, and
-fragments such as `"Hi Team,"`, `"nan"` and `"711 Tech Support Phone# - 2106249028"`. Only a
-minority of genuine tickets map to an article.
+fragments such as `"Hi Team,"`, `"nan"` and `"711 Tech Support Phone# - 2106249028"`.
 
 **Expect this chatbot to answer "no knowledge base match" for most real traffic.** That is
-correct behaviour, not a defect — but it needs saying before a demo, not after. The
-out-of-scope set is built from exactly this noise, so the threshold is calibrated against
-what the bot will really see rather than against trivia questions.
+correct behaviour, not a defect — but it needs saying before a demo, not after.
 
-There is also no instance-provided ground truth: `m2m_kb_task` is empty and `kb_use` carries
-no task reference. All question-to-article mappings are hand-made and therefore fallible.
+There is also no instance-provided ground truth: `m2m_kb_task` is empty and `kb_use`
+carries no task reference. All question-to-article mappings are hand-made and fallible.
 
 ---
 
@@ -351,17 +374,13 @@ back to `sys_id` when building the source line.
 
 **Citation verification.** Prompt instructions are not guarantees. After each response, the
 labels the model cited are intersected with the labels actually supplied. Anything outside
-that set is stripped from the source line and the discrepancy is logged. Combined with
-label-based citation, this makes it structurally impossible for the source line to point at
-an article that was not really retrieved.
+that set is stripped from the source line and the discrepancy is logged.
 
 ### Conversation handling
 
-The last ~6 turns go to the model for continuity. **Retrieval runs on the current message
-only.** Using full history for retrieval makes results drift as conversations wander, and
-makes debugging unpleasant. If follow-ups such as "what about the second one?" retrieve
-poorly, that is the signal to revisit — and precisely the case the rejected tool-use
-approach (D6) would address later.
+The last ~6 turns go to the model for continuity. **Search runs on the current message
+only.** Using full history makes results drift as conversations wander. If follow-ups such
+as "what about the second one?" retrieve poorly, that is the signal to revisit D6.
 
 ---
 
@@ -369,11 +388,14 @@ approach (D6) would address later.
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/chat` | `{ message, conversationId, model? }` → `{ answer, sources[], grounded }` |
-| `POST /api/sync` | Rebuild the index from abhrademo4; returns article count and duration |
-| `GET /api/health` | Gateway reachability, model id in use, article count, last sync time |
+| `POST /api/chat` | `{ message, conversationId, model? }` → `{ answer, sources[], grounded, gateReason? }` |
+| `GET /api/health` | Gateway reachability, model id in use, ServiceNow search reachability |
 
-`sources[]` entries: `{ number, title, sysId, score, url }`.
+`sources[]` entries: `{ number, title, sysId, label, url }`.
+`gateReason` explains a decline (`too_few_tokens`, `low_coverage`, `model_declined`) so the
+UI and logs can distinguish them.
+
+There is no `/api/sync` — nothing is cached to sync (D7).
 
 ---
 
@@ -388,12 +410,11 @@ The **source line under each answer is a first-class requirement**, with three s
 | State | Rendering |
 |---|---|
 | Grounded | `Sources: KB0010096 · KB0010112`, each linked by **sys_id**: `.../kb_view.do?sys_kb_id=<sys_id>` |
-| No match above threshold | `No knowledge base match — not answered` |
+| Declined | `No knowledge base match — not answered` |
 | Citations stripped | Verified citations only, plus a server-side warning log |
 
 Links resolve by `sys_id`, never by article number — `kb_view.do?sysparm_article=KB0010141`
-is ambiguous on this instance and can open the wrong article (D10). The number is displayed
-as the human-readable label only.
+is ambiguous on this instance and can open the wrong article (D10).
 
 A typing indicator covers perceived latency while responses are non-streaming.
 
@@ -406,65 +427,73 @@ Principle: **fail loudly at boot, degrade gracefully at runtime.**
 | Failure | Handling |
 |---|---|
 | Gateway unreachable or key rejected | Preflight fails; server refuses to start, reporting masked key and base URL |
-| Wrong model id | Same preflight. This is the reference's "silent wrong answer" trap and must be a boot failure |
+| Wrong model id | Same preflight. The reference's "silent wrong answer" trap must be a boot failure |
 | Gateway 429 / 5xx at runtime | SDK retry with backoff; on exhaustion the UI shows "the model is busy" and the conversation is preserved |
-| ServiceNow refresh token expired or revoked | `/api/sync` returns a clear error; **the existing index keeps serving**. A stale bot beats a dead one |
-| abhrademo4 hibernating or reset | As above; `/api/health` surfaces the stale sync time |
-| Index empty at boot | Refuse to start — nothing to ground on means every answer is "I don't know" |
-| Oversized or abusive input | Message length cap, rejected before reaching the gateway |
+| **ServiceNow unreachable or search fails at runtime** | The chat turn returns "I can't reach the knowledge base right now" — explicitly *not* the same message as "no match", so users and logs can tell an outage from an absent answer |
+| ServiceNow refresh token expired or revoked | Same user-facing message; logs name the cause and the fix (`Connect-SnOAuth` then `Export-SnEnvFile`) |
+| Search returns zero results | Normal decline path, `gateReason: low_coverage` |
+| Oversized or abusive input | Message length cap, rejected before reaching search or the gateway |
+
+With live search (D2) the availability of abhrademo4 is now on the **request** path rather
+than the startup path. That is the main cost of this design, and the row above is how it is
+contained.
 
 ---
 
 ## 14. Observability
 
-Every chat request logs: the query, the top-K article numbers **with their scores**, the
-model used, and latency.
+Every chat request logs: the query, the candidate article numbers returned by search, the
+coverage score of the top candidate, the gate decision and reason, the model used, and
+latency.
 
-This single log line is what makes "it gave a stupid answer" diagnosable — it distinguishes
-a retrieval failure from a model failure without guesswork. Secrets never appear in logs
-(masking plus env deny-list, section 7).
+This single log line distinguishes a search failure from a gate failure from a model
+failure without guesswork. Secrets never appear in logs (section 7).
 
 ---
 
 ## 15. Testing
 
-Test-first. The design deliberately concentrates the interesting logic in pure functions
-that need no network.
+Test-first. The design concentrates the interesting logic in pure functions needing no
+network.
 
 | Layer | Covers |
 |---|---|
-| Unit | HTML stripping, tokeniser, BM25 scoring, threshold decision, citation verification |
-| Retrieval eval | The 20-question set from section 9, run as a test — the one that catches real regressions |
-| Integration | Routes against a stubbed gateway and recorded ServiceNow fixtures, so CI never needs live credentials |
+| Unit | Tokeniser, coverage scoring, token guard, gate decision, citation verification |
+| Retrieval eval | The 45-question set, run against recorded search fixtures in CI and live on demand |
+| Integration | Routes against a stubbed gateway and recorded ServiceNow responses, so CI needs no live credentials |
 | Live smoke | Manual: `/api/health` plus a handful of real questions |
+
+The eval is the regression test that matters. Its baseline is recorded in section 9; a
+change that moves those numbers down is a regression regardless of how good it looks.
 
 ---
 
 ## 16. Acceptance criteria
 
-1. `npm run dev` boots; preflight passes; the index reports its article count.
-2. `/api/health` shows gateway reachable, model id, article count, last sync time.
-3. Five known questions return correct answers with correct KB citations, and every link
-   opens the right article in abhrademo4.
-4. An out-of-scope question returns "No knowledge base match" **without calling the model**.
-5. The model picker switches between gateway Claude models and answers still ground
+1. `npm run dev` boots; gateway preflight passes; the ServiceNow probe search succeeds.
+2. `/api/health` shows gateway reachable, model id, and ServiceNow search reachable.
+3. Five known questions return correct answers with correct citations, and every link opens
+   the right article in abhrademo4.
+4. `"Hi Team,"` and `"what is the capital of France"` are declined **without calling the
+   model**, with distinguishable `gateReason` values.
+5. Stopping network access to abhrademo4 produces "can't reach the knowledge base", not
+   "no match".
+6. The model picker switches between gateway Claude models and answers still ground
    correctly.
-6. No secrets appear in any log line.
-7. The retrieval eval passes.
+7. No secrets appear in any log line.
+8. The eval run matches or beats the section 9 baseline.
 
 ---
 
 ## 17. Required inputs before implementation
 
-| Input | Source |
+| Input | Status |
 |---|---|
-| Gateway base URL and exact model ids | Project owner (in hand) |
-| Gateway API key | Project owner |
-| ServiceNow OAuth client id, secret, refresh token | Existing abhrademo4 OAuth app |
-| ~~Eval question list~~ | **Done** — `tests/fixtures/retrieval-eval.json`, 22 in-scope + 5 out-of-scope |
-| ~~Identity of the ~123 articles in unresolved knowledge bases~~ | **Done** — identified 2026-09-13; see section 3 and D9 |
-| Full-corpus article length distribution | Investigation task, minor |
-| Real user phrasing sampled from `incident.short_description` | Follow-up to strengthen the eval set (section 9) |
+| Eval question list | **Done** — `tests/fixtures/retrieval-eval.json` |
+| Identity of the ~123 articles in unresolved knowledge bases | **Done** — see section 3 and D9 |
+| ServiceNow OAuth client id, secret, refresh token | **Done** — written to `.env` by `Export-SnEnvFile` |
+| Gateway API key, base URL, model ids | **Outstanding** — held by the project owner |
+| Allowlisted knowledge base sys_ids | Derived from section 3; to be finalised in config |
 
 ---
 
@@ -472,11 +501,16 @@ that need no network.
 
 In rough order of likely value:
 
-1. Streaming responses.
-2. Tool-use retrieval (D6) once multi-part follow-ups demand it.
-3. Postgres-backed conversation persistence, per the nowstudio-reference shape.
-4. Auth/SSO, following the UST posture: SSO with a single break-glass local account.
-5. Embedding into the NowOps dashboard page.
-6. Web search fallback — gated on a spike confirming the gateway forwards Anthropic
+1. **Improve recall past 74%@1** — the measured ceiling. Query preprocessing, synonym
+   handling, or ServiceNow AI Search if it can be activated on the instance.
+2. Streaming responses.
+3. Articles describing NowOps and MemorialCare — neither exists in the knowledge base
+   today, so *"what is NowOps?"* currently cannot be answered. Likely the first question
+   anyone asks a NowOps chatbot.
+4. Tool-use retrieval (D6) once multi-part follow-ups demand it.
+5. Postgres-backed conversation persistence, per the nowstudio-reference shape.
+6. Auth/SSO, following the UST posture: SSO with a single break-glass local account.
+7. Embedding into the NowOps dashboard page.
+8. Web search fallback — gated on a spike confirming the gateway forwards Anthropic
    server-side tools.
-7. Absorption into the NowOps standalone application (separate spec).
+9. Absorption into the NowOps standalone application (separate spec).
