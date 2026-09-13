@@ -8,6 +8,7 @@ const EXPIRY_SAFETY_SECONDS = 60
 export function makeTokenProvider(cfg: Config, fetchImpl: typeof fetch = fetch) {
   let token: string | null = null
   let expiresAt = 0
+  let inflight: Promise<string> | null = null
 
   async function refresh(): Promise<string> {
     const body = new URLSearchParams({
@@ -54,7 +55,11 @@ export function makeTokenProvider(cfg: Config, fetchImpl: typeof fetch = fetch) 
   return {
     async getToken(): Promise<string> {
       if (token && Date.now() < expiresAt) return token
-      return refresh()
+      if (inflight) return inflight
+      inflight = refresh().finally(() => {
+        inflight = null
+      })
+      return inflight
     },
   }
 }

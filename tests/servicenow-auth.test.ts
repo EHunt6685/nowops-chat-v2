@@ -50,4 +50,16 @@ describe('makeTokenProvider', () => {
     await expect(p.getToken()).rejects.toThrow(PlatformUnavailableError)
     await expect(p.getToken()).rejects.toThrow(/Connect-SnOAuth/)
   })
+
+  it('shares a single refresh when concurrent getToken() calls race at cold start', async () => {
+    const f = vi.fn(async () => {
+      await Promise.resolve() // microtask boundary to ensure calls overlap
+      return ok({ access_token: 'AT1', expires_in: 1800 })
+    })
+    const p = makeTokenProvider(cfg, f as unknown as typeof fetch)
+    const [t1, t2] = await Promise.all([p.getToken(), p.getToken()])
+    expect(t1).toBe('AT1')
+    expect(t2).toBe('AT1')
+    expect(f).toHaveBeenCalledTimes(1)
+  })
 })
