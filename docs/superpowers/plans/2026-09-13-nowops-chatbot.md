@@ -24,6 +24,7 @@ Every task's requirements implicitly include this section.
 - **Never log secrets.** Mask API keys as `sk-abc12…wxyz`.
 - **`.env` is never committed.** `.gitignore` already covers it.
 - **"Cannot reach ServiceNow" and "no knowledge base match" are different outcomes** (spec §13) — different message, different `gateReason`, different HTTP status.
+- **Retry fires at most once per question** (D13). No loops, no second rewrite. A failing or unusable triage response degrades to an ordinary decline, never to an error.
 
 ### Starting state
 
@@ -128,6 +129,11 @@ describe('parseConfig', () => {
     expect(c.gateMinTokens).toBe(2)
     expect(c.gateMinCoverage).toBe(0.3)
     expect(c.searchLimit).toBe(5)
+    expect(c.retryEnabled).toBe(true)
+  })
+
+  it('allows retry to be switched off for A/B comparison', () => {
+    expect(parseConfig({ ...valid, RETRY_ENABLED: 'false' }).retryEnabled).toBe(false)
   })
 
   it('strips a trailing slash from the gateway URL', () => {
@@ -214,6 +220,7 @@ const Schema = z.object({
   GATE_MIN_TOKENS: int('GATE_MIN_TOKENS').default('2'),
   GATE_MIN_COVERAGE: dec('GATE_MIN_COVERAGE').default('0.3'),
   SEARCH_LIMIT: int('SEARCH_LIMIT').default('5'),
+  RETRY_ENABLED: z.enum(['true', 'false']).default('true'),
 })
 
 export interface Config {
@@ -224,6 +231,7 @@ export interface Config {
   gateMinTokens: number
   gateMinCoverage: number
   searchLimit: number
+  retryEnabled: boolean
   sn: {
     instanceUrl: string
     clientId: string
@@ -253,6 +261,7 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     gateMinTokens: Number(e.GATE_MIN_TOKENS),
     gateMinCoverage: Number(e.GATE_MIN_COVERAGE),
     searchLimit: Number(e.SEARCH_LIMIT),
+    retryEnabled: e.RETRY_ENABLED === 'true',
     sn: {
       instanceUrl: e.SN_INSTANCE_URL.replace(/\/$/, ''),
       clientId: e.SN_CLIENT_ID,
@@ -269,7 +278,7 @@ export const loadConfig = (): Config => parseConfig(process.env)
 - [ ] **Step 7: Run to verify it passes**
 
 Run: `npx vitest run`
-Expected: PASS, 8 tests
+Expected: PASS, 9 tests
 
 - [ ] **Step 8: Write `.env.example`**
 
@@ -295,6 +304,7 @@ SN_KB_ALLOWLIST=dfc19531bf2021003f07e2c1ac0739ab,c4cdddd0773302109ac0cf0bbb5a99d
 GATE_MIN_TOKENS=2
 GATE_MIN_COVERAGE=0.3
 SEARCH_LIMIT=5
+RETRY_ENABLED=true
 PORT=3000
 ```
 
@@ -873,7 +883,9 @@ git commit -m "feat: relevance gate with token guard and coverage floor"
 
 **Interfaces:**
 - Consumes: `Config` (Task 1), `Article` (Task 2)
-- Produces: `SYSTEM_PROMPT`; `buildContextBlock(articles: Article[]): string`; `parseCitations(answer: string): number[]`; `verifyCitations(cited: number[], supplied: Article[]): { sources: Article[]; fabricated: number[] }`; `stripCitationMarkup(answer: string): string`; `interface Turn { role: 'user' | 'assistant'; content: string }`; `makeLlm(cfg): { preflight(): Promise<void>; answer(o: { question: string; articles: Article[]; history: Turn[] }): Promise<string> }`
+- Produces: `SYSTEM_PROMPT`; `TRIAGE_PROMPT`; `buildContextBlock(articles: Article[]): string`; `parseCitations(answer: string): number[]`; `verifyCitations(cited: number[], supplied: Article[]): { sources: Article[]; fabricated: number[] }`; `stripCitationMarkup(answer: string): string`; `parseTriage(raw: string, originalQuery: string): string | null`; `interface Turn { role: 'user' | 'assistant'; content: string }`; `makeLlm(cfg): { preflight(): Promise<void>; answer(o): Promise<string>; triage(o: { question: string; articles: Article[] }): Promise<string | null> }`
+
+`triage` returns a better search query, or `null` meaning "decline — do not retry".
 
 - [ ] **Step 1: Write the failing test**
 
@@ -882,7 +894,7 @@ git commit -m "feat: relevance gate with token guard and coverage floor"
 ```ts
 import { describe, it, expect } from 'vitest'
 import {
-  buildContextBlock, parseCitations, verifyCitations, stripCitationMarkup,
+  buildContextBlock, parseCitations, verifyCitations, stripCitationMarkup, parseTriage,
 } from '../src/llm/client.js'
 import type { Article } from '../src/servicenow/types.js'
 
@@ -939,6 +951,30 @@ describe('verifyCitations', () => {
 describe('stripCitationMarkup', () => {
   it('removes labels from the user-facing answer', () => {
     expect(stripCitationMarkup('Reseat the roll [1] then retry [2].')).toBe('Reseat the roll then retry.')
+  })
+})
+
+describe('parseTriage', () => {
+  it('returns the rewritten query', () => {
+    expect(parseTriage('outlook repeated password prompt SSO', 'windows popup outlook'))
+      .toBe('outlook repeated password prompt SSO')
+  })
+
+  it('returns null when the question is out of scope', () => {
+    expect(parseTriage('OUT_OF_SCOPE', 'what is the capital of France')).toBe(null)
+  })
+
+  it('returns null for an empty response rather than searching for nothing', () => {
+    expect(parseTriage('   ', 'anything')).toBe(null)
+  })
+
+  it('returns null when the rewrite is the original query, which would repeat the search', () => {
+    expect(parseTriage('Unable to login VPN', 'unable to login vpn')).toBe(null)
+  })
+
+  it('strips quotes and stray prose the model may wrap around the query', () => {
+    expect(parseTriage('"zebra label printer network"', 'warehouse printer'))
+      .toBe('zebra label printer network')
   })
 })
 ```
@@ -999,6 +1035,32 @@ export function stripCitationMarkup(answer: string): string {
   return answer.replace(/\s*\[\d{1,2}\]/g, '').replace(/\s{2,}/g, ' ').trim()
 }
 
+export const TRIAGE_PROMPT = `A user asked an IT/operations question. A keyword search of the knowledge base returned poor matches, shown below.
+
+Decide one of two things:
+
+1. The question is outside what an IT/operations knowledge base covers (general knowledge, chit-chat, a monitoring alert, an unreadable fragment). Reply exactly: OUT_OF_SCOPE
+
+2. The question is reasonable but the user's words did not match how the articles are written. Reply with BETTER SEARCH KEYWORDS ONLY — no explanation, no quotes, no punctuation beyond spaces. Use the vocabulary an IT knowledge base would use.
+
+Example: "windows security pop up everytime i try to use outlook" becomes: outlook repeated password prompt credentials SSO
+
+Reply with either OUT_OF_SCOPE or the keywords. Nothing else.`
+
+/**
+ * Interprets the triage reply. Returns a query to retry with, or null meaning decline.
+ *
+ * Null on: OUT_OF_SCOPE, an empty reply, or a rewrite identical to the original —
+ * repeating the same search would burn a call for the same results.
+ */
+export function parseTriage(raw: string, originalQuery: string): string | null {
+  const cleaned = raw.trim().replace(/^["'`]+|["'`]+$/g, '').trim()
+  if (!cleaned) return null
+  if (cleaned.toUpperCase().includes('OUT_OF_SCOPE')) return null
+  if (cleaned.toLowerCase() === originalQuery.trim().toLowerCase()) return null
+  return cleaned
+}
+
 export function makeLlm(cfg: Config) {
   // Two env vars, standard SDK, no wrapper (nowstudio-reference §1).
   const client = new Anthropic({ apiKey: cfg.anthropicApiKey, baseURL: cfg.anthropicBaseUrl })
@@ -1045,6 +1107,36 @@ export function makeLlm(cfg: Config) {
         .map((b) => b.text)
         .join('')
     },
+
+    /**
+     * D13. Shows Claude the question and the weak candidates; returns better search
+     * terms, or null to decline. Small max_tokens — this returns keywords, not prose.
+     * Any failure returns null so a broken triage degrades to an ordinary decline.
+     */
+    async triage(opts: { question: string; articles: Article[] }): Promise<string | null> {
+      const found = opts.articles.length
+        ? opts.articles.map((a, i) => `${i + 1}. ${a.title}`).join('\n')
+        : '(nothing found)'
+      try {
+        const res = await client.messages.create({
+          model: cfg.claudeModel,
+          max_tokens: 60,
+          system: TRIAGE_PROMPT,
+          messages: [{
+            role: 'user',
+            content: `QUESTION: ${opts.question}\n\nPOOR MATCHES RETURNED:\n${found}`,
+          }],
+        })
+        const raw = res.content
+          .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+          .map((b) => b.text)
+          .join('')
+        return parseTriage(raw, opts.question)
+      } catch (e) {
+        log('llm.triage.failed', { message: e instanceof Error ? e.message : String(e) })
+        return null
+      }
+    },
   }
 }
 ```
@@ -1052,7 +1144,7 @@ export function makeLlm(cfg: Config) {
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run tests/llm.test.ts`
-Expected: PASS, 9 tests
+Expected: PASS, 14 tests
 
 - [ ] **Step 5: Verify preflight against the live gateway**
 
@@ -1109,7 +1201,13 @@ const articles: Article[] = [
 ]
 
 const snOk = { search: async () => articles, health: async () => ({ ok: true }) }
-const llmSaying = (text: string) => ({ preflight: async () => {}, answer: async () => text })
+
+/** Triage defaults to null (decline), so tests opt in to retry explicitly. */
+const llmSaying = (text: string, triageResult: string | null = null) => ({
+  preflight: async () => {},
+  answer: async () => text,
+  triage: async () => triageResult,
+})
 
 async function post(app: ReturnType<typeof makeApp>, body: unknown) {
   const server = createServer(app)
@@ -1190,6 +1288,88 @@ describe('POST /api/chat', () => {
     expect((await post(app, { message: 'x'.repeat(5000) })).status).toBe(400)
   })
 })
+
+describe('D13 query rewriting and retry', () => {
+  /** First search returns junk; the rewritten query finds the right article. */
+  function snRetry() {
+    const calls: string[] = []
+    return {
+      calls,
+      search: async (q: string) => {
+        calls.push(q)
+        return calls.length === 1
+          ? [{ id: 'junk', label: 'KB0000017', title: 'What is the Windows key?', body: 'press it', url: 'u' }]
+          : [{ id: 'sysN', label: 'KB0010469', title: 'New Starter Onboarding', body: 'account access equipment for a new starter', url: 'uN' }]
+      },
+      health: async () => ({ ok: true }),
+    }
+  }
+
+  it('recovers a baseline miss by searching again with better terms', async () => {
+    const sn = snRetry()
+    const app = makeApp({
+      cfg, sn,
+      llm: llmSaying('Set up their account [1].', 'new starter onboarding account access equipment'),
+    })
+    const { json } = await post(app, { message: 'new joiner starts on monday' })
+
+    expect(json.grounded).toBe(true)
+    expect(json.retried).toBe(true)
+    expect((json.sources as { id: string }[])[0].id).toBe('sysN')
+    expect(sn.calls).toHaveLength(2)
+  })
+
+  it('declines as out_of_scope when triage refuses, without a second search', async () => {
+    const sn = snRetry()
+    const app = makeApp({ cfg, sn, llm: llmSaying('unused', null) })
+    const { json } = await post(app, { message: 'what is the capital of France' })
+
+    expect(json.gateReason).toBe('out_of_scope')
+    expect(json.retried).toBe(false)
+    expect(sn.calls).toHaveLength(1)
+  })
+
+  it('never retries more than once', async () => {
+    const sn = {
+      calls: [] as string[],
+      search: async (q: string) => { sn.calls.push(q); return [] },
+      health: async () => ({ ok: true }),
+    }
+    const app = makeApp({ cfg, sn, llm: llmSaying('unused', 'some better words entirely') })
+    const { json } = await post(app, { message: 'a question nothing matches' })
+
+    expect(sn.calls).toHaveLength(2)
+    expect(json.grounded).toBe(false)
+    expect(json.retried).toBe(true)
+  })
+
+  it('keeps articles from the first search when merging results', async () => {
+    const first = { id: 'sysFirst', label: 'KB1', title: 'printer jam warehouse', body: 'clear the warehouse printer jam', url: 'u1' }
+    const sn = {
+      n: 0,
+      search: async () => { sn.n++; return sn.n === 1 ? [first] : [{ id: 'sysSecond', label: 'KB2', title: 'unrelated', body: '', url: 'u2' }] },
+      health: async () => ({ ok: true }),
+    }
+    // Force a retry by setting an unreachable coverage floor, then check nothing was lost.
+    const strict = { ...cfg, gateMinCoverage: 0.99 }
+    const app = makeApp({ cfg: strict, sn, llm: llmSaying('Cleared [1].', 'printer jam warehouse') })
+    const { json } = await post(app, { message: 'printer jam warehouse' })
+
+    expect(json.grounded).toBe(true)
+    expect((json.sources as { id: string }[])[0].id).toBe('sysFirst')
+  })
+
+  it('does not retry at all when RETRY_ENABLED is false', async () => {
+    const sn = snRetry()
+    const noRetry = { ...cfg, retryEnabled: false }
+    const app = makeApp({ cfg: noRetry, sn, llm: llmSaying('unused', 'better words') })
+    const { json } = await post(app, { message: 'new joiner starts on monday' })
+
+    expect(json.gateReason).toBe('low_coverage')
+    expect(json.retried).toBe(false)
+    expect(sn.calls).toHaveLength(1)
+  })
+})
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -1227,6 +1407,8 @@ interface Sn {
 interface Llm {
   preflight(): Promise<void>
   answer(o: { question: string; articles: Article[]; history: Turn[] }): Promise<string>
+  /** D13: better search terms, or null to decline. */
+  triage(o: { question: string; articles: Article[] }): Promise<string | null>
 }
 
 export function makeApp(deps: { cfg: Config; sn: Sn; llm: Llm }) {
@@ -1267,20 +1449,58 @@ export function makeApp(deps: { cfg: Config; sn: Sn; llm: Llm }) {
         if (e instanceof ServiceNowUnavailableError) {
           log('chat.servicenow_unavailable', { q: message, detail: e.message })
           return res.status(503).json({
-            answer: UNAVAILABLE_TEXT, sources: [], grounded: false, gateReason: 'servicenow_unavailable',
+            answer: UNAVAILABLE_TEXT, sources: [], grounded: false,
+            gateReason: 'servicenow_unavailable', retried: false,
           })
         }
         throw e
       }
 
       // Layer 2.
-      const gate = decide(message, articles, opts)
+      let gate = decide(message, articles, opts)
+      let retried = false
+      let rewritten: string | null = null
+
+      // D13: weak results get one triage + one retry. Never more.
+      if (!gate.answer && cfg.retryEnabled) {
+        rewritten = await llm.triage({ question: message, articles })
+
+        if (rewritten === null) {
+          // Claude judged it out of scope, or gave nothing usable. Decline without searching again.
+          log('chat', {
+            q: message, cov: gate.topCoverage, gate: 'out_of_scope', retried: false,
+            ms: Date.now() - started,
+          })
+          return res.json({
+            answer: DECLINE_TEXT, sources: [], grounded: false,
+            gateReason: 'out_of_scope', retried: false,
+          })
+        }
+
+        retried = true
+        try {
+          const second = await sn.search(rewritten, cfg.searchLimit)
+          // Union, deduped by sys_id: a good article from the first search is never lost.
+          const seen = new Set(articles.map((a) => a.id))
+          articles = [...articles, ...second.filter((a) => !seen.has(a.id))].slice(0, cfg.searchLimit)
+        } catch (e) {
+          if (!(e instanceof ServiceNowUnavailableError)) throw e
+          // Second search failed: fall through and decline on what we already had.
+          log('chat.retry_search_failed', { q: message, detail: e.message })
+        }
+
+        // Score the rewritten query against the union — the original wording is what failed.
+        gate = decide(rewritten, articles, opts)
+      }
+
       if (!gate.answer) {
         log('chat', {
-          q: message, candidates: articles.map((a) => a.label), cov: gate.topCoverage,
-          gate: gate.reason, ms: Date.now() - started,
+          q: message, rewritten, candidates: articles.map((a) => a.label),
+          cov: gate.topCoverage, gate: gate.reason, retried, ms: Date.now() - started,
         })
-        return res.json({ answer: DECLINE_TEXT, sources: [], grounded: false, gateReason: gate.reason })
+        return res.json({
+          answer: DECLINE_TEXT, sources: [], grounded: false, gateReason: gate.reason, retried,
+        })
       }
 
       const history = conversations.get(conversationId) ?? []
@@ -1288,9 +1508,11 @@ export function makeApp(deps: { cfg: Config; sn: Sn; llm: Llm }) {
 
       // Layer 3.
       if (text.includes('NO_ANSWER_IN_KB')) {
-        log('chat', { q: message, cov: gate.topCoverage, gate: 'model_declined', ms: Date.now() - started })
+        log('chat', {
+          q: message, cov: gate.topCoverage, gate: 'model_declined', retried, ms: Date.now() - started,
+        })
         return res.json({
-          answer: DECLINE_TEXT, sources: [], grounded: false, gateReason: 'model_declined',
+          answer: DECLINE_TEXT, sources: [], grounded: false, gateReason: 'model_declined', retried,
         })
       }
 
@@ -1306,8 +1528,8 @@ export function makeApp(deps: { cfg: Config; sn: Sn; llm: Llm }) {
       )
 
       log('chat', {
-        q: message, candidates: articles.map((a) => a.label), cov: gate.topCoverage,
-        gate: 'answered', cited: sources.map((s) => s.label), ms: Date.now() - started,
+        q: message, rewritten, candidates: articles.map((a) => a.label), cov: gate.topCoverage,
+        gate: 'answered', cited: sources.map((s) => s.label), retried, ms: Date.now() - started,
       })
 
       res.json({
@@ -1315,6 +1537,7 @@ export function makeApp(deps: { cfg: Config; sn: Sn; llm: Llm }) {
         sources: sources.map((s) => ({ id: s.id, label: s.label, title: s.title, url: s.url })),
         grounded: true,
         gateReason: null,
+        retried,
       })
     } catch (e) {
       next(e)
@@ -1359,13 +1582,13 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run tests/server.test.ts`
-Expected: PASS, 7 tests
+Expected: PASS, 12 tests
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/server.ts tests/server.test.ts
-git commit -m "feat: chat and health routes with the three-layer gate"
+git commit -m "feat: chat routes with three-layer gate and one-shot query retry"
 ```
 
 ---
@@ -1555,7 +1778,8 @@ git commit -m "feat: chat UI with the three-state source line"
 import { readFileSync } from 'node:fs'
 import { loadConfig } from '../src/config.js'
 import { makeSearch } from '../src/servicenow/search.js'
-import { coverage, tokenise } from '../src/gate/decide.js'
+import { coverage, tokenise, decide } from '../src/gate/decide.js'
+import { makeLlm } from '../src/llm/client.js'
 
 interface EvalQ {
   id: string
@@ -1575,7 +1799,34 @@ const data = JSON.parse(readFileSync('tests/fixtures/retrieval-eval.json', 'utf8
   outOfScope: EvalQ[]
 }
 
+/**
+ * Default mode is search-only: deterministic, free, and the regression guard.
+ * --with-retry exercises the full D13 path, which costs Claude calls and varies
+ * between runs — so it is reported, never enforced.
+ */
+const WITH_RETRY = process.argv.includes('--with-retry')
+const llm = WITH_RETRY ? makeLlm(cfg) : null
+
 const accept = (q: EvalQ) => q.acceptableSysIds ?? (q.expectedSysId ? [q.expectedSysId] : [])
+
+/** Mirrors the server's D13 branch so the eval measures what users actually get. */
+async function lookup(question: string) {
+  let articles = await sn.search(question, cfg.searchLimit)
+  let retried = false
+
+  if (llm && decide(question, articles, {
+    minTokens: cfg.gateMinTokens, minCoverage: cfg.gateMinCoverage,
+  }).answer === false) {
+    const rewritten = await llm.triage({ question, articles })
+    if (rewritten) {
+      retried = true
+      const second = await sn.search(rewritten, cfg.searchLimit)
+      const seen = new Set(articles.map((a) => a.id))
+      articles = [...articles, ...second.filter((a) => !seen.has(a.id))].slice(0, cfg.searchLimit)
+    }
+  }
+  return { articles, retried }
+}
 
 /** -1 means the token guard caught it before coverage was consulted. */
 async function topCoverage(question: string): Promise<number> {
@@ -1588,9 +1839,11 @@ async function main() {
   const ranks: { id: string; rank: number; source: string }[] = []
   const inCov: number[] = []
 
-  console.log('=== IN-SCOPE ===')
+  console.log(`=== IN-SCOPE ${WITH_RETRY ? '(with D13 retry)' : '(search only)'} ===`)
+  let retryCount = 0
   for (const q of data.inScope) {
-    const results = await sn.search(q.question, cfg.searchLimit)
+    const { articles: results, retried } = await lookup(q.question)
+    if (retried) retryCount++
     const ok = accept(q)
     const rank = results.findIndex((a) => ok.includes(a.id)) + 1
     ranks.push({ id: q.id, rank, source: q.source })
@@ -1598,7 +1851,8 @@ async function main() {
     const cov = results.length ? coverage(q.question, `${results[0].title} ${results[0].body}`) : 0
     inCov.push(cov)
     console.log(
-      `${q.id.padEnd(9)} ${(rank ? `#${rank}` : 'MISS').padEnd(6)} cov=${cov} ${results[0]?.label ?? '-'}`,
+      `${q.id.padEnd(9)} ${(rank ? `#${rank}` : 'MISS').padEnd(6)} ${retried ? 'retry ' : '      '}` +
+        `cov=${cov} ${results[0]?.label ?? '-'}`,
     )
   }
 
@@ -1618,10 +1872,15 @@ async function main() {
   }
 
   console.log('\n=== SUMMARY ===')
+  console.log(`Mode     : ${WITH_RETRY ? 'with D13 retry' : 'search only (deterministic)'}`)
   console.log(`Recall@1 : ${at(1)}/${n} (${Math.round((100 * at(1)) / n)}%)`)
   console.log(`Recall@5 : ${at(5)}/${n} (${Math.round((100 * at(5)) / n)}%)`)
   console.log(`incident : ${bySrc('incident')}   synthetic: ${bySrc('synthetic')}`)
   console.log(`Misses   : ${ranks.filter((r) => !r.rank).map((r) => r.id).join(', ') || 'none'}`)
+  if (WITH_RETRY) {
+    console.log(`Retries  : ${retryCount}/${n} questions triggered a rewrite`)
+    console.log('Baseline without retry was 26/35 (74%) recall@1 — compare against that.')
+  }
 
   console.log('\n=== THRESHOLD SWEEP ===')
   console.log('cutoff  keeps(good)  rejects(noise)  score')
@@ -1639,7 +1898,9 @@ async function main() {
   }
   console.log(`\nRecommended GATE_MIN_COVERAGE=${best.cutoff}  (configured: ${cfg.gateMinCoverage})`)
 
-  if (at(1) < BASELINE_AT1) {
+  // The guard applies only to the deterministic mode. Retry varies run to run, and a
+  // regression gate on a wobbling number is worse than none.
+  if (!WITH_RETRY && at(1) < BASELINE_AT1) {
     console.error(`\nREGRESSION: recall@1 ${at(1)} is below the recorded baseline of ${BASELINE_AT1}`)
     process.exit(1)
   }
@@ -1648,13 +1909,18 @@ async function main() {
 main()
 ```
 
-- [ ] **Step 2: Run the eval live**
+- [ ] **Step 2: Run the eval live, both modes**
 
 ```bash
 npm run eval
+npm run eval -- --with-retry
 ```
 
-Expected: recall@1 at or above **26/35 (74%)** and recall@5 at or above **29/35 (83%)** — the spec §9 baseline. A lower number exits non-zero; investigate rather than lowering the baseline. If the recommended cutoff differs materially from `0.3`, update `GATE_MIN_COVERAGE` in `.env` and note it in spec §9.
+**First run (search only):** recall@1 at or above **26/35 (74%)** and recall@5 at or above **29/35 (83%)** — the spec §9 baseline. A lower number exits non-zero; investigate rather than lowering the baseline. If the recommended cutoff differs materially from `0.3`, update `GATE_MIN_COVERAGE` in `.env` and note it in spec §9.
+
+**Second run (with retry):** expect roughly **31/35 (89%)**, based on the measurement that five of the six baseline misses recover at rank 1 when rewritten. This run costs Claude calls and varies between runs.
+
+**If retry does not beat the baseline meaningfully, say so and stop.** D13 buys ~15 points at the price of an extra call on every declined question and roughly double the latency on rescued ones. If the measured gain is small, set `RETRY_ENABLED=false` and keep the simpler system — that is a legitimate outcome, not a failure.
 
 - [ ] **Step 3: Run the full suite and a type check**
 
@@ -1666,10 +1932,14 @@ Expected: all tests PASS, no type errors.
 - [ ] 1. `npm run dev` boots; gateway preflight passes; the ServiceNow probe succeeds
 - [ ] 2. `/api/health` shows ok, the model id, and ServiceNow reachable
 - [ ] 3. Five known questions answer correctly with working links. Use `inc-01`, `inc-04`, `inc-06`, `syn-09`, `syn-18` from the eval fixture
-- [ ] 4. `Hi Team,` gives `too_few_tokens` and `what is the capital of France` gives `low_coverage`; neither calls the model (confirm in the logs)
-- [ ] 5. Temporarily set `SN_INSTANCE_URL=https://invalid.example.com` and confirm the reply is "cannot reach the knowledge base", **not** "no match". Restore afterwards
-- [ ] 6. No secrets in captured logs — search them for `sk-` and for the client id
-- [ ] 7. `npm run eval` meets or beats 26/35 recall@1 and prints the sweep
+- [ ] 4. `Hi Team,` gives `too_few_tokens` with **no Claude call at all** (confirm in the logs)
+- [ ] 5. `what is the capital of France` gives `out_of_scope` — one triage call, no second search, no answer call
+- [ ] 6. `new joiner starts on monday` is **answered correctly**, with `retried: true` and the rewritten query in the logs
+- [ ] 7. No question ever logs two retries
+- [ ] 8. Temporarily set `SN_INSTANCE_URL=https://invalid.example.com` and confirm the reply is "cannot reach the knowledge base", **not** "no match". Restore afterwards
+- [ ] 9. No secrets in captured logs — search them for `sk-` and for the client id
+- [ ] 10. `npm run eval` meets or beats 26/35 recall@1 and prints the sweep
+- [ ] 11. `npm run eval -- --with-retry` beats it materially (expect ~31/35). If not, set `RETRY_ENABLED=false` and record why
 
 - [ ] **Step 5: Commit**
 
