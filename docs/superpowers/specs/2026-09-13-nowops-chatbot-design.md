@@ -1,6 +1,6 @@
 # NowOps Chatbot — Design Spec
 
-- **Date:** 2026-09-13 (revision 4 — connector seam removed; ServiceNow only, deliberately simple)
+- **Date:** 2026-09-13 (revision 5 - knowledge base allowlist removed after A/B measurement)
 - **Status:** Approved, pending implementation plan
 - **Owner:** Sachin Chavan (UST)
 
@@ -78,8 +78,9 @@ Findings from investigation, each of which changed a decision:
   instance.** Their `kb_knowledge_base` records are ACL-restricted, so they have no
   resolvable title — but the articles themselves read fine. They hold 68 Service Graph
   Connector / Dynatrace integration errors, 17 Oracle Fusion SOPs, 10 IT operations
-  runbooks, 9 payroll questions in genuine user voice, and 8 hardware guides. A
-  title-based allowlist would have excluded all of it. See D9.
+  runbooks, 9 payroll questions in genuine user voice, and 8 hardware guides. This is why
+  no filtering by knowledge base title could ever have worked — and, once measured, why no
+  filtering happens at all (D5).
 - **Article numbers are not unique.** `KB0010004` identifies four different articles;
   `KB0010141`, `KB0010145`, `KB0010147` and `KB0010005` are also duplicated. See D10.
 - **The knowledge base contains duplicate articles** with identical titles and different
@@ -158,11 +159,11 @@ from the version without retry, and setting `RETRY_ENABLED=false` restores it ex
 | D2 | Retrieval | **Live ServiceNow text search (`123TEXTQUERY321`) per question** | *Revised in rev 2.* A hand-rolled BM25 index over a synced corpus was the original choice; measurement showed the instance's own search reaches 83% recall@5 with no index, no sync job, no staleness, and no failure mode when the instance is unreachable at boot. Rebuilding it locally would be reinventing a working wheel — and copying each client's knowledge base does not scale to the standalone app, where clients connect their own systems |
 | D3 | Frontend | **Static HTML + vanilla JS** | React/Vite (build step before a working chat box); embeddable widget (solves embedding before the pipeline is proven) |
 | D4 | Fallback when KB has no answer | **Say so; no fallback** | Model-knowledge answers (unsourced answers look authoritative); web search (gateway support for Anthropic server-side tools is unverified, and egress is default-deny) |
-| D5 | Corpus | **Curated, configurable allowlist** | Everything published (67% security-incident demo noise); Knowledge+SOP only (loses 72 IT how-tos) |
+| D5 | Corpus | **No knowledge base filter — search everything published** | *Reversed in rev 5.* Rev 1-4 filtered to a curated allowlist on the theory that 489 of 732 published articles are Security Incident demo noise. **Measured A/B over all 45 eval questions: the allowlist changed exactly one result, promoting `syn-03` from rank 2 to rank 1. recall@5 identical (29/35), noise rejection identical (7/10), average coverage within 0.01.** Since the top 5 articles all reach the prompt, a rank shift inside the top 5 changes no answer a user sees. It was costing a 461-character env var, ongoing maintenance, and an entire second decision (the old D9) that existed only to serve it. Residual risk accepted: no eval question targets security-incident content, so a filter may yet be warranted — but re-adding one clause to the query is trivial, and by then there would be a real failing example to test against |
 | D6 | Retrieval/LLM wiring | **Single-shot** | Tool-use (2-3x calls, nondeterministic, harder to debug). Note: tool use does *not* mean Claude searches the instance — our server always executes the query either way; the only difference is who decides when to search |
 | D7 | Article ingestion | **None — no ingestion** | *Revised in rev 2.* Follows from D2: with live search there is nothing to ingest, so the OAuth refresh token is used per request rather than at startup sync |
 | D8 | Project location | **`C:\dev\nowops-chat`** | Inside OneDrive — `node_modules` sync-thrash, and `.env` secrets uploaded to cloud version history |
-| D9 | Corpus allowlist keyed by | **Knowledge base `sys_id`** | Title — 9 knowledge bases holding 123 of the most relevant articles have ACL-restricted records and no readable title |
+| D9 | *withdrawn* | — | Specified how to key the corpus allowlist. Deleted in rev 5 along with the allowlist itself (D5). Retained as a numbered placeholder so D10–D13 keep their identities in earlier commits and discussion |
 | D10 | Citation and identity key | **Article `sys_id`**, with `[n]` labels in the prompt | Article `number` — not unique on this instance, so number-based citation can resolve to the wrong article |
 | D11 | Relevance gate | **Three layers: token-count guard, coverage floor, then Claude** | A single coverage threshold — measured, and the distributions overlap too much (section 9). No single cutoff both keeps good answers and rejects noise |
 | D13 | Weak search results | **Triage with Claude, then retry the search once with better terms** | Accepting the first result set. Measured: of the 6 questions the baseline misses, **5 are recovered at rank 1** by rewriting the query � lifting recall@1 from 26/35 (74%) to roughly 31/35 (89%). Both worst failures (`"windows security pop up � outlook."` and `"new joiner starts on monday"` both returning *"What is the Windows key?"*) are vocabulary mismatches, which rewriting fixes and no scoring change can. Rejected alternatives: re-ranking the existing 5 results, capped at recall@5 = 83% because it cannot promote an article it was never given; and unconditional retry, which doubles cost on traffic that is mostly noise |
@@ -184,7 +185,7 @@ nowops-chat/
 │   ├── servicenow/
 │   │   ├── types.ts       Article + PlatformUnavailableError
 │   │   ├── auth.ts        refresh-token grant → cached access token
-│   │   └── search.ts      live kb_knowledge text search, allowlisted KBs
+│   │   └── search.ts      live kb_knowledge text search
 │   ├── gate/
 │   │   ├── tokenise.ts    lowercase, strip punctuation, stopwords
 │   │   └── decide.ts      token guard + coverage floor → answer or decline
@@ -242,7 +243,7 @@ SN_INSTANCE_URL          https://abhrademo4.service-now.com
 SN_CLIENT_ID
 SN_CLIENT_SECRET
 SN_REFRESH_TOKEN         exported from the existing connection via Export-SnEnvFile
-SN_KB_ALLOWLIST          comma-separated knowledge base sys_ids (NOT titles — see D9)
+(no knowledge base filter — see D5)
 
 # Relevance gate
 GATE_MIN_TOKENS          default 2
@@ -284,12 +285,12 @@ connectivity and credentials; unlike rev 1 there is no corpus to load.
 Per question, one query against `kb_knowledge`:
 
 ```
-sysparm_query = workflow_state=published
-                ^kb_knowledge_baseIN<allowlisted sys_ids>
-                ^123TEXTQUERY321=<user question>
-sysparm_fields = number,short_description,text,sys_id,kb_knowledge_base
+sysparm_query = workflow_state=published^123TEXTQUERY321=<user question>
+sysparm_fields = sys_id,number,short_description,text
 sysparm_limit  = 5
 ```
+
+Two clauses, no knowledge base filter (D5).
 
 `123TEXTQUERY321` invokes ServiceNow's own indexed text search with relevance ordering.
 The user's question is passed through after stripping `^`, `=` and `&`, which would
@@ -582,10 +583,10 @@ is reported rather than enforced.
 | Input | Status |
 |---|---|
 | Eval question list | **Done** — `tests/fixtures/retrieval-eval.json` |
-| Identity of the ~123 articles in unresolved knowledge bases | **Done** — see section 3 and D9 |
+| Identity of the ~123 articles in unresolved knowledge bases | **Done** — see section 3 |
 | ServiceNow OAuth client id, secret, refresh token | **Done** — written to `.env` by `Export-SnEnvFile` |
 | Gateway API key, base URL, model ids | **Outstanding** — held by the project owner |
-| Allowlisted knowledge base sys_ids | Derived from section 3; to be finalised in config |
+| ~~Allowlisted knowledge base sys_ids~~ | **Not needed** — measured as ineffective and removed (D5) |
 
 ---
 

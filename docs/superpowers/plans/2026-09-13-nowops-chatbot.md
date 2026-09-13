@@ -19,7 +19,7 @@ Every task's requirements implicitly include this section.
 - **ServiceNow is the only platform.** Do not add a connector interface, a platform selector, a fake connector module, or any "pluggable" indirection. If a second platform is ever needed, this code gets refactored then (D12).
 - **`Article.id` (ServiceNow `sys_id`) is the identity key everywhere** (D10). Article `number` is **not unique** on abhrademo4 — `KB0010004` maps to four different articles, `KB0010141` to two. `number` is a display label only. Links use `kb_view.do?sys_kb_id=<sys_id>`, never `sysparm_article=<number>`.
 - **The model cites bracketed labels `[1]`–`[5]`, never KB numbers** (D10, spec §10). The server maps labels back to `sys_id`.
-- **The knowledge base allowlist is keyed by knowledge base `sys_id`** (D9) — 9 of the most valuable knowledge bases have ACL-restricted records with no readable title.
+- **There is no knowledge base filter** (D5). Search every published article. A curated allowlist was A/B tested over all 45 eval questions and changed exactly one result — a rank 2 → rank 1 promotion, invisible to users since the top 5 all reach the prompt. Do not reintroduce one without a failing example to justify it.
 - **No `GET /v1/models` discovery against the gateway** (spec §7 rule 1). The model id is explicit configuration.
 - **Never log secrets.** Mask API keys as `sk-abc12…wxyz`.
 - **`.env` is never committed.** `.gitignore` already covers it.
@@ -91,7 +91,7 @@ the name.
 
 **Interfaces:**
 - Consumes: nothing
-- Produces: `parseConfig(env): Config`, `loadConfig(): Config`. `Config` fields: `port: number`, `anthropicApiKey: string`, `anthropicBaseUrl: string`, `claudeModel: string`, `gateMinTokens: number`, `gateMinCoverage: number`, `searchLimit: number`, `sn: { instanceUrl, clientId, clientSecret, refreshToken, kbAllowlist: string[] }`. Also `mask(secret: string): string` and `log(event: string, fields?: Record<string, unknown>): void`.
+- Produces: `parseConfig(env): Config`, `loadConfig(): Config`. `Config` fields: `port: number`, `anthropicApiKey: string`, `anthropicBaseUrl: string`, `claudeModel: string`, `gateMinTokens: number`, `gateMinCoverage: number`, `searchLimit: number`, `retryEnabled: boolean`, `llmMode: 'live' | 'stub'`, `sn: { instanceUrl, clientId, clientSecret, refreshToken }`. Also `mask(secret: string): string` and `log(event: string, fields?: Record<string, unknown>): void`.
 
 - [ ] **Step 1: Initialise the project**
 
@@ -141,14 +141,13 @@ const valid = {
   SN_CLIENT_ID: 'cid',
   SN_CLIENT_SECRET: 'csecret',
   SN_REFRESH_TOKEN: 'rtoken',
-  SN_KB_ALLOWLIST: 'aaa,bbb , ccc',
 }
 
 describe('parseConfig', () => {
   it('parses a valid environment', () => {
     const c = parseConfig(valid)
     expect(c.claudeModel).toBe('claude-opus-4-8-Codon')
-    expect(c.sn.kbAllowlist).toEqual(['aaa', 'bbb', 'ccc'])
+    expect(c.sn.instanceUrl).toBe('https://abhrademo4.service-now.com')
   })
 
   it('applies documented defaults', () => {
@@ -178,8 +177,9 @@ describe('parseConfig', () => {
     expect(() => parseConfig(missing)).toThrow(/CLAUDE_MODEL/)
   })
 
-  it('rejects an empty allowlist, which would search nothing', () => {
-    expect(() => parseConfig({ ...valid, SN_KB_ALLOWLIST: '' })).toThrow(/SN_KB_ALLOWLIST/)
+  it('strips a trailing slash from the instance URL', () => {
+    const c = parseConfig({ ...valid, SN_INSTANCE_URL: 'https://abhrademo4.service-now.com/' })
+    expect(c.sn.instanceUrl).toBe('https://abhrademo4.service-now.com')
   })
 
   it('rejects a non-numeric threshold instead of yielding NaN', () => {
@@ -232,7 +232,6 @@ import dotenv from 'dotenv'
 
 dotenv.config()
 
-const csv = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean)
 const int = (name: string) => z.string().regex(/^\d+$/, `${name} must be a whole number`)
 const dec = (name: string) => z.string().regex(/^\d+(\.\d+)?$/, `${name} must be a number`)
 
@@ -247,7 +246,6 @@ const Schema = z.object({
   SN_CLIENT_ID: z.string().min(1, 'SN_CLIENT_ID is required'),
   SN_CLIENT_SECRET: z.string().min(1, 'SN_CLIENT_SECRET is required'),
   SN_REFRESH_TOKEN: z.string().min(1, 'SN_REFRESH_TOKEN is required'),
-  SN_KB_ALLOWLIST: z.string().min(1, 'SN_KB_ALLOWLIST is required'),
 
   GATE_MIN_TOKENS: int('GATE_MIN_TOKENS').default('2'),
   GATE_MIN_COVERAGE: dec('GATE_MIN_COVERAGE').default('0.3'),
@@ -272,7 +270,6 @@ export interface Config {
     clientId: string
     clientSecret: string
     refreshToken: string
-    kbAllowlist: string[]
   }
 }
 
@@ -283,10 +280,6 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     throw new Error(`Invalid configuration — ${detail}`)
   }
   const e = r.data
-  const allowlist = csv(e.SN_KB_ALLOWLIST)
-  if (allowlist.length === 0) {
-    throw new Error('Invalid configuration — SN_KB_ALLOWLIST resolved to zero knowledge bases')
-  }
   return {
     port: Number(e.PORT),
     anthropicApiKey: e.ANTHROPIC_API_KEY,
@@ -303,7 +296,6 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
       clientId: e.SN_CLIENT_ID,
       clientSecret: e.SN_CLIENT_SECRET,
       refreshToken: e.SN_REFRESH_TOKEN,
-      kbAllowlist: allowlist,
     },
   }
 }
@@ -333,9 +325,7 @@ SN_CLIENT_ID=replace-me
 SN_CLIENT_SECRET=replace-me
 SN_REFRESH_TOKEN=replace-me
 
-# Knowledge base allowlist — sys_ids, NOT titles (D9).
-# Excludes Security Incident (450 demo articles) and SIR Runbook (14).
-SN_KB_ALLOWLIST=dfc19531bf2021003f07e2c1ac0739ab,c4cdddd0773302109ac0cf0bbb5a99dd,a7e8a78bff0221009b20ffffffffff17,adb2c51383f6ee503be7a7d0deaad348,4fe5d7e683f08b103be7a7d0deaad3d5,bb0370019f22120047a2d126c42e7073,e381da4b2bb6ee50d16df709f291bff0,05ff44289f011200550bf7b6077fcfa3,1f15baa8c303101088cee5f87d40dd86,29cb47688322a2103be7a7d0deaad3e2,820f49a42b158350d16df709f291bf21,cb574c6c3b118710913c44e643e45a75,c0a54bac871023000e3dd61e36cb0bcb,0aa3ffa7db7c030064dd36cb7c96197f
+# No knowledge base filter (D5) — every published article is searched.
 
 GATE_MIN_TOKENS=2
 GATE_MIN_COVERAGE=0.3
@@ -377,7 +367,7 @@ git commit -m "feat: scaffold, validated config and masking logger"
 - Consumes: `Config` (Task 1), `log` (Task 1)
 - Produces: `interface Article { id: string; label?: string; title: string; body: string; url: string }`; `class ServiceNowUnavailableError extends Error`; `makeTokenProvider(cfg, fetchImpl?): { getToken(): Promise<string> }`; `makeSearch(cfg, fetchImpl?): { search(query: string, limit: number): Promise<Article[]>; health(): Promise<{ ok: boolean; detail?: string }> }`; `stripHtml(html: string): string`; `sanitiseQuery(q: string): string`
 
-Query shape (spec §8): `workflow_state=published^kb_knowledge_baseIN<allowlist>^123TEXTQUERY321=<sanitised>`
+Query shape (spec §8): `workflow_state=published^123TEXTQUERY321=<sanitised>` — two clauses, no knowledge base filter (D5).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -398,7 +388,6 @@ const cfg = parseConfig({
   SN_CLIENT_ID: 'cid',
   SN_CLIENT_SECRET: 'csecret',
   SN_REFRESH_TOKEN: 'rtoken',
-  SN_KB_ALLOWLIST: 'kb1,kb2',
 })
 
 const tokenOk = { ok: true, status: 200, json: async () => ({ access_token: 'AT', expires_in: 1800 }) } as Response
@@ -479,14 +468,15 @@ describe('makeSearch', () => {
     )
   })
 
-  it('scopes to published articles in allowlisted knowledge bases', async () => {
+  it('scopes to published articles and applies no knowledge base filter', async () => {
     const f = stub({ result: [] })
     await makeSearch(cfg, f as unknown as typeof fetch).search('printer', 5)
 
     const url = decodeURIComponent(String(f.mock.calls[1][0]))
     expect(url).toContain('workflow_state=published')
-    expect(url).toContain('kb_knowledge_baseINkb1,kb2')
     expect(url).toContain('123TEXTQUERY321=printer')
+    // D5: a knowledge base filter was measured as ineffective and removed.
+    expect(url).not.toContain('kb_knowledge_base')
   })
 
   it('returns an empty array when the instance finds nothing', async () => {
@@ -664,9 +654,9 @@ export function makeSearch(cfg: Config, fetchImpl: typeof fetch = fetch) {
   }
 
   function buildPath(query: string, limit: number): string {
+    // Two clauses only. A knowledge base filter was A/B tested and removed (D5).
     const sysparmQuery = [
       'workflow_state=published',
-      `kb_knowledge_baseIN${cfg.sn.kbAllowlist.join(',')}`,
       `123TEXTQUERY321=${sanitiseQuery(query)}`,
     ].join('^')
 
@@ -694,7 +684,7 @@ export function makeSearch(cfg: Config, fetchImpl: typeof fetch = fetch) {
     async health(): Promise<{ ok: boolean; detail?: string }> {
       try {
         await call(buildPath('test', 1))
-        return { ok: true, detail: `${cfg.sn.kbAllowlist.length} knowledge bases in scope` }
+        return { ok: true, detail: 'search reachable' }
       } catch (e) {
         return { ok: false, detail: e instanceof Error ? e.message : String(e) }
       }
@@ -1261,7 +1251,7 @@ const cfg = parseConfig({
   CLAUDE_MODEL: 'm',
   SN_INSTANCE_URL: 'https://abhrademo4.service-now.com',
   SN_CLIENT_ID: 'c', SN_CLIENT_SECRET: 's', SN_REFRESH_TOKEN: 'r',
-  SN_KB_ALLOWLIST: 'kb1',
+  LLM_MODE: 'live',
 })
 
 const articles: Article[] = [
