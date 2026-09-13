@@ -6,7 +6,7 @@ dotenv.config()
 const csv = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean)
 
 const Schema = z.object({
-  PORT: z.string().default('3000'),
+  PORT: z.string().regex(/^\d+$/, 'PORT must be a valid integer').default('3000'),
   CONNECTOR: z.string().default('servicenow'),
 
   ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY is required'),
@@ -20,9 +20,9 @@ const Schema = z.object({
   SN_REFRESH_TOKEN: z.string().min(1, 'SN_REFRESH_TOKEN is required'),
   SN_KB_ALLOWLIST: z.string().min(1, 'SN_KB_ALLOWLIST is required'),
 
-  GATE_MIN_TOKENS: z.string().default('2'),
-  GATE_MIN_COVERAGE: z.string().default('0.3'),
-  SEARCH_LIMIT: z.string().default('5'),
+  GATE_MIN_TOKENS: z.string().regex(/^\d+$/, 'GATE_MIN_TOKENS must be a valid integer').default('2'),
+  GATE_MIN_COVERAGE: z.string().regex(/^\d+(\.\d+)?$/, 'GATE_MIN_COVERAGE must be a valid decimal number').default('0.3'),
+  SEARCH_LIMIT: z.string().regex(/^\d+$/, 'SEARCH_LIMIT must be a valid integer').default('5'),
 })
 
 export interface Config {

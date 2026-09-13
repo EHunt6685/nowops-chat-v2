@@ -37,6 +37,14 @@ describe('parseConfig', () => {
   })
 
   it('rejects an empty allowlist, which would search nothing', () => {
-    expect(() => parseConfig({ ...valid, SN_KB_ALLOWLIST: '' })).toThrow(/SN_KB_ALLOWLIST/)
+    expect(() => parseConfig({ ...valid, SN_KB_ALLOWLIST: ' , , ' })).toThrow(/zero knowledge bases/)
+  })
+
+  it('throws naming PORT for non-numeric input', () => {
+    expect(() => parseConfig({ ...valid, PORT: 'abc' })).toThrow(/PORT/)
+  })
+
+  it('throws naming GATE_MIN_COVERAGE for non-numeric input', () => {
+    expect(() => parseConfig({ ...valid, GATE_MIN_COVERAGE: 'xyz' })).toThrow(/GATE_MIN_COVERAGE/)
   })
 })
