@@ -1,0 +1,56 @@
+{
+  "_meta": {
+    "created": "2026-09-13",
+    "instance": "https://abhrademo4.service-now.com",
+    "purpose": "Calibrate RETRIEVAL_MIN_SCORE and act as a retrieval regression test.",
+    "method": "Questions were authored from real published article titles on abhrademo4, deliberately paraphrased into user language rather than copying title wording.",
+    "knownLimitation": "Author-written questions are biased toward article vocabulary and will overstate retrieval quality versus real users. Augment with real phrasing sampled from incident.short_description (36,023 incidents available on this instance) before trusting absolute pass rates. Relative changes between runs remain meaningful.",
+    "citationKey": "sysId. Article numbers are NOT unique on this instance (KB0010004 maps to four different articles), so sys_id is the only safe identifier."
+  },
+
+  "inScope": [
+    { "id": "sgc-01", "question": "our dynatrace import keeps failing, something about not being able to find a path in the stream", "expectedSysId": "0f6d2475ff641210f871ffffffffff95", "expectedNumber": "KBSGC0000019", "expectedTitle": "Dynatrace - InvalidPathException: Could not find path in stream: $.entities", "category": "monitoring-integration" },
+    { "id": "sgc-02", "question": "what does the error about a missing api tenant code header mean", "expectedSysId": "0f6d2475ff641210f871ffffffffff6a", "expectedNumber": "KBSGC0000018", "expectedTitle": "Error: Api tenant code header is missing", "category": "monitoring-integration" },
+    { "id": "sgc-03", "question": "tanium connector is returning a 401 but the credentials look correct", "expectedSysId": "227d2875ff641210f871ffffffffff5f", "expectedNumber": "KBSGC0000074", "expectedTitle": "SGC-Tanium - code: 401 - Invalid username/password combo", "category": "monitoring-integration" },
+    { "id": "sgc-04", "question": "intune sync stops partway through and says the transaction was cancelled", "expectedSysId": "1d7da475ff641210f871fffffffffff9", "expectedNumber": "KBSGC0000052", "expectedTitle": "SGC Intune - Transaction cancelled: maximum execution time exceeded", "category": "monitoring-integration" },
+    { "id": "sgc-05", "question": "mid server is complaining that the password is too long", "expectedSysId": "1e7d2875ff641210f871ffffffffff3a", "expectedNumber": "KBSGC0000072", "expectedTitle": "MID Server reported error: password property exceeds the maximum number of 128 characters", "category": "mid-server" },
+    { "id": "sgc-06", "question": "aws discovery cannot pull our organization account details", "expectedSysId": "337d6875ff641210f871ffffffffffee", "expectedNumber": "KBSGC0000100", "expectedTitle": "SGC-AWS - Unable to get Organization Account details. Please check your AWS Setup", "category": "cloud-discovery" },
+    { "id": "sgc-07", "question": "gcp integration will not connect, something to do with credentials", "expectedSysId": "257de475ff641210f871ffffffffff17", "expectedNumber": "KBSGC0000055", "expectedTitle": "Error: Unable to make a connection to GCP API call", "category": "cloud-discovery" },
+    { "id": "sgc-08", "question": "sccm import is failing because a column is missing", "expectedSysId": "307da475ff641210f871ffffffffff4a", "expectedNumber": "KBSGC0000043", "expectedTitle": "SCCM - Integration pull fails because of missing column / attribute", "category": "discovery-integration" },
+
+    { "id": "erp-01", "question": "a domestic invoice was charged IGST instead of CGST and SGST", "expectedSysId": "518e169383feee503be7a7d0deaad345", "expectedNumber": "KB0010096", "expectedTitle": "IGST Applied Instead of CGST+SGST for Domestic Invoice", "category": "oracle-fusion-tax" },
+    { "id": "erp-02", "question": "GST is not being calculated on a purchase order for India", "expectedSysId": "cae4c1d383f6ee503be7a7d0deaad397", "expectedNumber": "KB0010091", "expectedTitle": "GST Tax Not Calculated on Purchase Order in Oracle Fusion (India)", "category": "oracle-fusion-tax" },
+    { "id": "erp-03", "question": "sales tax did not get applied on a purchase in California", "expectedSysId": "3cafdad383feee503be7a7d0deaad398", "expectedNumber": "KB0010100", "expectedTitle": "Sales Tax Not Triggering for California Purchase", "category": "oracle-fusion-tax" },
+    { "id": "erp-04", "question": "our B2B invoices in Singapore are not defaulting GST", "expectedSysId": "0eff125783feee503be7a7d0deaad374", "expectedNumber": "KB0010103", "expectedTitle": "Singapore GST Not Defaulting on B2B Invoices", "category": "oracle-fusion-tax" },
+    { "id": "erp-05", "question": "core banking transactions are not syncing through to the general ledger", "expectedSysId": "3c9cbf0b83c903103be7a7d0deaad341", "expectedNumber": "KB0010506", "expectedTitle": "Core Banking to General Ledger Sync Failure", "category": "application-support" },
+
+    { "id": "ops-01", "question": "someone is leaving the company, how do I remove all of their accounts", "expectedSysId": "09f59bee83f08b103be7a7d0deaad365", "expectedNumber": "KB0010470", "expectedTitle": "Leaver Offboarding - Multi-System Account Removal", "category": "it-operations" },
+    { "id": "ops-02", "question": "new joiner starts on monday, what do I need to set up for them", "expectedSysId": "c1f59bee83f08b103be7a7d0deaad343", "expectedNumber": "KB0010469", "expectedTitle": "New Starter Onboarding - Account, Access and Equipment", "category": "it-operations" },
+    { "id": "ops-03", "question": "how do I give someone a copilot and E3 licence", "expectedSysId": "49f59bee83f08b103be7a7d0deaad36d", "expectedNumber": "KB0010471", "expectedTitle": "Microsoft 365 License Allocation - Co-Pilot, E3, Power Platform, D365", "category": "it-operations" },
+    { "id": "ops-04", "question": "this ticket has breached its SLA and keeps getting bounced between teams", "expectedSysId": "217b9f6683748b103be7a7d0deaad327", "expectedNumber": "KB0010478", "expectedTitle": "SLA Breach Recovery and High-Reassignment Task Triage", "category": "it-operations" },
+
+    { "id": "app-01", "question": "user cannot get into outlook after their password was reset", "expectedSysId": "138387a083ffa2103be7a7d0deaad320", "expectedNumber": "KB0010239", "expectedTitle": "Users cannot access corporate Outlook after password reset due to SSO misconfiguration", "category": "end-user-support" },
+    { "id": "app-02", "question": "the payment api is throwing 500 errors", "expectedSysId": "2631e1772b813e10d16df709f291bf24", "expectedNumber": "KB0010344", "expectedTitle": "500 Internal Server Error impacting Payment API", "category": "application-support" },
+    { "id": "app-03", "question": "login api is returning 404", "expectedSysId": "04f17f802b1b2ed0d16df709f291bf81", "expectedNumber": "KB0010151", "expectedTitle": "Troubleshooting 404 Errors in Login API", "category": "application-support" },
+    { "id": "app-04", "question": "card payments are failing on the square terminal", "expectedSysId": "62353f21834f2e903be7a7d0deaad3ec", "expectedNumber": "KB0010137", "expectedTitle": "Troubleshooting Square Terminal payment errors", "category": "hardware" },
+
+    {
+      "id": "dup-01",
+      "question": "epson receipt printer has stopped printing",
+      "expectedSysId": "2e5633a1834f2e903be7a7d0deaad3a3",
+      "expectedNumber": "KB0010141",
+      "expectedTitle": "Troubleshooting the Epson TM-m30II receipt printer",
+      "category": "hardware",
+      "mustNotReturnSysId": "5808376b3bed0710913c44e643e45a80",
+      "notes": "Duplicate-number regression test. KB0010141 also identifies an unrelated article ('Self-checkout NCR terminal will not boot after image push'). Retrieval and citation must resolve by sys_id, never by number."
+    }
+  ],
+
+  "outOfScope": [
+    { "id": "oos-01", "question": "what is the capital of France" },
+    { "id": "oos-02", "question": "write me a python function that reverses a string" },
+    { "id": "oos-03", "question": "what is the weather in Bangalore tomorrow" },
+    { "id": "oos-04", "question": "how do I reset my netflix password" },
+    { "id": "oos-05", "question": "summarise the plot of Hamlet" }
+  ]
+}

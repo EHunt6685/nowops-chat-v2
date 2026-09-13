@@ -77,11 +77,19 @@ no RAG pipeline**. Keyword retrieval over an in-memory index is faster to build,
 debug, and likely more accurate on articles this short. Embeddings are revisited only if a
 measured retrieval failure justifies them.
 
-Two caveats carried forward as implementation tasks:
+Two findings from follow-up investigation on 2026-09-13:
 
-- The length statistics come from a 40-article sample, not the full corpus.
-- ~123 published articles sit in knowledge bases whose titles did not resolve via the API.
-  These must be identified before the allowlist is final.
+- The length statistics come from a 40-article sample, not the full corpus. Still open.
+- **The ~123 articles in "unresolved" knowledge bases are the most valuable content in the
+  instance.** Their `kb_knowledge_base` records are unreadable via the API (ACL-restricted),
+  so they have no resolvable title — but the articles themselves read fine. They hold 68
+  Service Graph Connector / Dynatrace integration errors, 17 Oracle Fusion SOPs and tax
+  issues, 10 IT operations runbooks (onboarding, offboarding, licence allocation, SLA breach
+  triage), 9 payroll questions written in genuine user voice, and 8 hardware troubleshooting
+  guides. A title-based allowlist would have excluded all of it. See D9.
+- **Article numbers are not unique on this instance.** `KB0010004` identifies four different
+  articles; `KB0010141`, `KB0010145`, `KB0010147` and `KB0010005` are also duplicated across
+  knowledge bases. See D10.
 
 The LLM gateway integration follows `nowstudio-reference.md`, distilled from the
 NowStudio/Codon platform.
@@ -145,6 +153,8 @@ Each was chosen over stated alternatives during design.
 | D6 | Retrieval/LLM wiring | **Single-shot** | Tool-use (2-3x calls, nondeterministic, harder to debug); two-pass query rewrite (extra latency for a corpus this small) |
 | D7 | Article ingestion | **Node performs its own OAuth** | PowerShell exports `kb.json` (manual refresh, proves nothing about live integration). Node cannot read the DPAPI-encrypted PowerShell token store |
 | D8 | Project location | **`C:\dev\nowops-chat`** | Inside OneDrive — `node_modules` sync-thrash, and `.env` secrets uploaded to cloud version history |
+| D9 | Corpus allowlist keyed by | **Knowledge base `sys_id`** | Title — 9 knowledge bases holding 123 of the most relevant articles have ACL-restricted records and no readable title, so a title-based allowlist silently drops them |
+| D10 | Citation and identity key | **Article `sys_id`**, with `[n]` labels in the prompt | Article `number` — not unique on this instance, so number-based citation can resolve to the wrong article |
 
 ---
 
@@ -202,7 +212,7 @@ SN_INSTANCE_URL          https://abhrademo4.service-now.com
 SN_CLIENT_ID
 SN_CLIENT_SECRET
 SN_REFRESH_TOKEN         exported once from the existing PowerShell connection
-SN_KB_ALLOWLIST          Knowledge,IT,SOP,Known Error,KCS Knowledge Base (demo data)
+SN_KB_ALLOWLIST          comma-separated knowledge base sys_ids (NOT titles — see D9)
 
 # Retrieval
 RETRIEVAL_TOP_K          default 5
@@ -289,23 +299,41 @@ The threshold is chosen where in-scope questions pass and out-of-scope questions
 The eval set then lives on as a regression test, so future scoring changes are measurable
 rather than vibes.
 
-**Required input:** the question list must come from the project owner, who knows what
-NowOps users actually ask. Budget ~20 minutes.
+**The eval set is written:** `tests/fixtures/retrieval-eval.json` — 22 in-scope questions
+across monitoring integrations, Oracle Fusion tax, IT operations, application support and
+hardware, plus 5 out-of-scope questions that must return nothing. Each in-scope entry names
+its expected article by `sys_id`.
+
+One entry (`dup-01`) is a deliberate regression test for D10: it targets an Epson printer
+article whose number `KB0010141` also identifies an unrelated self-checkout article, and
+asserts the wrong one is *not* returned.
+
+**Known limitation, stated plainly:** these questions were authored from article titles and
+paraphrased into user language. That is weaker than questions harvested from real users —
+the vocabulary still leans toward the articles, which will overstate absolute retrieval
+quality. Relative movement between runs is still a valid regression signal. The instance
+holds 36,023 incidents whose `short_description` values are genuine user phrasing; sampling
+those to extend the eval set is a follow-up task worth doing before anyone quotes a
+pass-rate figure externally.
 
 ---
 
 ## 10. Prompt and grounding
 
-The system prompt establishes: answer only from the supplied articles; cite by KB number;
-if the articles do not contain the answer, say so rather than reaching for general
-knowledge. Retrieved articles are supplied in a delimited context block with KB numbers
-attached.
+The system prompt establishes: answer only from the supplied articles; cite by label; if the
+articles do not contain the answer, say so rather than reaching for general knowledge.
 
-**Citation verification.** Prompt instructions are not guarantees. After each response,
-the KB numbers the model cited are intersected with the set actually supplied. Anything
-outside that set is a fabricated citation: it is stripped from the source line and the
-discrepancy is logged. This makes it structurally impossible for the source line to point
-at an article that was not really used.
+**Articles are labelled `[1]`–`[5]` in the context block, and the model cites those labels —
+not KB numbers.** Two reasons. Article numbers are not unique here (D10), so a number-based
+citation can resolve to the wrong article. And a small integer drawn from a five-item list
+is far harder to fabricate than a plausible-looking `KB00…` string. The server maps labels
+back to `sys_id` when building the source line.
+
+**Citation verification.** Prompt instructions are not guarantees. After each response, the
+labels the model cited are intersected with the labels actually supplied. Anything outside
+that set is stripped from the source line and the discrepancy is logged. Combined with
+label-based citation, this makes it structurally impossible for the source line to point at
+an article that was not really retrieved.
 
 ### Conversation handling
 
@@ -339,12 +367,13 @@ The **source line under each answer is a first-class requirement**, with three s
 
 | State | Rendering |
 |---|---|
-| Grounded | `Sources: KB0010096 · KB0010112`, each linked to `.../kb_view.do?sysparm_article=KB00…` |
+| Grounded | `Sources: KB0010096 · KB0010112`, each linked by **sys_id**: `.../kb_view.do?sys_kb_id=<sys_id>` |
 | No match above threshold | `No knowledge base match — not answered` |
 | Citations stripped | Verified citations only, plus a server-side warning log |
 
-`sys_id` is carried alongside the article number so links can point at the record form
-instead of the rendered article if preferred.
+Links resolve by `sys_id`, never by article number — `kb_view.do?sysparm_article=KB0010141`
+is ambiguous on this instance and can open the wrong article (D10). The number is displayed
+as the human-readable label only.
 
 A typing indicator covers perceived latency while responses are non-streaming.
 
@@ -412,8 +441,10 @@ that need no network.
 | Gateway base URL and exact model ids | Project owner (in hand) |
 | Gateway API key | Project owner |
 | ServiceNow OAuth client id, secret, refresh token | Existing abhrademo4 OAuth app |
-| Eval question list (15-20 in-scope, 5 out-of-scope) | Project owner, ~20 minutes |
-| Identity of the ~123 articles in unresolved knowledge bases | Investigation task |
+| ~~Eval question list~~ | **Done** — `tests/fixtures/retrieval-eval.json`, 22 in-scope + 5 out-of-scope |
+| ~~Identity of the ~123 articles in unresolved knowledge bases~~ | **Done** — identified 2026-09-13; see section 3 and D9 |
+| Full-corpus article length distribution | Investigation task, minor |
+| Real user phrasing sampled from `incident.short_description` | Follow-up to strengthen the eval set (section 9) |
 
 ---
 
