@@ -299,22 +299,42 @@ The threshold is chosen where in-scope questions pass and out-of-scope questions
 The eval set then lives on as a regression test, so future scoring changes are measurable
 rather than vibes.
 
-**The eval set is written:** `tests/fixtures/retrieval-eval.json` — 22 in-scope questions
-across monitoring integrations, Oracle Fusion tax, IT operations, application support and
-hardware, plus 5 out-of-scope questions that must return nothing. Each in-scope entry names
-its expected article by `sys_id`.
+**The eval set is written:** `tests/fixtures/retrieval-eval.json` — 35 in-scope questions
+and 10 out-of-scope, each in-scope entry naming its expected article by `sys_id`.
 
-One entry (`dup-01`) is a deliberate regression test for D10: it targets an Epson printer
-article whose number `KB0010141` also identifies an unrelated self-checkout article, and
-asserts the wrong one is *not* returned.
+Every question carries a `source`:
 
-**Known limitation, stated plainly:** these questions were authored from article titles and
-paraphrased into user language. That is weaker than questions harvested from real users —
-the vocabulary still leans toward the articles, which will overstate absolute retrieval
-quality. Relative movement between runs is still a valid regression signal. The instance
-holds 36,023 incidents whose `short_description` values are genuine user phrasing; sampling
-those to extend the eval set is a follow-up task worth doing before anyone quotes a
-pass-rate figure externally.
+- **`incident` (15 in-scope, 7 out-of-scope)** — verbatim `short_description` text from real
+  tickets on this instance, matched by hand to the article that answers them. Spelling,
+  casing and truncation left exactly as users wrote them (`"windows security pop up
+  everytime i try to use outlook."`).
+- **`synthetic` (20 in-scope, 3 out-of-scope)** — authored from article titles and
+  paraphrased. Retained for coverage of topics real tickets did not exercise, notably the
+  Service Graph Connector and Oracle Fusion articles.
+
+Entries also carry a `confidence` of `high` (the article directly answers the ticket) or
+`medium` (best available match, should rank first, does not fully resolve). Medium cases
+test graceful degradation rather than precision.
+
+`syn-20` and `inc-01`/`inc-02` form a paired regression test for D10: they target the two
+*different* articles that both carry the number `KB0010141`, proving resolution must happen
+by `sys_id`.
+
+### The finding that should shape demo expectations
+
+The instance holds 36,023 incidents, and **most of them are not knowledge-base-answerable.**
+The dominant traffic is machine-generated monitoring alerts
+(`Critical alert [Alert2276070] . Created on Node: []…`), reported-phishing emails, and
+fragments such as `"Hi Team,"`, `"nan"` and `"711 Tech Support Phone# - 2106249028"`. Only a
+minority of genuine tickets map to an article.
+
+**Expect this chatbot to answer "no knowledge base match" for most real traffic.** That is
+correct behaviour, not a defect — but it needs saying before a demo, not after. The
+out-of-scope set is built from exactly this noise, so the threshold is calibrated against
+what the bot will really see rather than against trivia questions.
+
+There is also no instance-provided ground truth: `m2m_kb_task` is empty and `kb_use` carries
+no task reference. All question-to-article mappings are hand-made and therefore fallible.
 
 ---
 

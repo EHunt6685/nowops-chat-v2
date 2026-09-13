@@ -1,56 +1,84 @@
 {
   "_meta": {
     "created": "2026-09-13",
+    "revised": "2026-09-13",
     "instance": "https://abhrademo4.service-now.com",
     "purpose": "Calibrate RETRIEVAL_MIN_SCORE and act as a retrieval regression test.",
-    "method": "Questions were authored from real published article titles on abhrademo4, deliberately paraphrased into user language rather than copying title wording.",
-    "knownLimitation": "Author-written questions are biased toward article vocabulary and will overstate retrieval quality versus real users. Augment with real phrasing sampled from incident.short_description (36,023 incidents available on this instance) before trusting absolute pass rates. Relative changes between runs remain meaningful.",
-    "citationKey": "sysId. Article numbers are NOT unique on this instance (KB0010004 maps to four different articles), so sys_id is the only safe identifier."
+
+    "sources": {
+      "synthetic": "Authored from published article titles, paraphrased into user language. Biased toward article vocabulary; overstates retrieval quality.",
+      "incident": "Verbatim short_description text from real incidents on this instance, matched by hand to the article that genuinely answers them. Spelling, casing and truncation are left exactly as users wrote them."
+    },
+
+    "findingThatMatters": "The incident corpus is mostly NOT knowledge-base-answerable. Of 36,023 incidents, the dominant traffic is machine-generated monitoring alerts ('Critical alert [Alert2276070] . Created on Node: []...'), reported-phishing emails, and fragments such as 'Hi Team,', 'nan' and '711 Tech Support Phone# - 2106249028'. Only a minority of real tickets map to an article. Expect a KB chatbot on this instance to answer 'no knowledge base match' for most genuine traffic — that is correct behaviour, not a defect, and the demo narrative should say so up front.",
+
+    "confidenceLevels": "high = the article directly answers the ticket. medium = the article is the best available match and should rank first, but does not fully resolve the ticket. Medium cases test graceful degradation, not precision.",
+
+    "citationKey": "sysId. Article numbers are NOT unique on this instance (KB0010004 maps to four different articles; KB0010141 to two), so sys_id is the only safe identifier.",
+
+    "noGroundTruthAvailable": "m2m_kb_task is empty and kb_use carries no task reference, so the instance provides no article-to-incident pairs. All mappings below are hand-made."
   },
 
   "inScope": [
-    { "id": "sgc-01", "question": "our dynatrace import keeps failing, something about not being able to find a path in the stream", "expectedSysId": "0f6d2475ff641210f871ffffffffff95", "expectedNumber": "KBSGC0000019", "expectedTitle": "Dynatrace - InvalidPathException: Could not find path in stream: $.entities", "category": "monitoring-integration" },
-    { "id": "sgc-02", "question": "what does the error about a missing api tenant code header mean", "expectedSysId": "0f6d2475ff641210f871ffffffffff6a", "expectedNumber": "KBSGC0000018", "expectedTitle": "Error: Api tenant code header is missing", "category": "monitoring-integration" },
-    { "id": "sgc-03", "question": "tanium connector is returning a 401 but the credentials look correct", "expectedSysId": "227d2875ff641210f871ffffffffff5f", "expectedNumber": "KBSGC0000074", "expectedTitle": "SGC-Tanium - code: 401 - Invalid username/password combo", "category": "monitoring-integration" },
-    { "id": "sgc-04", "question": "intune sync stops partway through and says the transaction was cancelled", "expectedSysId": "1d7da475ff641210f871fffffffffff9", "expectedNumber": "KBSGC0000052", "expectedTitle": "SGC Intune - Transaction cancelled: maximum execution time exceeded", "category": "monitoring-integration" },
-    { "id": "sgc-05", "question": "mid server is complaining that the password is too long", "expectedSysId": "1e7d2875ff641210f871ffffffffff3a", "expectedNumber": "KBSGC0000072", "expectedTitle": "MID Server reported error: password property exceeds the maximum number of 128 characters", "category": "mid-server" },
-    { "id": "sgc-06", "question": "aws discovery cannot pull our organization account details", "expectedSysId": "337d6875ff641210f871ffffffffffee", "expectedNumber": "KBSGC0000100", "expectedTitle": "SGC-AWS - Unable to get Organization Account details. Please check your AWS Setup", "category": "cloud-discovery" },
-    { "id": "sgc-07", "question": "gcp integration will not connect, something to do with credentials", "expectedSysId": "257de475ff641210f871ffffffffff17", "expectedNumber": "KBSGC0000055", "expectedTitle": "Error: Unable to make a connection to GCP API call", "category": "cloud-discovery" },
-    { "id": "sgc-08", "question": "sccm import is failing because a column is missing", "expectedSysId": "307da475ff641210f871ffffffffff4a", "expectedNumber": "KBSGC0000043", "expectedTitle": "SCCM - Integration pull fails because of missing column / attribute", "category": "discovery-integration" },
+    { "id": "inc-01", "source": "incident", "confidence": "high", "question": "Self-checkout lanes 1-4 down at Store #208 after image push", "expectedSysId": "5808376b3bed0710913c44e643e45a80", "expectedNumber": "KB0010141", "expectedTitle": "Self-checkout NCR terminal will not boot after image push", "category": "retail-pos", "notes": "Real traffic that lands on the duplicated number KB0010141. The other KB0010141 is an Epson printer article. Hard evidence for D10." },
+    { "id": "inc-02", "source": "incident", "confidence": "high", "question": "Self-checkout lanes 3-6 down at Store #142", "expectedSysId": "5808376b3bed0710913c44e643e45a80", "expectedNumber": "KB0010141", "expectedTitle": "Self-checkout NCR terminal will not boot after image push", "category": "retail-pos" },
+    { "id": "inc-03", "source": "incident", "confidence": "high", "question": "Remote office WiFi down - Users are unable to connect to network", "expectedSysId": "419881bd2b708f10d16df709f291bf77", "expectedNumber": "KB0010463", "expectedTitle": "Remote office WiFi issues - Troubleshooting Guide", "category": "network" },
+    { "id": "inc-04", "source": "incident", "confidence": "high", "question": "Network connectivity Issues", "expectedSysId": "14207a37835b36103be7a7d0deaad309", "expectedNumber": "KB0010403", "expectedTitle": "Network Connectivity Issues – Troubleshooting Guide", "category": "network", "notes": "Deliberately terse. Tests that a three-word ticket still clears the threshold." },
+    { "id": "inc-05", "source": "incident", "confidence": "high", "question": "Disable user account for frankie.morein", "expectedSysId": "09f59bee83f08b103be7a7d0deaad365", "expectedNumber": "KB0010470", "expectedTitle": "Leaver Offboarding - Multi-System Account Removal", "category": "it-operations" },
+    { "id": "inc-06", "source": "incident", "confidence": "high", "question": "Workday password reset", "expectedSysId": "cfe2d8163bd68f10913c44e643e45a13", "expectedNumber": "SOP0010188", "expectedTitle": "Workday Account Management – Password Reset, Login Issues, Account Lock", "category": "end-user-support" },
+    { "id": "inc-07", "source": "incident", "confidence": "high", "question": "windows security pop up everytime i try to use outlook.", "expectedSysId": "138387a083ffa2103be7a7d0deaad320", "expectedNumber": "KB0010239", "expectedTitle": "Users cannot access corporate Outlook after password reset due to SSO misconfiguration", "category": "end-user-support", "notes": "Lowercase, no capitalisation, trailing full stop. Left verbatim." },
+    { "id": "inc-08", "source": "incident", "confidence": "high", "question": "Unable to click options on Baxter site after login", "expectedSysId": "24bc039cfb57cb10aa37f62265efdcaa", "expectedNumber": "KB0010422", "expectedTitle": "Unable to Use Options in Baxter Site After Login - Troubleshooting guide", "category": "application-support" },
+    { "id": "inc-09", "source": "incident", "confidence": "high", "question": "Baxter portal access restricted after successful login", "expectedSysId": "24bc039cfb57cb10aa37f62265efdcaa", "expectedNumber": "KB0010422", "expectedTitle": "Unable to Use Options in Baxter Site After Login - Troubleshooting guide", "category": "application-support" },
+    { "id": "inc-10", "source": "incident", "confidence": "high", "question": "Printer issue: Information does not fit into the label", "expectedSysId": "561633a1834f2e903be7a7d0deaad3f3", "expectedNumber": "KB0010140", "expectedTitle": "Zebra Label & Receipt Printers (e.g., ZD Series) issues, fixes and troubleshooting", "category": "hardware" },
+    { "id": "inc-11", "source": "incident", "confidence": "medium", "question": "Warehouse printer error message \"IP not acquired\"", "expectedSysId": "561633a1834f2e903be7a7d0deaad3f3", "expectedNumber": "KB0010140", "expectedTitle": "Zebra Label & Receipt Printers (e.g., ZD Series) issues, fixes and troubleshooting", "category": "hardware" },
+    { "id": "inc-12", "source": "incident", "confidence": "medium", "question": "Unable to login VPN", "expectedSysId": "e37f5a328367a2103be7a7d0deaad387", "expectedNumber": "KB0010232", "expectedTitle": "Unable to Launch VPN Client After Software Update", "category": "network", "notes": "Best available match; the article assumes a software-update cause the ticket does not state." },
+    { "id": "inc-13", "source": "incident", "confidence": "medium", "question": "Cannot connect to VPN", "expectedSysId": "e37f5a328367a2103be7a7d0deaad387", "expectedNumber": "KB0010232", "expectedTitle": "Unable to Launch VPN Client After Software Update", "category": "network" },
+    { "id": "inc-14", "source": "incident", "confidence": "medium", "question": "not able to login into salesforce account", "expectedSysId": "21310c9c2b5b2ed0d16df709f291bfb1", "expectedNumber": "KB0010179", "expectedTitle": "Salesforce - Community Access Issue", "category": "application-support" },
+    { "id": "inc-15", "source": "incident", "confidence": "medium", "question": "Unable to connect to the corporate Wifi in Leigh", "expectedSysId": "419881bd2b708f10d16df709f291bf77", "expectedNumber": "KB0010463", "expectedTitle": "Remote office WiFi issues - Troubleshooting Guide", "category": "network" },
 
-    { "id": "erp-01", "question": "a domestic invoice was charged IGST instead of CGST and SGST", "expectedSysId": "518e169383feee503be7a7d0deaad345", "expectedNumber": "KB0010096", "expectedTitle": "IGST Applied Instead of CGST+SGST for Domestic Invoice", "category": "oracle-fusion-tax" },
-    { "id": "erp-02", "question": "GST is not being calculated on a purchase order for India", "expectedSysId": "cae4c1d383f6ee503be7a7d0deaad397", "expectedNumber": "KB0010091", "expectedTitle": "GST Tax Not Calculated on Purchase Order in Oracle Fusion (India)", "category": "oracle-fusion-tax" },
-    { "id": "erp-03", "question": "sales tax did not get applied on a purchase in California", "expectedSysId": "3cafdad383feee503be7a7d0deaad398", "expectedNumber": "KB0010100", "expectedTitle": "Sales Tax Not Triggering for California Purchase", "category": "oracle-fusion-tax" },
-    { "id": "erp-04", "question": "our B2B invoices in Singapore are not defaulting GST", "expectedSysId": "0eff125783feee503be7a7d0deaad374", "expectedNumber": "KB0010103", "expectedTitle": "Singapore GST Not Defaulting on B2B Invoices", "category": "oracle-fusion-tax" },
-    { "id": "erp-05", "question": "core banking transactions are not syncing through to the general ledger", "expectedSysId": "3c9cbf0b83c903103be7a7d0deaad341", "expectedNumber": "KB0010506", "expectedTitle": "Core Banking to General Ledger Sync Failure", "category": "application-support" },
-
-    { "id": "ops-01", "question": "someone is leaving the company, how do I remove all of their accounts", "expectedSysId": "09f59bee83f08b103be7a7d0deaad365", "expectedNumber": "KB0010470", "expectedTitle": "Leaver Offboarding - Multi-System Account Removal", "category": "it-operations" },
-    { "id": "ops-02", "question": "new joiner starts on monday, what do I need to set up for them", "expectedSysId": "c1f59bee83f08b103be7a7d0deaad343", "expectedNumber": "KB0010469", "expectedTitle": "New Starter Onboarding - Account, Access and Equipment", "category": "it-operations" },
-    { "id": "ops-03", "question": "how do I give someone a copilot and E3 licence", "expectedSysId": "49f59bee83f08b103be7a7d0deaad36d", "expectedNumber": "KB0010471", "expectedTitle": "Microsoft 365 License Allocation - Co-Pilot, E3, Power Platform, D365", "category": "it-operations" },
-    { "id": "ops-04", "question": "this ticket has breached its SLA and keeps getting bounced between teams", "expectedSysId": "217b9f6683748b103be7a7d0deaad327", "expectedNumber": "KB0010478", "expectedTitle": "SLA Breach Recovery and High-Reassignment Task Triage", "category": "it-operations" },
-
-    { "id": "app-01", "question": "user cannot get into outlook after their password was reset", "expectedSysId": "138387a083ffa2103be7a7d0deaad320", "expectedNumber": "KB0010239", "expectedTitle": "Users cannot access corporate Outlook after password reset due to SSO misconfiguration", "category": "end-user-support" },
-    { "id": "app-02", "question": "the payment api is throwing 500 errors", "expectedSysId": "2631e1772b813e10d16df709f291bf24", "expectedNumber": "KB0010344", "expectedTitle": "500 Internal Server Error impacting Payment API", "category": "application-support" },
-    { "id": "app-03", "question": "login api is returning 404", "expectedSysId": "04f17f802b1b2ed0d16df709f291bf81", "expectedNumber": "KB0010151", "expectedTitle": "Troubleshooting 404 Errors in Login API", "category": "application-support" },
-    { "id": "app-04", "question": "card payments are failing on the square terminal", "expectedSysId": "62353f21834f2e903be7a7d0deaad3ec", "expectedNumber": "KB0010137", "expectedTitle": "Troubleshooting Square Terminal payment errors", "category": "hardware" },
-
+    { "id": "syn-01", "source": "synthetic", "confidence": "high", "question": "our dynatrace import keeps failing, something about not being able to find a path in the stream", "expectedSysId": "0f6d2475ff641210f871ffffffffff95", "expectedNumber": "KBSGC0000019", "expectedTitle": "Dynatrace - InvalidPathException: Could not find path in stream: $.entities", "category": "monitoring-integration" },
+    { "id": "syn-02", "source": "synthetic", "confidence": "high", "question": "what does the error about a missing api tenant code header mean", "expectedSysId": "0f6d2475ff641210f871ffffffffff6a", "expectedNumber": "KBSGC0000018", "expectedTitle": "Error: Api tenant code header is missing", "category": "monitoring-integration" },
+    { "id": "syn-03", "source": "synthetic", "confidence": "high", "question": "tanium connector is returning a 401 but the credentials look correct", "expectedSysId": "227d2875ff641210f871ffffffffff5f", "expectedNumber": "KBSGC0000074", "expectedTitle": "SGC-Tanium - code: 401 - Invalid username/password combo", "category": "monitoring-integration" },
+    { "id": "syn-04", "source": "synthetic", "confidence": "high", "question": "intune sync stops partway through and says the transaction was cancelled", "expectedSysId": "1d7da475ff641210f871fffffffffff9", "expectedNumber": "KBSGC0000052", "expectedTitle": "SGC Intune - Transaction cancelled: maximum execution time exceeded", "category": "monitoring-integration" },
+    { "id": "syn-05", "source": "synthetic", "confidence": "high", "question": "mid server is complaining that the password is too long", "expectedSysId": "1e7d2875ff641210f871ffffffffff3a", "expectedNumber": "KBSGC0000072", "expectedTitle": "MID Server reported error: password property exceeds the maximum number of 128 characters", "category": "mid-server" },
+    { "id": "syn-06", "source": "synthetic", "confidence": "high", "question": "aws discovery cannot pull our organization account details", "expectedSysId": "337d6875ff641210f871ffffffffffee", "expectedNumber": "KBSGC0000100", "expectedTitle": "SGC-AWS - Unable to get Organization Account details", "category": "cloud-discovery" },
+    { "id": "syn-07", "source": "synthetic", "confidence": "high", "question": "gcp integration will not connect, something to do with credentials", "expectedSysId": "257de475ff641210f871ffffffffff17", "expectedNumber": "KBSGC0000055", "expectedTitle": "Error: Unable to make a connection to GCP API call", "category": "cloud-discovery" },
+    { "id": "syn-08", "source": "synthetic", "confidence": "high", "question": "sccm import is failing because a column is missing", "expectedSysId": "307da475ff641210f871ffffffffff4a", "expectedNumber": "KBSGC0000043", "expectedTitle": "SCCM - Integration pull fails because of missing column / attribute", "category": "discovery-integration" },
+    { "id": "syn-09", "source": "synthetic", "confidence": "high", "question": "a domestic invoice was charged IGST instead of CGST and SGST", "expectedSysId": "518e169383feee503be7a7d0deaad345", "expectedNumber": "KB0010096", "expectedTitle": "IGST Applied Instead of CGST+SGST for Domestic Invoice", "category": "oracle-fusion-tax" },
+    { "id": "syn-10", "source": "synthetic", "confidence": "high", "question": "GST is not being calculated on a purchase order for India", "expectedSysId": "cae4c1d383f6ee503be7a7d0deaad397", "expectedNumber": "KB0010091", "expectedTitle": "GST Tax Not Calculated on Purchase Order in Oracle Fusion (India)", "category": "oracle-fusion-tax" },
+    { "id": "syn-11", "source": "synthetic", "confidence": "high", "question": "sales tax did not get applied on a purchase in California", "expectedSysId": "3cafdad383feee503be7a7d0deaad398", "expectedNumber": "KB0010100", "expectedTitle": "Sales Tax Not Triggering for California Purchase", "category": "oracle-fusion-tax" },
+    { "id": "syn-12", "source": "synthetic", "confidence": "high", "question": "our B2B invoices in Singapore are not defaulting GST", "expectedSysId": "0eff125783feee503be7a7d0deaad374", "expectedNumber": "KB0010103", "expectedTitle": "Singapore GST Not Defaulting on B2B Invoices", "category": "oracle-fusion-tax" },
+    { "id": "syn-13", "source": "synthetic", "confidence": "high", "question": "core banking transactions are not syncing through to the general ledger", "expectedSysId": "3c9cbf0b83c903103be7a7d0deaad341", "expectedNumber": "KB0010506", "expectedTitle": "Core Banking to General Ledger Sync Failure", "category": "application-support" },
+    { "id": "syn-14", "source": "synthetic", "confidence": "high", "question": "new joiner starts on monday, what do I need to set up for them", "expectedSysId": "c1f59bee83f08b103be7a7d0deaad343", "expectedNumber": "KB0010469", "expectedTitle": "New Starter Onboarding - Account, Access and Equipment", "category": "it-operations" },
+    { "id": "syn-15", "source": "synthetic", "confidence": "high", "question": "how do I give someone a copilot and E3 licence", "expectedSysId": "49f59bee83f08b103be7a7d0deaad36d", "expectedNumber": "KB0010471", "expectedTitle": "Microsoft 365 License Allocation - Co-Pilot, E3, Power Platform, D365", "category": "it-operations" },
+    { "id": "syn-16", "source": "synthetic", "confidence": "high", "question": "this ticket has breached its SLA and keeps getting bounced between teams", "expectedSysId": "217b9f6683748b103be7a7d0deaad327", "expectedNumber": "KB0010478", "expectedTitle": "SLA Breach Recovery and High-Reassignment Task Triage", "category": "it-operations" },
+    { "id": "syn-17", "source": "synthetic", "confidence": "high", "question": "the payment api is throwing 500 errors", "expectedSysId": "2631e1772b813e10d16df709f291bf24", "expectedNumber": "KB0010344", "expectedTitle": "500 Internal Server Error impacting Payment API", "category": "application-support" },
+    { "id": "syn-18", "source": "synthetic", "confidence": "high", "question": "login api is returning 404", "expectedSysId": "04f17f802b1b2ed0d16df709f291bf81", "expectedNumber": "KB0010151", "expectedTitle": "Troubleshooting 404 Errors in Login API", "category": "application-support" },
+    { "id": "syn-19", "source": "synthetic", "confidence": "high", "question": "card payments are failing on the square terminal", "expectedSysId": "62353f21834f2e903be7a7d0deaad3ec", "expectedNumber": "KB0010137", "expectedTitle": "Troubleshooting Square Terminal payment errors", "category": "hardware" },
     {
-      "id": "dup-01",
+      "id": "syn-20",
+      "source": "synthetic",
+      "confidence": "high",
       "question": "epson receipt printer has stopped printing",
       "expectedSysId": "2e5633a1834f2e903be7a7d0deaad3a3",
       "expectedNumber": "KB0010141",
       "expectedTitle": "Troubleshooting the Epson TM-m30II receipt printer",
       "category": "hardware",
       "mustNotReturnSysId": "5808376b3bed0710913c44e643e45a80",
-      "notes": "Duplicate-number regression test. KB0010141 also identifies an unrelated article ('Self-checkout NCR terminal will not boot after image push'). Retrieval and citation must resolve by sys_id, never by number."
+      "notes": "Duplicate-number regression test, paired with inc-01/inc-02 which target the OTHER KB0010141. Together they prove resolution must be by sys_id."
     }
   ],
 
   "outOfScope": [
-    { "id": "oos-01", "question": "what is the capital of France" },
-    { "id": "oos-02", "question": "write me a python function that reverses a string" },
-    { "id": "oos-03", "question": "what is the weather in Bangalore tomorrow" },
-    { "id": "oos-04", "question": "how do I reset my netflix password" },
-    { "id": "oos-05", "question": "summarise the plot of Hamlet" }
+    { "id": "oos-inc-01", "source": "incident", "question": "Critical  alert [Alert2276070]  . Created on Node: [] . Metric name is [U1278] of type", "notes": "The single highest-volume shape of real traffic on this instance." },
+    { "id": "oos-inc-02", "source": "incident", "question": "[REPORTED EMAIL] [External] RFQ_Specifications_Drawings" },
+    { "id": "oos-inc-03", "source": "incident", "question": "Hi Team," },
+    { "id": "oos-inc-04", "source": "incident", "question": "nan", "notes": "Literal string 'nan' — a data-quality artefact that reaches the queue." },
+    { "id": "oos-inc-05", "source": "incident", "question": "711 Tech Support  Phone# - 2106249028" },
+    { "id": "oos-inc-06", "source": "incident", "question": "EOM JOB STATUS" },
+    { "id": "oos-inc-07", "source": "incident", "question": "Bky OLO" },
+    { "id": "oos-triv-01", "source": "synthetic", "question": "what is the capital of France" },
+    { "id": "oos-triv-02", "source": "synthetic", "question": "write me a python function that reverses a string" },
+    { "id": "oos-triv-03", "source": "synthetic", "question": "summarise the plot of Hamlet" }
   ]
 }
