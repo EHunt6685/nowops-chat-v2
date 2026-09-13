@@ -1,6 +1,6 @@
 # NowOps Chatbot — Design Spec
 
-- **Date:** 2026-09-13 (revision 2 — retrieval redesigned after measurement)
+- **Date:** 2026-09-13 (revision 3 — connector seam added for platform portability)
 - **Status:** Approved, pending implementation plan
 - **Owner:** Sachin Chavan (UST)
 
@@ -41,6 +41,8 @@ failures are cheap to diagnose.
 ### In scope
 
 - Node/TypeScript Express service
+- **A platform-agnostic `KnowledgeConnector` interface**, with ServiceNow as the only
+  implementation (D12)
 - **Live knowledge base search against abhrademo4** over OAuth, per question
 - A three-layer relevance gate deciding whether to answer or decline
 - Single Claude call per question, grounded strictly in retrieved articles
@@ -48,6 +50,8 @@ failures are cheap to diagnose.
 - A visible source line under every answer, linking cited articles back to abhrademo4
 - Model picker across the Claude models available on the gateway
 - Health endpoint
+- **Eval and calibration tooling as first-class project scripts** (`npm run eval`,
+  `npm run calibrate`), not throwaway files — see section 19
 
 ### Out of scope
 
@@ -101,10 +105,11 @@ Browser (static HTML + vanilla JS)
     │  POST /api/chat  { message, conversationId, model? }
     ▼
 Express server (TypeScript, Node 22)
-    ├── Search client    live query → abhrademo4, returns ≤5 candidates
-    ├── Relevance gate   3 layers → answer or decline
-    ├── Claude client    Anthropic SDK → UST LiteLLM gateway
-    └── Conversation     in-memory Map, process lifetime only
+    ├── KnowledgeConnector  ◄── the platform seam (D12)
+    │     └─ ServiceNowConnector   live query → abhrademo4, ≤5 Articles
+    ├── Relevance gate      3 layers → answer or decline
+    ├── Claude client       Anthropic SDK → UST LiteLLM gateway
+    └── Conversation        in-memory Map, process lifetime only
     ▲
     │  OAuth REST, per question
 ServiceNow abhrademo4  (kb_knowledge text search)
@@ -114,10 +119,13 @@ Four modules with distinct responsibilities, each testable in isolation:
 
 | Module | Responsibility | Depends on |
 |---|---|---|
-| `servicenow/` | OAuth token refresh, knowledge base text search | env config |
+| `connectors/` | `KnowledgeConnector` interface + ServiceNow implementation | env config |
 | `gate/` | Tokenise, score coverage, decide answer vs decline | nothing (pure) |
 | `llm/` | Gateway client, prompt assembly, citation verification | env config |
 | `server/` | Routes, static files, conversation state | all three |
+
+**Nothing above the connector seam knows what platform it is talking to.** The gate, the
+prompts, the citation logic and the UI operate on `Article`, never on ServiceNow types.
 
 No database and **no local index**. Conversation state lives in memory and dies with the
 process. Postgres arrives with the standalone app, following the nowstudio-reference shape.
@@ -151,6 +159,7 @@ process. Postgres arrives with the standalone app, following the nowstudio-refer
 | D9 | Corpus allowlist keyed by | **Knowledge base `sys_id`** | Title — 9 knowledge bases holding 123 of the most relevant articles have ACL-restricted records and no readable title |
 | D10 | Citation and identity key | **Article `sys_id`**, with `[n]` labels in the prompt | Article `number` — not unique on this instance, so number-based citation can resolve to the wrong article |
 | D11 | Relevance gate | **Three layers: token-count guard, coverage floor, then Claude** | A single coverage threshold — measured, and the distributions overlap too much (section 9). No single cutoff both keeps good answers and rejects noise |
+| D12 | Platform coupling | **A `KnowledgeConnector` interface, with ServiceNow the only implementation** | Calling ServiceNow directly from the server. Multi-platform support is the stated premise of NowOps standalone, not speculation, so the seam is a requirement. It costs ~30 lines now and makes a Jira connector an addition rather than surgery. Building an actual Jira connector now *is* rejected — YAGNI until there is a client |
 
 ---
 
@@ -165,9 +174,12 @@ nowops-chat/
 ├── .env                   real secrets, gitignored, never committed
 ├── src/
 │   ├── config.ts          load + validate env (zod), fail fast
-│   ├── servicenow/
-│   │   ├── auth.ts        refresh-token grant → cached access token
-│   │   └── search.ts      live kb_knowledge text search, allowlisted KBs
+│   ├── connectors/
+│   │   ├── types.ts       KnowledgeConnector + Article — the platform seam (D12)
+│   │   ├── index.ts       select connector from CONNECTOR env var
+│   │   └── servicenow/
+│   │       ├── auth.ts    refresh-token grant → cached access token
+│   │       └── search.ts  live kb_knowledge text search, allowlisted KBs
 │   ├── gate/
 │   │   ├── tokenise.ts    lowercase, strip punctuation, stopwords
 │   │   └── decide.ts      token guard + coverage floor → answer or decline
@@ -176,6 +188,9 @@ nowops-chat/
 │   └── server/
 │       ├── app.ts         Express, static, middleware
 │       └── routes.ts      /api/chat, /api/health
+├── tools/
+│   ├── eval.ts            npm run eval      — recall@k against the eval set
+│   └── calibrate.ts       npm run calibrate — threshold sweep + recommendation
 ├── public/
 │   ├── index.html
 │   ├── app.js
@@ -184,6 +199,26 @@ nowops-chat/
     └── fixtures/
         └── retrieval-eval.json
 ```
+
+### The connector seam
+
+```ts
+interface Article {
+  id: string          // stable unique identifier — sys_id, page id, issue key
+  label?: string      // display only — KB0010141, PROJ-123
+  title: string
+  body: string
+  url: string         // how a human opens it
+}
+
+interface KnowledgeConnector {
+  name: string
+  search(query: string, limit: number): Promise<Article[]>
+  health(): Promise<{ ok: boolean; detail?: string }>
+}
+```
+
+`Article.id` is the identity key throughout — on ServiceNow that is `sys_id` (D10).
 
 **No virtualenv equivalent is needed.** `node_modules/` is project-local and isolated by
 default with no activation step. `.nvmrc` pins the Node version; `package-lock.json` pins
@@ -459,8 +494,9 @@ network.
 | Layer | Covers |
 |---|---|
 | Unit | Tokeniser, coverage scoring, token guard, gate decision, citation verification |
-| Retrieval eval | The 45-question set, run against recorded search fixtures in CI and live on demand |
-| Integration | Routes against a stubbed gateway and recorded ServiceNow responses, so CI needs no live credentials |
+| Contract | A fake `KnowledgeConnector` proves nothing above the seam touches ServiceNow types (D12) |
+| Retrieval eval | `npm run eval` — the 45-question set, against recorded fixtures in CI and live on demand |
+| Integration | Routes against a stubbed gateway and a fake connector, so CI needs no live credentials |
 | Live smoke | Manual: `/api/health` plus a handful of real questions |
 
 The eval is the regression test that matters. Its baseline is recorded in section 9; a
@@ -481,7 +517,10 @@ change that moves those numbers down is a regression regardless of how good it l
 6. The model picker switches between gateway Claude models and answers still ground
    correctly.
 7. No secrets appear in any log line.
-8. The eval run matches or beats the section 9 baseline.
+8. `npm run eval` matches or beats the section 9 baseline (74% recall@1, 83% @5).
+9. `npm run calibrate` produces a threshold recommendation from the sweep.
+10. Substituting a fake `KnowledgeConnector` runs the whole chat flow with no ServiceNow
+    code loaded — the proof that the seam is real rather than decorative.
 
 ---
 
@@ -514,3 +553,68 @@ In rough order of likely value:
 8. Web search fallback — gated on a spike confirming the gateway forwards Anthropic
    server-side tools.
 9. Absorption into the NowOps standalone application (separate spec).
+
+---
+
+## 19. Platform portability
+
+NowOps standalone is platform-agnostic by premise: a client connects their own ticketing
+platform and the product works. This section records what that actually costs, so the
+answer is written down rather than rediscovered.
+
+**The architecture ports. The measurements do not.** Retrieval quality is a property of a
+specific search engine running over specific content. No design can tell you whether
+Atlassian's search finds the right Confluence page for "VPN won't connect" at a given
+client — only measuring it can.
+
+### Per-platform vs per-client
+
+| | Frequency | Example |
+|---|---|---|
+| **Per platform** | Once, ever | Implement `JiraConnector` — reused by every Jira client |
+| **Per client instance** | Every deployment | Their eval set, their threshold, their content scope |
+
+The fifth Jira client costs no connector code. It costs a calibration run.
+
+### What is built once and reused
+
+| Component | Portable? |
+|---|---|
+| `KnowledgeConnector` interface | ✅ |
+| Gate algorithm — tokenise, coverage, token guard | ✅ |
+| Eval harness (`npm run eval`) | ✅ |
+| Calibration sweep (`npm run calibrate`) | ✅ |
+| Prompt assembly, citation verification, source line | ✅ |
+| Chat UI, routes, conversation handling | ✅ |
+| Connector implementation | ❌ once per platform |
+| Eval dataset | ❌ once per client |
+| Threshold values | ❌ once per client |
+| Content scope config | ❌ once per client |
+
+### Switching to Jira — the checklist
+
+| # | Change | Effort |
+|---|---|---|
+| 1 | **Decide what "knowledge" means there** — Confluence pages, JSM knowledge base, or resolved issues. Jira issues are not knowledge articles | Product decision, do first |
+| 2 | Implement `JiraConnector.search()` — JQL or Confluence search | Small, once per platform |
+| 3 | Implement Jira auth — API token or OAuth 2.0 3LO | Small, once per platform |
+| 4 | Map their result shape to `Article` | Trivial |
+| 5 | Build an eval set from that client's real tickets | ~2 hours per client |
+| 6 | Run `npm run calibrate`, set their threshold | Minutes, automated |
+| 7 | Set content scope — which spaces or projects to search | Minutes |
+
+Items 1-4 are one-time per platform; 5-7 are per client, and 6-7 are largely automated.
+Nothing above the connector seam changes.
+
+### Calibration as an onboarding step, not a chore
+
+The per-client eval requirement looks like a burden. Treated properly it is a feature.
+
+The method used to build this project's eval is repeatable: sample the client's real
+tickets for genuine phrasing, hand-match a few dozen to their articles, measure recall,
+sweep the threshold. `npm run calibrate` should emit a record a client can be shown —
+*"recall@1 71%, recommended coverage floor 0.35, here are the questions it fails."*
+
+That is a materially stronger position than connecting a client's instance and hoping. It
+also means `GATE_MIN_COVERAGE` must stay configuration (section 7), never a constant in
+code, and each deployment should keep its calibration record alongside its config.
