@@ -2,15 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build an Express/TypeScript service that answers questions from the abhrademo4 ServiceNow knowledge base using Claude via the UST LLM gateway, grounded in a hand-rolled BM25 index and citing every source by `sys_id`.
+**Goal:** Build an Express/TypeScript service that answers questions from a ticketing platform's knowledge base using Claude via the UST LLM gateway, citing every source, behind a platform-agnostic connector seam with ServiceNow as the first implementation.
 
-**Architecture:** Four pure-ish modules — `servicenow/` (OAuth + fetch), `index/` (strip, tokenise, BM25), `llm/` (prompt, citation verification, preflight), `server/` (routes, state) — plus a `main.ts` boot sequence. The corpus is ~200 short articles held in memory; there is no database, no embeddings and no vector store. Retrieval decides "I don't know" before the model is ever called.
+**Architecture:** A `KnowledgeConnector` interface is the only thing that knows which platform we talk to. Above it, four modules operate purely on `Article`: `gate/` (decides whether we know the answer), `llm/` (gateway, prompts, citation verification), `server/` (routes, state), and a static chat UI. There is no database, no local index and no embeddings — search runs live against the platform, per question.
 
-**Tech Stack:** Node 22+, TypeScript (ESM, `NodeNext`), Express 5, `@anthropic-ai/sdk`, `zod`, `dotenv`; dev-only `tsx`, `vitest`, `typescript`, `@types/*`.
+**Tech Stack:** Node 22+ (dev machine runs v24.18.0), TypeScript (ESM, `NodeNext`), Express 5, `@anthropic-ai/sdk`, `zod`, `dotenv`; dev-only `tsx`, `vitest`, `typescript`, `@types/*`.
 
-**Spec:** [docs/superpowers/specs/2026-09-13-nowops-chatbot-design.md](../specs/2026-09-13-nowops-chatbot-design.md)
-
----
+**Spec:** [docs/superpowers/specs/2026-09-13-nowops-chatbot-design.md](../specs/2026-09-13-nowops-chatbot-design.md) (revision 3)
 
 ## Global Constraints
 
@@ -18,30 +16,14 @@ Every task's requirements implicitly include this section.
 
 - **Node 22 LTS floor.** `.nvmrc` pins `22`; `package.json` sets `"engines": { "node": ">=22" }`. The dev machine runs v24.18.0, which satisfies it.
 - **Runtime dependencies are exactly four:** `express`, `@anthropic-ai/sdk`, `dotenv`, `zod`. Dev-only: `typescript`, `tsx`, `vitest`, `@types/node`, `@types/express`. **Adding any other dependency is a plan violation** — raise it rather than installing it.
-- **BM25 is hand-rolled**, ~40 lines, no retrieval library (spec §6).
-- **`sys_id` is the identity key everywhere** (D10). Article `number` is not unique on abhrademo4 — `KB0010004` maps to four different articles. `number` is a display label only. Article links use `kb_view.do?sys_kb_id=<sys_id>`, never `sysparm_article=<number>`.
-- **The model cites bracketed labels `[1]`–`[5]`, never KB numbers** (D10, spec §10). The server maps labels back to `sys_id`.
-- **The knowledge base allowlist is keyed by knowledge base `sys_id`** (D9), because the 9 most valuable knowledge bases have ACL-restricted records with no readable title.
+- **Nothing above the connector seam may import from `src/connectors/servicenow/`** (D12). The gate, llm, server and UI operate on `Article` only. Task 11 proves this.
+- **`Article.id` is the identity key everywhere** (D10). On ServiceNow that is `sys_id`. Article `number` is not unique on abhrademo4 — `KB0010004` maps to four different articles — so it is a display label only. Links use `kb_view.do?sys_kb_id=<sys_id>`, never `sysparm_article=<number>`.
+- **The model cites bracketed labels `[1]`–`[5]`, never KB numbers** (D10, spec §10). The server maps labels back to `Article.id`.
+- **The knowledge base allowlist is keyed by knowledge base `sys_id`** (D9), because 9 of the most valuable knowledge bases have ACL-restricted records with no readable title.
 - **No `GET /v1/models` discovery against the gateway** (spec §7 rule 1). The model list is explicit configuration.
-- **Startup preflight is mandatory** (spec §7 rule 2). A wrong gateway model id is a silent wrong answer, so it must be a boot failure.
-- **No secret ever reaches a log line** (spec §7 rule 4, acceptance criterion 6).
-- **TDD.** Every task writes the failing test first, watches it fail, then implements. Commit at the end of each task.
-- ESM with `"module": "NodeNext"` — **all relative imports carry a `.js` extension**, including in tests (`import { tokenize } from '../src/index/build.js'`).
-
-### Spec deviations this plan makes, and why
-
-Three, all small, all deliberate:
-
-1. **`src/main.ts` is added** to the spec §6 layout. The spec's startup sequence needs somewhere to live, and keeping it out of `app.ts` lets integration tests import the app without booting the network.
-2. **`scripts/` is added** for two one-off operator scripts (allowlist discovery, threshold calibration). They are not shipped code and are not imported by `src/`.
-3. **Spec §4 step 4 says retrieved articles enter the prompt "carrying their KB numbers".** This contradicts §10 and D10, which are newer. **§10 wins:** labels in, `sys_id` out.
-
-### Inputs still missing at plan time
-
-- `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `CLAUDE_MODEL`, `CLAUDE_MODEL_CHOICES` — held by the project owner. Tasks 1–7 and 9 do not need them (tests stub the SDK). **Tasks 8 and 10 are blocked without them.**
-- `SN_KB_ALLOWLIST` — **produced by Task 5**, not supplied.
-- `RETRIEVAL_MIN_SCORE` — **produced by Task 6**, not supplied.
-- `SN_INSTANCE_URL`, `SN_CLIENT_ID`, `SN_CLIENT_SECRET`, `SN_REFRESH_TOKEN` are already in `.env` (written 2026-09-13 by `Export-SnEnvFile`).
+- **Never log secrets.** Mask API keys as `sk-abc12…wxyz`; keep a deny-list of secret env names in the logger.
+- **`.env` is never committed.** `.gitignore` already covers it. `.env.example` holds placeholders only.
+- **A failure to reach the platform must never be reported as "no knowledge base match"** (spec §13). Different message, different `gateReason`.
 
 ---
 
@@ -49,1449 +31,1083 @@ Three, all small, all deliberate:
 
 | File | Responsibility |
 |---|---|
-| `package.json`, `tsconfig.json`, `.nvmrc`, `.env.example` | Project setup, Node pin, committed env template |
-| `src/types.ts` | `Article`, `Scored`, `Turn`, `Source` — shared shapes, no logic |
-| `src/config.ts` | zod env schema, `loadConfig(overrides?)`, `mask()`, `redact()` |
-| `src/index/build.ts` | `stripHtml`, `tokenize`, `isCode`, `buildIndex`, scoring constants |
-| `src/index/search.ts` | `search(index, query, topK)` — BM25 + title weight + code boost |
-| `src/servicenow/auth.ts` | `getAccessToken`, `resetTokenCache` — refresh-token grant with cache |
-| `src/servicenow/articles.ts` | `mapArticle`, `fetchArticles`, `articleUrl` — paged `kb_knowledge` fetch |
-| `src/llm/client.ts` | `buildContextBlock`, `extractCitations`, `answerQuestion`, `preflight`, `SYSTEM_PROMPT` |
-| `src/server/routes.ts` | `createRoutes(deps)` — `/api/chat`, `/api/sync`, `/api/health`; `AppState`; `pickModel` |
-| `src/server/app.ts` | `createApp(deps)` — Express, JSON body, static `public/` |
-| `src/main.ts` | Boot sequence: config → preflight → token → fetch → index → listen |
-| `public/index.html`, `public/app.js`, `public/styles.css` | Chat UI, model picker, three-state source line |
-| `scripts/discover-allowlist.ts` | One-off: group live articles by `kb_knowledge_base` sys_id (Task 5) |
-| `scripts/calibrate.ts` | One-off: sweep the threshold against the eval set (Task 6) |
-| `tests/fixtures/retrieval-eval.json` | **Exists already** — 35 in-scope, 10 out-of-scope |
-| `tests/fixtures/kb-articles.json` | Raw `kb_knowledge` API response, captured in Task 5 |
+| `package.json`, `tsconfig.json`, `.nvmrc` | Toolchain and scripts |
+| `.env.example` | Documented placeholder config |
+| `src/config.ts` | Load + validate env with zod; fail fast |
+| `src/log.ts` | Single-line structured logging with secret masking |
+| `src/connectors/types.ts` | `Article`, `KnowledgeConnector` — **the platform seam** |
+| `src/connectors/index.ts` | Select connector from `CONNECTOR` env var |
+| `src/connectors/fake.ts` | In-memory connector for tests and the seam proof |
+| `src/connectors/servicenow/auth.ts` | OAuth refresh-token grant, cached access token |
+| `src/connectors/servicenow/search.ts` | Live `kb_knowledge` text search → `Article[]` |
+| `src/gate/tokenise.ts` | Lowercase, strip punctuation, drop stopwords, coverage |
+| `src/gate/decide.ts` | Token guard + coverage floor → answer or decline |
+| `src/llm/prompt.ts` | Context block, citation parsing and verification |
+| `src/llm/client.ts` | Gateway client, preflight |
+| `src/server/routes.ts` | `/api/chat`, `/api/health` |
+| `src/server/app.ts` | Express wiring, static files |
+| `src/main.ts` | Boot sequence |
+| `public/index.html`, `app.js`, `styles.css` | Chat UI with the three-state source line |
+| `tools/eval.ts` | `npm run eval` — recall@k against the eval set |
+| `tools/calibrate.ts` | `npm run calibrate` — threshold sweep + recommendation |
+| `tests/fixtures/retrieval-eval.json` | **Already exists** — 35 in-scope, 10 out-of-scope |
 
 ---
 
-## Task 1: Project scaffold and configuration
+## Task 1: Project scaffold, config and logging
 
 **Files:**
-- Create: `package.json`, `tsconfig.json`, `.nvmrc`, `.env.example`, `src/types.ts`, `src/config.ts`
-- Test: `tests/config.test.ts`
+- Create: `package.json`, `tsconfig.json`, `.nvmrc`, `.env.example`, `src/config.ts`, `src/log.ts`
+- Test: `tests/config.test.ts`, `tests/log.test.ts`
 
 **Interfaces:**
-- Consumes: nothing.
-- Produces: `Config` (the inferred zod type), `loadConfig(overrides?: Partial<RawEnv>, source?: NodeJS.ProcessEnv): Config`, `mask(secret: string): string`, `redact(text: string, cfg: Config): string`, `SECRET_ENV_KEYS`. And the shared types `Article`, `Scored`, `Turn`, `Source` from `src/types.ts`.
+- Consumes: nothing
+- Produces: `parseConfig(env): Config` and `loadConfig(): Config`, throwing on invalid env. `Config` fields: `port`, `connector`, `anthropicApiKey`, `anthropicBaseUrl`, `claudeModel`, `claudeModelChoices: string[]`, `gateMinTokens: number`, `gateMinCoverage: number`, `searchLimit: number`, `sn: { instanceUrl, clientId, clientSecret, refreshToken, kbAllowlist: string[] }`. Also `mask(secret: string): string` and `log(event: string, fields?: Record<string, unknown>): void`.
 
-**Why `loadConfig` takes a `source`:** it merges `process.env` by default, and `dotenv/config` loads the developer's real `.env`. Without an explicit source, every test asserting a default or a missing variable would depend on what happens to be in that file, and real secrets could end up inside test assertions. **Tests always call `loadConfig(values, {})`.**
+- [ ] **Step 1: Initialise the project**
 
-- [ ] **Step 1: Create `.nvmrc`**
-
-```
-22
-```
-
-- [ ] **Step 2: Create `package.json`**
-
-```json
-{
-  "name": "nowops-chat",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "engines": { "node": ">=22" },
-  "scripts": {
-    "dev": "tsx watch src/main.ts",
-    "build": "tsc",
-    "start": "node dist/main.js",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.65.0",
-    "dotenv": "^17.2.0",
-    "express": "^5.1.0",
-    "zod": "^4.1.0"
-  },
-  "devDependencies": {
-    "@types/express": "^5.0.0",
-    "@types/node": "^22.10.0",
-    "tsx": "^4.20.0",
-    "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
-  }
-}
+```bash
+cd C:/dev/nowops-chat
+npm init -y
+npm install express @anthropic-ai/sdk dotenv zod
+npm install -D typescript tsx vitest @types/node @types/express
+node -e "const p=require('./package.json');p.type='module';p.engines={node:'>=22'};p.scripts={dev:'tsx watch src/main.ts',start:'node dist/main.js',build:'tsc',test:'vitest run',eval:'tsx tools/eval.ts',calibrate:'tsx tools/calibrate.ts'};require('fs').writeFileSync('package.json',JSON.stringify(p,null,2))"
+echo 22 > .nvmrc
 ```
 
-- [ ] **Step 3: Create `tsconfig.json`**
+- [ ] **Step 2: Create `tsconfig.json`**
 
 ```json
 {
   "compilerOptions": {
-    "target": "ES2023",
+    "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2023"],
     "outDir": "dist",
     "rootDir": ".",
     "strict": true,
-    "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "types": ["node"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*.ts", "tools/**/*.ts", "tests/**/*.ts"]
 }
 ```
 
-- [ ] **Step 4: Install dependencies**
+- [ ] **Step 3: Write the failing tests**
 
-Run: `npm install`
-Expected: `package-lock.json` created, no vulnerabilities blocking. If `npm install` reports a major version of any dependency different from the ranges above, keep the installed version and note it — do not add packages.
-
-- [ ] **Step 5: Create `src/types.ts`**
+`tests/config.test.ts`:
 
 ```ts
-/** A knowledge base article, HTML already stripped from `body`. */
-export type Article = {
-  /** The only safe identifier on this instance — `number` is not unique (D10). */
-  sysId: string;
-  /** Display label only. Never used to resolve or link an article. */
-  number: string;
-  title: string;
-  body: string;
-  /** sys_id of the owning kb_knowledge_base record. */
-  kbSysId: string;
-  category: string;
-};
+import { describe, it, expect } from 'vitest'
+import { parseConfig } from '../src/config.js'
 
-export type Scored = { article: Article; score: number };
+const valid = {
+  ANTHROPIC_API_KEY: 'sk-test-abcdefghijklmnop',
+  ANTHROPIC_BASE_URL: 'https://llmproxy.example.com',
+  CLAUDE_MODEL: 'claude-sonnet-4-5-Codon',
+  SN_INSTANCE_URL: 'https://abhrademo4.service-now.com',
+  SN_CLIENT_ID: 'cid',
+  SN_CLIENT_SECRET: 'csecret',
+  SN_REFRESH_TOKEN: 'rtoken',
+  SN_KB_ALLOWLIST: 'aaa,bbb , ccc',
+}
 
-export type Turn = { role: 'user' | 'assistant'; content: string };
+describe('parseConfig', () => {
+  it('parses a valid environment', () => {
+    const c = parseConfig(valid)
+    expect(c.claudeModel).toBe('claude-sonnet-4-5-Codon')
+    expect(c.sn.kbAllowlist).toEqual(['aaa', 'bbb', 'ccc'])
+  })
 
-export type Source = {
-  number: string;
-  title: string;
-  sysId: string;
-  score: number;
-  url: string;
-};
+  it('applies documented defaults', () => {
+    const c = parseConfig(valid)
+    expect(c.gateMinTokens).toBe(2)
+    expect(c.gateMinCoverage).toBe(0.3)
+    expect(c.searchLimit).toBe(5)
+    expect(c.connector).toBe('servicenow')
+  })
+
+  it('defaults the model choice list to the single configured model', () => {
+    expect(parseConfig(valid).claudeModelChoices).toEqual(['claude-sonnet-4-5-Codon'])
+  })
+
+  it('throws naming the missing variable', () => {
+    const { CLAUDE_MODEL, ...missing } = valid
+    expect(() => parseConfig(missing)).toThrow(/CLAUDE_MODEL/)
+  })
+
+  it('rejects an empty allowlist, which would search nothing', () => {
+    expect(() => parseConfig({ ...valid, SN_KB_ALLOWLIST: '' })).toThrow(/SN_KB_ALLOWLIST/)
+  })
+})
 ```
 
-- [ ] **Step 6: Write the failing test**
-
-Create `tests/config.test.ts`:
+`tests/log.test.ts`:
 
 ```ts
-import { describe, expect, it } from 'vitest';
-import { loadConfig, mask, redact } from '../src/config.js';
-
-const VALID = {
-  ANTHROPIC_API_KEY: 'sk-abc123456789wxyz',
-  ANTHROPIC_BASE_URL: 'https://llmproxy.example.com',
-  CLAUDE_MODEL: 'gateway-claude-model',
-  SN_INSTANCE_URL: 'https://abhrademo4.service-now.com',
-  SN_CLIENT_ID: 'client-id',
-  SN_CLIENT_SECRET: 'super-secret-value',
-  SN_REFRESH_TOKEN: 'refresh-token-value',
-  SN_KB_ALLOWLIST: 'aaa111,bbb222',
-  RETRIEVAL_MIN_SCORE: '4.2',
-};
+import { describe, it, expect } from 'vitest'
+import { mask } from '../src/log.js'
 
 describe('mask', () => {
-  it('shows a prefix and suffix but never the middle', () => {
-    expect(mask('sk-abc123456789wxyz')).toBe('sk-ab…wxyz');
-  });
+  it('shows only the first and last few characters', () => {
+    expect(mask('sk-abc123456789wxyz')).toBe('sk-ab…wxyz')
+  })
 
-  it('refuses to leak anything from a short secret', () => {
-    expect(mask('short')).toBe('***');
-  });
-});
+  it('fully masks short secrets rather than leaking them', () => {
+    expect(mask('short')).toBe('…')
+  })
 
-// Second argument `{}` replaces process.env, so no test depends on the real .env.
-describe('loadConfig', () => {
-  it('parses a valid environment and applies defaults', () => {
-    const cfg = loadConfig(VALID, {});
-    expect(cfg.RETRIEVAL_TOP_K).toBe(5);
-    expect(cfg.RETRIEVAL_MIN_SCORE).toBe(4.2);
-    expect(cfg.PORT).toBe(3000);
-  });
-
-  it('throws a message naming every missing variable', () => {
-    const { ANTHROPIC_API_KEY, SN_CLIENT_SECRET, ...partial } = VALID;
-    expect(() => loadConfig(partial, {})).toThrowError(/ANTHROPIC_API_KEY[\s\S]*SN_CLIENT_SECRET/);
-  });
-
-  it('ignores process.env when a source is supplied', () => {
-    expect(() => loadConfig({}, { ...VALID })).not.toThrow();
-    expect(() => loadConfig({}, {})).toThrowError(/ANTHROPIC_API_KEY/);
-  });
-
-  it('rejects a base URL that is not a URL', () => {
-    expect(() => loadConfig({ ...VALID, ANTHROPIC_BASE_URL: 'llmproxy' }, {})).toThrowError(
-      /ANTHROPIC_BASE_URL/,
-    );
-  });
-
-  it('splits the model choices and always includes the default model', () => {
-    const cfg = loadConfig({ ...VALID, CLAUDE_MODEL_CHOICES: 'model-a, model-b' }, {});
-    expect(cfg.modelChoices).toEqual(['gateway-claude-model', 'model-a', 'model-b']);
-  });
-
-  it('defaults model choices to the single configured model', () => {
-    expect(loadConfig(VALID, {}).modelChoices).toEqual(['gateway-claude-model']);
-  });
-
-  it('does not duplicate the default model when it also appears in the choices', () => {
-    const cfg = loadConfig({ ...VALID, CLAUDE_MODEL_CHOICES: 'gateway-claude-model, model-a' }, {});
-    expect(cfg.modelChoices).toEqual(['gateway-claude-model', 'model-a']);
-  });
-
-  it('splits the knowledge base allowlist on commas', () => {
-    expect(loadConfig(VALID, {}).kbAllowlist).toEqual(['aaa111', 'bbb222']);
-  });
-});
-
-describe('redact', () => {
-  it('masks every secret value wherever it appears in a log line', () => {
-    const cfg = loadConfig(VALID, {});
-    const line = `POST failed key=sk-abc123456789wxyz secret=super-secret-value`;
-    const out = redact(line, cfg);
-    expect(out).not.toContain('sk-abc123456789wxyz');
-    expect(out).not.toContain('super-secret-value');
-    expect(out).toContain('sk-ab…wxyz');
-  });
-
-  it('leaves non-secret config values alone', () => {
-    const cfg = loadConfig(VALID, {});
-    expect(redact('model=gateway-claude-model', cfg)).toBe('model=gateway-claude-model');
-  });
-});
+  it('handles empty input', () => {
+    expect(mask('')).toBe('…')
+  })
+})
 ```
 
-- [ ] **Step 7: Run the test to verify it fails**
+- [ ] **Step 4: Run the tests to verify they fail**
 
-Run: `npm test -- tests/config.test.ts`
-Expected: FAIL — `Failed to resolve import "../src/config.js"`.
+Run: `npx vitest run`
+Expected: FAIL — `Cannot find module '../src/config.js'`
 
-- [ ] **Step 8: Implement `src/config.ts`**
+- [ ] **Step 5: Implement `src/log.ts`**
 
 ```ts
-import 'dotenv/config';
-import { z } from 'zod';
-
-/**
- * Explicit deny-list of env vars whose values must never reach a log line.
- * Spec §7 rule 4 — masking is by value, so a secret is caught wherever it is
- * interpolated, not only where someone remembered to mask it.
- */
-export const SECRET_ENV_KEYS = [
+const SECRET_ENV_NAMES = [
   'ANTHROPIC_API_KEY',
   'SN_CLIENT_SECRET',
   'SN_REFRESH_TOKEN',
-] as const;
+  'SN_CLIENT_ID',
+]
 
-const Env = z.object({
-  ANTHROPIC_API_KEY: z.string().min(1),
-  ANTHROPIC_BASE_URL: z.string().url(),
-  CLAUDE_MODEL: z.string().min(1),
-  CLAUDE_MODEL_CHOICES: z.string().optional(),
-
-  SN_INSTANCE_URL: z.string().url(),
-  SN_CLIENT_ID: z.string().min(1),
-  SN_CLIENT_SECRET: z.string().min(1),
-  SN_REFRESH_TOKEN: z.string().min(1),
-  SN_KB_ALLOWLIST: z.string().min(1),
-
-  RETRIEVAL_TOP_K: z.coerce.number().int().positive().default(5),
-  RETRIEVAL_MIN_SCORE: z.coerce.number().nonnegative(),
-
-  PORT: z.coerce.number().int().positive().default(3000),
-  MAX_MESSAGE_CHARS: z.coerce.number().int().positive().default(2000),
-  CONTEXT_CHAR_BUDGET: z.coerce.number().int().positive().default(12000),
-});
-
-export type RawEnv = z.input<typeof Env>;
-export type Config = z.output<typeof Env> & {
-  modelChoices: string[];
-  kbAllowlist: string[];
-};
-
-const splitList = (value: string | undefined): string[] =>
-  (value ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-/**
- * Spec §7 rule 3: override ?? env ?? throw, so a gateway move needs no code change.
- * `source` exists so tests can pass `{}` and stay independent of the real .env.
- */
-export function loadConfig(
-  overrides: Partial<RawEnv> = {},
-  source: NodeJS.ProcessEnv = process.env,
-): Config {
-  const parsed = Env.safeParse({ ...source, ...overrides });
-  if (!parsed.success) {
-    const problems = parsed.error.issues
-      .map((i) => `  ${i.path.join('.')}: ${i.message}`)
-      .join('\n');
-    throw new Error(`Invalid configuration:\n${problems}`);
-  }
-  const env = parsed.data;
-  const choices = splitList(env.CLAUDE_MODEL_CHOICES);
-  return {
-    ...env,
-    modelChoices: [env.CLAUDE_MODEL, ...choices.filter((m) => m !== env.CLAUDE_MODEL)],
-    kbAllowlist: splitList(env.SN_KB_ALLOWLIST),
-  };
-}
-
-/** `sk-abc12…wxyz`. Anything too short to mask safely becomes `***`. */
+/** Masks a secret for logs: sk-abc123456789wxyz -> sk-ab…wxyz */
 export function mask(secret: string): string {
-  if (secret.length <= 9) return '***';
-  return `${secret.slice(0, 5)}…${secret.slice(-4)}`;
+  if (!secret || secret.length < 12) return '…'
+  return `${secret.slice(0, 5)}…${secret.slice(-4)}`
 }
 
-/** Replace every configured secret value with its mask. Use on anything logged. */
-export function redact(text: string, cfg: Config): string {
-  let out = text;
-  for (const key of SECRET_ENV_KEYS) {
-    const value = cfg[key];
-    if (value) out = out.split(value).join(mask(value));
+/** Single-line structured log. Values under known secret keys are masked. */
+export function log(event: string, fields: Record<string, unknown> = {}): void {
+  const safe: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(fields)) {
+    safe[k] = SECRET_ENV_NAMES.includes(k) && typeof v === 'string' ? mask(v) : v
   }
-  return out;
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...safe }))
 }
 ```
 
-- [ ] **Step 9: Run the test to verify it passes**
+- [ ] **Step 6: Implement `src/config.ts`**
 
-Run: `npm test -- tests/config.test.ts`
-Expected: PASS, 11 tests.
+```ts
+import { z } from 'zod'
+import dotenv from 'dotenv'
 
-- [ ] **Step 10: Create `.env.example` (placeholders only — never real values)**
+dotenv.config()
+
+const csv = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean)
+
+const Schema = z.object({
+  PORT: z.string().default('3000'),
+  CONNECTOR: z.string().default('servicenow'),
+
+  ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY is required'),
+  ANTHROPIC_BASE_URL: z.string().url('ANTHROPIC_BASE_URL must be a URL'),
+  CLAUDE_MODEL: z.string().min(1, 'CLAUDE_MODEL is required'),
+  CLAUDE_MODEL_CHOICES: z.string().default(''),
+
+  SN_INSTANCE_URL: z.string().url('SN_INSTANCE_URL must be a URL'),
+  SN_CLIENT_ID: z.string().min(1, 'SN_CLIENT_ID is required'),
+  SN_CLIENT_SECRET: z.string().min(1, 'SN_CLIENT_SECRET is required'),
+  SN_REFRESH_TOKEN: z.string().min(1, 'SN_REFRESH_TOKEN is required'),
+  SN_KB_ALLOWLIST: z.string().min(1, 'SN_KB_ALLOWLIST is required'),
+
+  GATE_MIN_TOKENS: z.string().default('2'),
+  GATE_MIN_COVERAGE: z.string().default('0.3'),
+  SEARCH_LIMIT: z.string().default('5'),
+})
+
+export interface Config {
+  port: number
+  connector: string
+  anthropicApiKey: string
+  anthropicBaseUrl: string
+  claudeModel: string
+  claudeModelChoices: string[]
+  gateMinTokens: number
+  gateMinCoverage: number
+  searchLimit: number
+  sn: {
+    instanceUrl: string
+    clientId: string
+    clientSecret: string
+    refreshToken: string
+    kbAllowlist: string[]
+  }
+}
+
+export function parseConfig(env: Record<string, string | undefined>): Config {
+  const r = Schema.safeParse(env)
+  if (!r.success) {
+    const detail = r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')
+    throw new Error(`Invalid configuration — ${detail}`)
+  }
+  const e = r.data
+  const allowlist = csv(e.SN_KB_ALLOWLIST)
+  if (allowlist.length === 0) {
+    throw new Error('Invalid configuration — SN_KB_ALLOWLIST resolved to zero knowledge bases')
+  }
+  return {
+    port: Number(e.PORT),
+    connector: e.CONNECTOR,
+    anthropicApiKey: e.ANTHROPIC_API_KEY,
+    anthropicBaseUrl: e.ANTHROPIC_BASE_URL,
+    claudeModel: e.CLAUDE_MODEL,
+    claudeModelChoices: e.CLAUDE_MODEL_CHOICES ? csv(e.CLAUDE_MODEL_CHOICES) : [e.CLAUDE_MODEL],
+    gateMinTokens: Number(e.GATE_MIN_TOKENS),
+    gateMinCoverage: Number(e.GATE_MIN_COVERAGE),
+    searchLimit: Number(e.SEARCH_LIMIT),
+    sn: {
+      instanceUrl: e.SN_INSTANCE_URL.replace(/\/$/, ''),
+      clientId: e.SN_CLIENT_ID,
+      clientSecret: e.SN_CLIENT_SECRET,
+      refreshToken: e.SN_REFRESH_TOKEN,
+      kbAllowlist: allowlist,
+    },
+  }
+}
+
+export const loadConfig = (): Config => parseConfig(process.env)
+```
+
+- [ ] **Step 7: Run the tests to verify they pass**
+
+Run: `npx vitest run`
+Expected: PASS, 8 tests
+
+- [ ] **Step 8: Write `.env.example`**
+
+The real `.env` already holds live ServiceNow values written by `Export-SnEnvFile`. This committed file documents the shape with placeholders only.
 
 ```
-# ---- LLM gateway (from the project owner) ----
+# LLM gateway (UST LiteLLM)
 ANTHROPIC_API_KEY=sk-replace-me
 ANTHROPIC_BASE_URL=https://llmproxy.example.com
-CLAUDE_MODEL=replace-with-exact-gateway-model-id
-# Optional, comma-separated; powers the UI model picker
-CLAUDE_MODEL_CHOICES=
+CLAUDE_MODEL=exact-gateway-model-id
+CLAUDE_MODEL_CHOICES=model-a,model-b
 
-# ---- ServiceNow abhrademo4 ----
+# ServiceNow (written by Export-SnEnvFile — do not hand-edit)
 SN_INSTANCE_URL=https://abhrademo4.service-now.com
 SN_CLIENT_ID=replace-me
 SN_CLIENT_SECRET=replace-me
 SN_REFRESH_TOKEN=replace-me
-# Comma-separated knowledge base sys_ids, NOT titles (D9).
-# Produced by: npx tsx scripts/discover-allowlist.ts
-SN_KB_ALLOWLIST=
 
-# ---- Retrieval ----
-RETRIEVAL_TOP_K=5
-# Produced by: npx tsx scripts/calibrate.ts
-RETRIEVAL_MIN_SCORE=
+# Knowledge base allowlist — sys_ids, NOT titles (D9).
+# Excludes Security Incident (450 demo articles) and SIR Runbook (14).
+SN_KB_ALLOWLIST=dfc19531bf2021003f07e2c1ac0739ab,c4cdddd0773302109ac0cf0bbb5a99dd,a7e8a78bff0221009b20ffffffffff17,adb2c51383f6ee503be7a7d0deaad348,4fe5d7e683f08b103be7a7d0deaad3d5,bb0370019f22120047a2d126c42e7073,e381da4b2bb6ee50d16df709f291bff0,05ff44289f011200550bf7b6077fcfa3,1f15baa8c303101088cee5f87d40dd86,29cb47688322a2103be7a7d0deaad3e2,820f49a42b158350d16df709f291bf21,cb574c6c3b118710913c44e643e45a75,c0a54bac871023000e3dd61e36cb0bcb,0aa3ffa7db7c030064dd36cb7c96197f
 
-# ---- Server ----
+# Relevance gate
+GATE_MIN_TOKENS=2
+GATE_MIN_COVERAGE=0.3
+SEARCH_LIMIT=5
+CONNECTOR=servicenow
 PORT=3000
-MAX_MESSAGE_CHARS=2000
-CONTEXT_CHAR_BUDGET=12000
 ```
 
-- [ ] **Step 11: Verify `.env` is still ignored**
+- [ ] **Step 9: Append the non-secret settings to the real `.env`**
 
-Run: `git status --porcelain && git check-ignore -v .env`
-Expected: `.env` does not appear in `git status`; `check-ignore` prints the `.gitignore:2:.env` rule. **If `.env` appears as untracked, stop and fix `.gitignore` before committing anything.**
-
-- [ ] **Step 12: Commit**
+`Export-SnEnvFile` wrote only the four `SN_*` OAuth values. Append the rest without disturbing them:
 
 ```bash
-git add package.json package-lock.json tsconfig.json .nvmrc .env.example src/types.ts src/config.ts tests/config.test.ts
-git commit -m "feat: project scaffold, validated config, secret masking"
+node -e "const fs=require('fs');const add=fs.readFileSync('.env.example','utf8').split('\n').filter(l=>/^(SN_KB_ALLOWLIST|GATE_|SEARCH_LIMIT|CONNECTOR|PORT)=/.test(l)).join('\n');fs.appendFileSync('.env','\n'+add+'\n')"
+```
+
+Gateway values remain outstanding (spec §17). Task 7 is the first task that needs them.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add package.json package-lock.json tsconfig.json .nvmrc .env.example src/config.ts src/log.ts tests/config.test.ts tests/log.test.ts
+git commit -m "feat: project scaffold, validated config and masking logger"
 ```
 
 ---
 
-## Task 2: HTML stripping, tokenisation and index building
+## Task 2: The connector seam
 
 **Files:**
-- Create: `src/index/build.ts`
-- Test: `tests/index-build.test.ts`
+- Create: `src/connectors/types.ts`, `src/connectors/fake.ts`, `src/connectors/index.ts`
+- Test: `tests/connector-contract.test.ts`
 
 **Interfaces:**
-- Consumes: `Article` from `src/types.ts`.
-- Produces: `stripHtml(html: string): string`, `tokenize(text: string): string[]`, `isCode(token: string): boolean`, `buildIndex(articles: Article[]): KbIndex`, and the constants `K1`, `B`, `TITLE_WEIGHT`, `CODE_BOOST`. Types `IndexedDoc` and `KbIndex`:
+- Consumes: `Config` (Task 1)
+- Produces: `Article { id: string; label?: string; title: string; body: string; url: string }`; `HealthStatus { ok: boolean; detail?: string }`; `KnowledgeConnector { name: string; search(query: string, limit: number): Promise<Article[]>; health(): Promise<HealthStatus> }`; `PlatformUnavailableError`; `makeFakeConnector(articles: Article[]): KnowledgeConnector`; `getConnector(cfg: Config): KnowledgeConnector`
+
+- [ ] **Step 1: Write the failing contract test**
+
+`tests/connector-contract.test.ts`:
 
 ```ts
-export type IndexedDoc = {
-  article: Article;
-  /** Weighted term frequency: title terms count TITLE_WEIGHT times. */
-  tf: Map<string, number>;
-  /** Weighted document length, consistent with `tf`. */
-  len: number;
-  /** Tokens that look like identifiers or error codes. */
-  codes: Set<string>;
-};
-export type KbIndex = {
-  docs: IndexedDoc[];
-  df: Map<string, number>;
-  avgLen: number;
-  n: number;
-};
+import { describe, it, expect } from 'vitest'
+import { makeFakeConnector } from '../src/connectors/fake.js'
+import type { Article } from '../src/connectors/types.js'
+
+const articles: Article[] = [
+  { id: 'a1', label: 'KB0001', title: 'VPN will not connect', body: 'restart the vpn client', url: 'https://x/a1' },
+  { id: 'a2', label: 'KB0002', title: 'Printer jam', body: 'open the tray and clear paper', url: 'https://x/a2' },
+]
+
+describe('KnowledgeConnector contract', () => {
+  it('returns matching articles', async () => {
+    const r = await makeFakeConnector(articles).search('vpn', 5)
+    expect(r).toHaveLength(1)
+    expect(r[0].id).toBe('a1')
+  })
+
+  it('respects the limit', async () => {
+    expect(await makeFakeConnector(articles).search('e', 1)).toHaveLength(1)
+  })
+
+  it('returns an empty array rather than throwing when nothing matches', async () => {
+    expect(await makeFakeConnector(articles).search('zzzznomatch', 5)).toEqual([])
+  })
+
+  it('reports health', async () => {
+    expect((await makeFakeConnector(articles).health()).ok).toBe(true)
+  })
+})
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 2: Run to verify it fails**
 
-Create `tests/index-build.test.ts`:
+Run: `npx vitest run tests/connector-contract.test.ts`
+Expected: FAIL — module not found
 
-```ts
-import { describe, expect, it } from 'vitest';
-import { buildIndex, isCode, stripHtml, tokenize, TITLE_WEIGHT } from '../src/index/build.js';
-import type { Article } from '../src/types.js';
-
-const article = (over: Partial<Article> = {}): Article => ({
-  sysId: 'sys-1',
-  number: 'KB0010001',
-  title: 'VPN will not connect',
-  body: 'Restart the VPN client and retry.',
-  kbSysId: 'kb-1',
-  category: 'network',
-  ...over,
-});
-
-describe('stripHtml', () => {
-  it('removes tags and collapses whitespace', () => {
-    expect(stripHtml('<p>Hello   <b>world</b></p>')).toBe('Hello world');
-  });
-
-  it('drops script and style content entirely', () => {
-    expect(stripHtml('<style>.a{color:red}</style><p>Keep</p><script>alert(1)</script>')).toBe(
-      'Keep',
-    );
-  });
-
-  it('decodes the entities ServiceNow actually emits', () => {
-    expect(stripHtml('a&nbsp;&amp;&nbsp;b &lt;tag&gt; &quot;q&quot; &#39;s&#39;')).toBe(
-      `a & b <tag> "q" 's'`,
-    );
-  });
-
-  it('inserts a boundary where block tags ran two words together', () => {
-    expect(stripHtml('<li>one</li><li>two</li>')).toBe('one two');
-  });
-
-  it('handles an empty body', () => {
-    expect(stripHtml('')).toBe('');
-  });
-});
-
-describe('tokenize', () => {
-  it('lowercases, splits on punctuation and drops stopwords', () => {
-    expect(tokenize('The VPN is not connecting!')).toEqual(['vpn', 'connecting']);
-  });
-
-  it('keeps identifiers intact as single tokens', () => {
-    expect(tokenize('See KB0010096 for details')).toContain('kb0010096');
-  });
-
-  it('turns bracketed alert codes into plain tokens', () => {
-    expect(tokenize('Critical alert [Alert2276070] .')).toEqual([
-      'critical',
-      'alert',
-      'alert2276070',
-    ]);
-  });
-
-  it('returns nothing for punctuation-only input', () => {
-    expect(tokenize('... !!! ---')).toEqual([]);
-  });
-});
-
-describe('isCode', () => {
-  it('treats a token with three or more consecutive digits as a code', () => {
-    expect(isCode('kb0010096')).toBe(true);
-    expect(isCode('alert2276070')).toBe(true);
-  });
-
-  it('does not treat ordinary words or small numbers as codes', () => {
-    expect(isCode('printer')).toBe(false);
-    expect(isCode('lanes')).toBe(false);
-    expect(isCode('24')).toBe(false);
-  });
-});
-
-describe('buildIndex', () => {
-  it('weights title terms above body terms', () => {
-    const index = buildIndex([article({ title: 'vpn', body: 'vpn' })]);
-    expect(index.docs[0]!.tf.get('vpn')).toBe(TITLE_WEIGHT + 1);
-  });
-
-  it('counts document frequency once per document', () => {
-    const index = buildIndex([
-      article({ sysId: 'a', title: 'vpn vpn vpn', body: 'vpn' }),
-      article({ sysId: 'b', title: 'printer', body: 'printer' }),
-    ]);
-    expect(index.df.get('vpn')).toBe(1);
-    expect(index.n).toBe(2);
-  });
-
-  it('collects code tokens from title and body', () => {
-    const index = buildIndex([article({ title: 'Error KB0010096', body: 'code [ORA12154]' })]);
-    expect(index.docs[0]!.codes).toEqual(new Set(['kb0010096', 'ora12154']));
-  });
-
-  it('computes average weighted length', () => {
-    const index = buildIndex([article({ title: 'a b', body: 'c' })]);
-    expect(index.avgLen).toBe(2 * TITLE_WEIGHT + 1);
-  });
-
-  it('survives an empty corpus without dividing by zero', () => {
-    const index = buildIndex([]);
-    expect(index).toMatchObject({ n: 0, avgLen: 0 });
-    expect(index.docs).toEqual([]);
-  });
-});
-```
-
-- [ ] **Step 2: Run the test to verify it fails**
-
-Run: `npm test -- tests/index-build.test.ts`
-Expected: FAIL — `Failed to resolve import "../src/index/build.js"`.
-
-- [ ] **Step 3: Implement `src/index/build.ts`**
+- [ ] **Step 3: Implement `src/connectors/types.ts`**
 
 ```ts
-import type { Article } from '../types.js';
+/** One knowledge item, whatever platform it came from. */
+export interface Article {
+  /** Stable unique id — ServiceNow sys_id, Confluence page id, Jira issue key. */
+  id: string
+  /** Human-facing label such as KB0010141. Display only: NOT unique on ServiceNow. */
+  label?: string
+  title: string
+  body: string
+  /** Where a human opens this article. */
+  url: string
+}
 
-/** BM25 term-frequency saturation. */
-export const K1 = 1.5;
-/** BM25 length normalisation. */
-export const B = 0.75;
-/** Spec §9: on ~217-character articles the title carries most of the signal. */
-export const TITLE_WEIGHT = 3;
-/** Spec §9: users paste error codes, and BM25 under-weights a rare token that is the whole query. */
-export const CODE_BOOST = 8;
-
-const STOPWORDS = new Set([
-  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'can', 'do', 'does', 'for', 'from',
-  'has', 'have', 'how', 'i', 'if', 'in', 'is', 'it', 'its', 'me', 'my', 'no', 'not', 'of', 'on',
-  'or', 'our', 'so', 'that', 'the', 'then', 'there', 'this', 'to', 'up', 'was', 'we', 'what',
-  'when', 'where', 'which', 'will', 'with', 'you', 'your',
-]);
-
-const ENTITIES: Record<string, string> = {
-  '&nbsp;': ' ',
-  '&amp;': '&',
-  '&lt;': '<',
-  '&gt;': '>',
-  '&quot;': '"',
-  '&#39;': "'",
-  '&apos;': "'",
-};
-
-/** ServiceNow article bodies are HTML. Strip to plain text for both indexing and the prompt. */
-export function stripHtml(html: string): string {
-  return html
-    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;|&amp;|&lt;|&gt;|&quot;|&#39;|&apos;/gi, (m) => ENTITIES[m.toLowerCase()] ?? m)
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
-    .replace(/\s+/g, ' ')
-    .trim();
+export interface HealthStatus {
+  ok: boolean
+  detail?: string
 }
 
 /**
- * Lowercase, split on anything non-alphanumeric, drop stopwords.
- * No stemming (spec §9) — on articles this short it hurts as often as it helps.
- * Splitting on punctuation is what turns `[Alert2276070]` into `alert2276070`.
+ * The platform seam (D12). Nothing above this interface may know which
+ * ticketing platform is in use.
  */
-export function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((t) => t.length > 0 && !STOPWORDS.has(t));
+export interface KnowledgeConnector {
+  name: string
+  search(query: string, limit: number): Promise<Article[]>
+  health(): Promise<HealthStatus>
 }
-
-/** An identifier or error code: any token carrying a run of three or more digits. */
-export function isCode(token: string): boolean {
-  return /\d{3,}/.test(token);
-}
-
-export type IndexedDoc = {
-  article: Article;
-  tf: Map<string, number>;
-  len: number;
-  codes: Set<string>;
-};
-
-export type KbIndex = {
-  docs: IndexedDoc[];
-  df: Map<string, number>;
-  avgLen: number;
-  n: number;
-};
-
-export function buildIndex(articles: Article[]): KbIndex {
-  const docs: IndexedDoc[] = articles.map((article) => {
-    const titleTokens = tokenize(article.title);
-    const bodyTokens = tokenize(article.body);
-    const tf = new Map<string, number>();
-    for (const t of titleTokens) tf.set(t, (tf.get(t) ?? 0) + TITLE_WEIGHT);
-    for (const t of bodyTokens) tf.set(t, (tf.get(t) ?? 0) + 1);
-    return {
-      article,
-      tf,
-      len: titleTokens.length * TITLE_WEIGHT + bodyTokens.length,
-      codes: new Set([...titleTokens, ...bodyTokens].filter(isCode)),
-    };
-  });
-
-  const df = new Map<string, number>();
-  for (const doc of docs) for (const term of doc.tf.keys()) df.set(term, (df.get(term) ?? 0) + 1);
-
-  const n = docs.length;
-  const avgLen = n === 0 ? 0 : docs.reduce((sum, d) => sum + d.len, 0) / n;
-  return { docs, df, avgLen, n };
-}
-```
-
-- [ ] **Step 4: Run the test to verify it passes**
-
-Run: `npm test -- tests/index-build.test.ts`
-Expected: PASS, 16 tests.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/index/build.ts tests/index-build.test.ts
-git commit -m "feat: HTML stripping, tokeniser and weighted BM25 index build"
-```
-
----
-
-## Task 3: BM25 search with title weighting and exact-code boost
-
-**Files:**
-- Create: `src/index/search.ts`
-- Test: `tests/index-search.test.ts`
-
-**Interfaces:**
-- Consumes: `KbIndex`, `tokenize`, `isCode`, `K1`, `B`, `CODE_BOOST` from `src/index/build.js`; `Scored`, `Article` from `src/types.js`.
-- Produces: `search(index: KbIndex, query: string, topK: number): Scored[]` — descending by score, zero-scoring documents excluded, at most `topK` entries.
-
-- [ ] **Step 1: Write the failing test**
-
-Create `tests/index-search.test.ts`:
-
-```ts
-import { describe, expect, it } from 'vitest';
-import { buildIndex } from '../src/index/build.js';
-import { search } from '../src/index/search.js';
-import type { Article } from '../src/types.js';
-
-const article = (sysId: string, title: string, body: string): Article => ({
-  sysId,
-  number: `KB${sysId}`,
-  title,
-  body,
-  kbSysId: 'kb-1',
-  category: 'test',
-});
-
-const corpus = buildIndex([
-  article('a', 'VPN will not connect', 'Users cannot establish a VPN session from home.'),
-  article('b', 'Printer label formatting', 'Information does not fit into the label template.'),
-  article('c', 'Self-checkout NCR terminal will not boot after image push', 'Reimage the lane.'),
-  article('d', 'Reference KB0010096', 'Unrelated body text about stationery orders.'),
-]);
-
-describe('search', () => {
-  it('ranks the article whose title matches the query first', () => {
-    const [top] = search(corpus, 'cannot connect to VPN', 5);
-    expect(top!.article.sysId).toBe('a');
-  });
-
-  it('returns at most topK results', () => {
-    expect(search(corpus, 'the label will not connect boot', 2)).toHaveLength(2);
-  });
-
-  it('sorts strictly by descending score', () => {
-    const scores = search(corpus, 'label printer VPN boot', 5).map((r) => r.score);
-    expect(scores).toEqual([...scores].sort((x, y) => y - x));
-  });
-
-  it('excludes documents that match nothing', () => {
-    expect(search(corpus, 'zzzz nonexistent term', 5)).toEqual([]);
-  });
-
-  it('returns nothing for a query of pure stopwords', () => {
-    expect(search(corpus, 'the and of it', 5)).toEqual([]);
-  });
-
-  it('boosts an exact code match above a stronger prose match', () => {
-    const [top] = search(corpus, 'KB0010096', 5);
-    expect(top!.article.sysId).toBe('d');
-  });
-
-  it('does not boost a code that appears in no document', () => {
-    expect(search(corpus, 'Critical alert [Alert2276070]', 5).map((r) => r.article.sysId)).not.toContain('d');
-  });
-
-  it('returns an empty array for an empty index', () => {
-    expect(search(buildIndex([]), 'anything', 5)).toEqual([]);
-  });
-
-  it('keeps distinct articles that share a KB number separable by sysId (D10)', () => {
-    const dupes = buildIndex([
-      { ...article('x', 'Self-checkout NCR terminal will not boot', 'Lane reimage.'), number: 'KB0010141' },
-      { ...article('y', 'Epson receipt printer has stopped printing', 'Replace roll.'), number: 'KB0010141' },
-    ]);
-    const results = search(dupes, 'epson receipt printer stopped printing', 5);
-    expect(results[0]!.article.sysId).toBe('y');
-    expect(results[0]!.article.number).toBe('KB0010141');
-  });
-});
-```
-
-- [ ] **Step 2: Run the test to verify it fails**
-
-Run: `npm test -- tests/index-search.test.ts`
-Expected: FAIL — `Failed to resolve import "../src/index/search.js"`.
-
-- [ ] **Step 3: Implement `src/index/search.ts`**
-
-```ts
-import { B, CODE_BOOST, isCode, K1, tokenize, type KbIndex } from './build.js';
-import type { Scored } from '../types.js';
 
 /**
- * Okapi BM25 over the weighted index, plus a flat additive boost for each
- * query identifier that appears literally in a document (spec §9).
+ * Thrown when the platform cannot be reached or rejects our credentials.
+ * Distinct from "no results" — the two must never produce the same user message.
  */
-export function search(index: KbIndex, query: string, topK: number): Scored[] {
-  const queryTokens = tokenize(query);
-  if (queryTokens.length === 0 || index.n === 0) return [];
-
-  const uniqueTerms = new Set(queryTokens);
-  const queryCodes = new Set([...uniqueTerms].filter(isCode));
-
-  const scored: Scored[] = index.docs.map((doc) => {
-    let score = 0;
-    for (const term of uniqueTerms) {
-      const df = index.df.get(term);
-      const f = doc.tf.get(term);
-      if (!df || !f) continue;
-      const idf = Math.log(1 + (index.n - df + 0.5) / (df + 0.5));
-      const norm = f + K1 * (1 - B + (B * doc.len) / index.avgLen);
-      score += (idf * f * (K1 + 1)) / norm;
-    }
-    for (const code of queryCodes) if (doc.codes.has(code)) score += CODE_BOOST;
-    return { article: doc.article, score };
-  });
-
-  return scored
-    .filter((s) => s.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK);
+export class PlatformUnavailableError extends Error {
+  constructor(message: string, readonly cause?: unknown) {
+    super(message)
+    this.name = 'PlatformUnavailableError'
+  }
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 4: Implement `src/connectors/fake.ts`**
 
-Run: `npm test -- tests/index-search.test.ts`
-Expected: PASS, 9 tests.
+```ts
+import type { Article, KnowledgeConnector } from './types.js'
 
-- [ ] **Step 5: Commit**
+/** In-memory connector for tests and for proving the seam is real. */
+export function makeFakeConnector(articles: Article[]): KnowledgeConnector {
+  return {
+    name: 'fake',
+    async search(query: string, limit: number): Promise<Article[]> {
+      const q = query.toLowerCase()
+      return articles
+        .filter((a) => `${a.title} ${a.body}`.toLowerCase().includes(q))
+        .slice(0, limit)
+    },
+    async health() {
+      return { ok: true, detail: `fake connector, ${articles.length} articles` }
+    },
+  }
+}
+```
+
+- [ ] **Step 5: Implement `src/connectors/index.ts`**
+
+```ts
+import type { Config } from '../config.js'
+import type { KnowledgeConnector } from './types.js'
+import { makeServiceNowConnector } from './servicenow/search.js'
+
+/** The only place a concrete connector is named. Adding Jira means adding a case here. */
+export function getConnector(cfg: Config): KnowledgeConnector {
+  switch (cfg.connector) {
+    case 'servicenow':
+      return makeServiceNowConnector(cfg)
+    default:
+      throw new Error(`Unknown CONNECTOR '${cfg.connector}'. Implemented: servicenow.`)
+  }
+}
+```
+
+This does not compile until Task 4 creates `servicenow/search.ts`. That is expected — Task 2's test imports `fake.js` directly and passes now. Do not run `npx tsc` until Task 4.
+
+- [ ] **Step 6: Run the contract test**
+
+Run: `npx vitest run tests/connector-contract.test.ts`
+Expected: PASS, 4 tests
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/index/search.ts tests/index-search.test.ts
-git commit -m "feat: BM25 search with title weighting and exact-code boost"
+git add src/connectors/types.ts src/connectors/fake.ts src/connectors/index.ts tests/connector-contract.test.ts
+git commit -m "feat: KnowledgeConnector seam with fake implementation"
 ```
 
 ---
 
-## Task 4: ServiceNow OAuth and article fetch
+## Task 3: ServiceNow OAuth
 
 **Files:**
-- Create: `src/servicenow/auth.ts`, `src/servicenow/articles.ts`
-- Test: `tests/servicenow.test.ts`
+- Create: `src/connectors/servicenow/auth.ts`
+- Test: `tests/servicenow-auth.test.ts`
 
 **Interfaces:**
-- Consumes: `Config` from `src/config.js`; `Article` from `src/types.js`; `stripHtml` from `src/index/build.js`.
-- Produces:
-  - `getAccessToken(cfg: Config, now?: () => number): Promise<string>`
-  - `resetTokenCache(): void`
-  - `mapArticle(raw: RawArticle): Article`
-  - `fetchArticles(cfg: Config, token: string): Promise<Article[]>`
-  - `articleUrl(instanceUrl: string, sysId: string): string`
-  - `type RawArticle` — the `kb_knowledge` row shape, where reference fields are `{ value, link }`.
+- Consumes: `Config` (Task 1), `PlatformUnavailableError` (Task 2), `log` (Task 1)
+- Produces: `makeTokenProvider(cfg: Config, fetchImpl?: typeof fetch): { getToken(): Promise<string> }`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/servicenow.test.ts`:
+`tests/servicenow-auth.test.ts`:
 
 ```ts
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadConfig } from '../src/config.js';
-import { getAccessToken, resetTokenCache } from '../src/servicenow/auth.js';
-import { articleUrl, fetchArticles, mapArticle } from '../src/servicenow/articles.js';
+import { describe, it, expect, vi } from 'vitest'
+import { makeTokenProvider } from '../src/connectors/servicenow/auth.js'
+import { PlatformUnavailableError } from '../src/connectors/types.js'
+import { parseConfig } from '../src/config.js'
 
-const cfg = loadConfig(
-  {
-    ANTHROPIC_API_KEY: 'sk-abc123456789wxyz',
-    ANTHROPIC_BASE_URL: 'https://llmproxy.example.com',
-    CLAUDE_MODEL: 'gateway-model',
-    SN_INSTANCE_URL: 'https://abhrademo4.service-now.com',
-    SN_CLIENT_ID: 'cid',
-    SN_CLIENT_SECRET: 'csecret',
-    SN_REFRESH_TOKEN: 'rtoken',
-    SN_KB_ALLOWLIST: 'kb-aaa,kb-bbb',
-    RETRIEVAL_MIN_SCORE: '1',
-  },
-  {},
-);
+const cfg = parseConfig({
+  ANTHROPIC_API_KEY: 'sk-test-abcdefghijkl',
+  ANTHROPIC_BASE_URL: 'https://llmproxy.example.com',
+  CLAUDE_MODEL: 'm',
+  SN_INSTANCE_URL: 'https://abhrademo4.service-now.com',
+  SN_CLIENT_ID: 'cid',
+  SN_CLIENT_SECRET: 'csecret',
+  SN_REFRESH_TOKEN: 'rtoken',
+  SN_KB_ALLOWLIST: 'kb1',
+})
 
-const okJson = (body: unknown) =>
-  new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+const ok = (body: unknown) =>
+  ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }) as Response
 
-afterEach(() => {
-  vi.restoreAllMocks();
-  resetTokenCache();
-});
+describe('makeTokenProvider', () => {
+  it('exchanges the refresh token for an access token', async () => {
+    const f = vi.fn(async () => ok({ access_token: 'AT1', expires_in: 1800 }))
+    const p = makeTokenProvider(cfg, f as unknown as typeof fetch)
+    expect(await p.getToken()).toBe('AT1')
 
-describe('getAccessToken', () => {
-  it('exchanges the refresh token and returns the access token', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(okJson({ access_token: 'at-1', expires_in: 1800 }));
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://abhrademo4.service-now.com/oauth_token.do')
+    expect(String(init.body)).toContain('grant_type=refresh_token')
+  })
 
-    await expect(getAccessToken(cfg)).resolves.toBe('at-1');
+  it('caches the token instead of refreshing per request', async () => {
+    const f = vi.fn(async () => ok({ access_token: 'AT1', expires_in: 1800 }))
+    const p = makeTokenProvider(cfg, f as unknown as typeof fetch)
+    await p.getToken()
+    await p.getToken()
+    expect(f).toHaveBeenCalledTimes(1)
+  })
 
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(String(url)).toBe('https://abhrademo4.service-now.com/oauth_token.do');
-    const body = String((init as RequestInit).body);
-    expect(body).toContain('grant_type=refresh_token');
-    expect(body).toContain('refresh_token=rtoken');
-  });
+  it('refreshes again once the token has expired', async () => {
+    const f = vi.fn(async () => ok({ access_token: 'AT1', expires_in: 0 }))
+    const p = makeTokenProvider(cfg, f as unknown as typeof fetch)
+    await p.getToken()
+    await p.getToken()
+    expect(f).toHaveBeenCalledTimes(2)
+  })
 
-  it('reuses a cached token instead of refreshing again', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(okJson({ access_token: 'at-1', expires_in: 1800 }));
-
-    await getAccessToken(cfg);
-    await getAccessToken(cfg);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('refreshes again once the cached token is inside the expiry margin', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(okJson({ access_token: 'at-1', expires_in: 1800 }));
-
-    let clock = 0;
-    await getAccessToken(cfg, () => clock);
-    clock = 1_800_000;
-    await getAccessToken(cfg, () => clock);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('throws a message naming the status when the grant is rejected', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('{"error":"invalid_grant"}', { status: 401 }),
-    );
-    await expect(getAccessToken(cfg)).rejects.toThrowError(/401[\s\S]*invalid_grant/);
-  });
-
-  it('never puts the refresh token or client secret in the error message', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status: 400 }));
-    await expect(getAccessToken(cfg)).rejects.toThrowError(
-      expect.objectContaining({ message: expect.not.stringContaining('rtoken') }),
-    );
-  });
-});
-
-describe('mapArticle', () => {
-  it('unwraps reference fields and strips HTML from the body', () => {
-    expect(
-      mapArticle({
-        sys_id: 'sys-1',
-        number: 'KB0010141',
-        short_description: 'VPN will not connect',
-        text: '<p>Restart the <b>client</b>.</p>',
-        kb_category: { value: 'cat-1', link: 'https://x/cat-1' },
-        kb_knowledge_base: { value: 'kb-aaa', link: 'https://x/kb-aaa' },
-      }),
-    ).toEqual({
-      sysId: 'sys-1',
-      number: 'KB0010141',
-      title: 'VPN will not connect',
-      body: 'Restart the client.',
-      kbSysId: 'kb-aaa',
-      category: 'cat-1',
-    });
-  });
-
-  it('tolerates missing optional fields', () => {
-    const mapped = mapArticle({ sys_id: 's', number: 'KB1', short_description: 'T' });
-    expect(mapped.body).toBe('');
-    expect(mapped.kbSysId).toBe('');
-    expect(mapped.category).toBe('');
-  });
-});
-
-describe('fetchArticles', () => {
-  it('queries published articles restricted to the allowlisted knowledge base sys_ids', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(okJson({ result: [] }));
-    await fetchArticles(cfg, 'at-1');
-
-    const url = new URL(String(fetchMock.mock.calls[0]![0]));
-    expect(url.pathname).toBe('/api/now/table/kb_knowledge');
-    expect(url.searchParams.get('sysparm_query')).toBe(
-      'workflow_state=published^kb_knowledge_baseINkb-aaa,kb-bbb',
-    );
-    expect(url.searchParams.get('sysparm_fields')).toContain('sys_id');
-    const headers = (fetchMock.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
-    expect(headers.Authorization).toBe('Bearer at-1');
-  });
-
-  it('follows pagination until a short page comes back', async () => {
-    const page = (n: number, size: number) =>
-      okJson({
-        result: Array.from({ length: size }, (_, i) => ({
-          sys_id: `s${n}-${i}`,
-          number: `KB${n}${i}`,
-          short_description: 'T',
-          text: '<p>b</p>',
-        })),
-      });
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(page(0, 500))
-      .mockResolvedValueOnce(page(1, 7));
-
-    const articles = await fetchArticles(cfg, 'at-1');
-    expect(articles).toHaveLength(507);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(new URL(String(fetchMock.mock.calls[1]![0])).searchParams.get('sysparm_offset')).toBe('500');
-  });
-
-  it('throws a clear error when the table API rejects the token', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('denied', { status: 403 }));
-    await expect(fetchArticles(cfg, 'at-1')).rejects.toThrowError(/403/);
-  });
-});
-
-describe('articleUrl', () => {
-  it('links by sys_kb_id, never by article number (D10)', () => {
-    expect(articleUrl('https://abhrademo4.service-now.com', 'sys-1')).toBe(
-      'https://abhrademo4.service-now.com/kb_view.do?sys_kb_id=sys-1',
-    );
-  });
-
-  it('does not double a trailing slash on the instance URL', () => {
-    expect(articleUrl('https://abhrademo4.service-now.com/', 'sys-1')).toBe(
-      'https://abhrademo4.service-now.com/kb_view.do?sys_kb_id=sys-1',
-    );
-  });
-});
+  it('raises PlatformUnavailableError naming the fix when the grant is rejected', async () => {
+    const f = vi.fn(async () => ({ ok: false, status: 401, text: async () => 'invalid_grant' }) as Response)
+    const p = makeTokenProvider(cfg, f as unknown as typeof fetch)
+    await expect(p.getToken()).rejects.toThrow(PlatformUnavailableError)
+    await expect(p.getToken()).rejects.toThrow(/Connect-SnOAuth/)
+  })
+})
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 2: Run to verify it fails**
 
-Run: `npm test -- tests/servicenow.test.ts`
-Expected: FAIL — `Failed to resolve import "../src/servicenow/auth.js"`.
+Run: `npx vitest run tests/servicenow-auth.test.ts`
+Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement `src/servicenow/auth.ts`**
+- [ ] **Step 3: Implement `src/connectors/servicenow/auth.ts`**
 
 ```ts
-import type { Config } from '../config.js';
-
-type Cached = { token: string; expiresAt: number };
-let cached: Cached | null = null;
+import type { Config } from '../../config.js'
+import { PlatformUnavailableError } from '../types.js'
+import { log } from '../../log.js'
 
 /** Refresh a minute early so a token never expires mid-request. */
-const EXPIRY_MARGIN_MS = 60_000;
+const EXPIRY_SAFETY_SECONDS = 60
 
-/** Tests only — the cache is module-level so the server refreshes at most once per window. */
-export function resetTokenCache(): void {
-  cached = null;
-}
+export function makeTokenProvider(cfg: Config, fetchImpl: typeof fetch = fetch) {
+  let token: string | null = null
+  let expiresAt = 0
 
-/**
- * OAuth refresh-token grant (spec §8). Basic auth is not an option here: this
- * instance returns 401 for it, byte-identical to sending no credentials.
- */
-export async function getAccessToken(cfg: Config, now: () => number = Date.now): Promise<string> {
-  if (cached && cached.expiresAt > now() + EXPIRY_MARGIN_MS) return cached.token;
-
-  const res = await fetch(new URL('/oauth_token.do', cfg.SN_INSTANCE_URL), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
+  async function refresh(): Promise<string> {
+    const body = new URLSearchParams({
       grant_type: 'refresh_token',
-      client_id: cfg.SN_CLIENT_ID,
-      client_secret: cfg.SN_CLIENT_SECRET,
-      refresh_token: cfg.SN_REFRESH_TOKEN,
-    }),
-  });
+      refresh_token: cfg.sn.refreshToken,
+      client_id: cfg.sn.clientId,
+      client_secret: cfg.sn.clientSecret,
+    })
 
-  if (!res.ok) {
-    const detail = (await res.text()).slice(0, 300);
-    throw new Error(
-      `ServiceNow token refresh failed: ${res.status} ${detail}. ` +
-        `The refresh token may have expired (they last ~100 days) — re-export it into .env.`,
-    );
-  }
-
-  const body = (await res.json()) as { access_token?: string; expires_in?: number };
-  if (!body.access_token) throw new Error('ServiceNow token refresh returned no access_token');
-
-  cached = { token: body.access_token, expiresAt: now() + (body.expires_in ?? 1800) * 1000 };
-  return cached.token;
-}
-```
-
-Note on the "never leaks the secret" test: the thrown message interpolates only the HTTP status and the response body. ServiceNow does not echo the credentials back, so this passes — but if a future instance does, wrap the message in `redact()` from `src/config.js`.
-
-- [ ] **Step 4: Implement `src/servicenow/articles.ts`**
-
-```ts
-import type { Config } from '../config.js';
-import { stripHtml } from '../index/build.js';
-import type { Article } from '../types.js';
-
-type Ref = { value?: string; link?: string };
-export type RawArticle = {
-  sys_id: string;
-  number: string;
-  short_description?: string;
-  text?: string;
-  kb_category?: Ref | string;
-  kb_knowledge_base?: Ref | string;
-};
-
-const PAGE_SIZE = 500;
-const FIELDS = 'sys_id,number,short_description,text,kb_category,kb_knowledge_base';
-
-/** Reference fields arrive as `{ value, link }` when sysparm_display_value=false. */
-const ref = (v: Ref | string | undefined): string => (typeof v === 'string' ? v : (v?.value ?? ''));
-
-export function mapArticle(raw: RawArticle): Article {
-  return {
-    sysId: raw.sys_id,
-    number: raw.number,
-    title: raw.short_description ?? '',
-    body: stripHtml(raw.text ?? ''),
-    kbSysId: ref(raw.kb_knowledge_base),
-    category: ref(raw.kb_category),
-  };
-}
-
-/** Link by sys_id. `sysparm_article=<number>` is ambiguous on this instance (D10). */
-export function articleUrl(instanceUrl: string, sysId: string): string {
-  return new URL(`/kb_view.do?sys_kb_id=${encodeURIComponent(sysId)}`, instanceUrl).toString();
-}
-
-export async function fetchArticles(cfg: Config, token: string): Promise<Article[]> {
-  const query = `workflow_state=published^kb_knowledge_baseIN${cfg.kbAllowlist.join(',')}`;
-  const all: Article[] = [];
-
-  for (let offset = 0; ; offset += PAGE_SIZE) {
-    const url = new URL('/api/now/table/kb_knowledge', cfg.SN_INSTANCE_URL);
-    url.searchParams.set('sysparm_query', query);
-    url.searchParams.set('sysparm_fields', FIELDS);
-    url.searchParams.set('sysparm_display_value', 'false');
-    url.searchParams.set('sysparm_limit', String(PAGE_SIZE));
-    url.searchParams.set('sysparm_offset', String(offset));
-
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    });
-    if (!res.ok) {
-      throw new Error(
-        `ServiceNow kb_knowledge fetch failed: ${res.status} ${(await res.text()).slice(0, 300)}`,
-      );
+    let res: Response
+    try {
+      res = await fetchImpl(`${cfg.sn.instanceUrl}/oauth_token.do`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body,
+      })
+    } catch (e) {
+      throw new PlatformUnavailableError(
+        `Cannot reach ${cfg.sn.instanceUrl} to refresh the access token.`,
+        e,
+      )
     }
 
-    const page = ((await res.json()) as { result?: RawArticle[] }).result ?? [];
-    all.push(...page.map(mapArticle));
-    if (page.length < PAGE_SIZE) break;
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      throw new PlatformUnavailableError(
+        `ServiceNow rejected the refresh token (HTTP ${res.status}). ` +
+          `Refresh tokens last ~100 days and may have expired. ` +
+          `Fix: run Connect-SnOAuth -Instance abhrademo4, then Export-SnEnvFile. ${detail}`,
+      )
+    }
+
+    const json = (await res.json()) as { access_token?: string; expires_in?: number }
+    if (!json.access_token) {
+      throw new PlatformUnavailableError('Token endpoint returned no access_token.')
+    }
+
+    token = json.access_token
+    expiresAt = Date.now() + ((json.expires_in ?? 1800) - EXPIRY_SAFETY_SECONDS) * 1000
+    log('sn.token.refreshed', { expiresInSec: json.expires_in ?? 1800 })
+    return token
   }
 
-  return all;
+  return {
+    async getToken(): Promise<string> {
+      if (token && Date.now() < expiresAt) return token
+      return refresh()
+    },
+  }
 }
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [ ] **Step 4: Run to verify it passes**
 
-Run: `npm test -- tests/servicenow.test.ts`
-Expected: PASS, 12 tests.
+Run: `npx vitest run tests/servicenow-auth.test.ts`
+Expected: PASS, 4 tests
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/connectors/servicenow/auth.ts tests/servicenow-auth.test.ts
+git commit -m "feat: ServiceNow OAuth refresh-token provider with caching"
+```
+
+---
+
+## Task 4: ServiceNow search
+
+**Files:**
+- Create: `src/connectors/servicenow/search.ts`
+- Test: `tests/servicenow-search.test.ts`
+
+**Interfaces:**
+- Consumes: `makeTokenProvider` (Task 3); `Article`, `KnowledgeConnector`, `HealthStatus`, `PlatformUnavailableError` (Task 2)
+- Produces: `makeServiceNowConnector(cfg: Config, fetchImpl?: typeof fetch): KnowledgeConnector`; `stripHtml(html: string): string`; `sanitiseQuery(q: string): string`
+
+Query shape (spec §8): `workflow_state=published^kb_knowledge_baseIN<allowlist>^123TEXTQUERY321=<sanitised>`
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/servicenow-search.test.ts`:
+
+```ts
+import { describe, it, expect, vi } from 'vitest'
+import { makeServiceNowConnector } from '../src/connectors/servicenow/search.js'
+import { PlatformUnavailableError } from '../src/connectors/types.js'
+import { parseConfig } from '../src/config.js'
+
+const cfg = parseConfig({
+  ANTHROPIC_API_KEY: 'sk-test-abcdefghijkl',
+  ANTHROPIC_BASE_URL: 'https://llmproxy.example.com',
+  CLAUDE_MODEL: 'm',
+  SN_INSTANCE_URL: 'https://abhrademo4.service-now.com',
+  SN_CLIENT_ID: 'cid',
+  SN_CLIENT_SECRET: 'csecret',
+  SN_REFRESH_TOKEN: 'rtoken',
+  SN_KB_ALLOWLIST: 'kb1,kb2',
+})
+
+const record = {
+  sys_id: '5808376b3bed0710913c44e643e45a80',
+  number: 'KB0010141',
+  short_description: 'Self-checkout NCR terminal will not boot after image push',
+  text: '<p>Reimage the <b>terminal</b>&nbsp;and reboot.</p>',
+}
+
+function fetchStub(payload: unknown, status = 200) {
+  return vi.fn(async (url: string) => {
+    if (String(url).includes('oauth_token.do')) {
+      return { ok: true, status: 200, json: async () => ({ access_token: 'AT', expires_in: 1800 }) } as Response
+    }
+    return {
+      ok: status === 200,
+      status,
+      json: async () => payload,
+      text: async () => JSON.stringify(payload),
+    } as Response
+  })
+}
+
+describe('ServiceNow connector', () => {
+  it('maps records to Articles keyed by sys_id, not number', async () => {
+    const f = fetchStub({ result: [record] })
+    const [a] = await makeServiceNowConnector(cfg, f as unknown as typeof fetch).search('self-checkout down', 5)
+
+    expect(a.id).toBe('5808376b3bed0710913c44e643e45a80')
+    expect(a.label).toBe('KB0010141')
+    expect(a.url).toBe(
+      'https://abhrademo4.service-now.com/kb_view.do?sys_kb_id=5808376b3bed0710913c44e643e45a80',
+    )
+  })
+
+  it('strips HTML and decodes entities from the body', async () => {
+    const f = fetchStub({ result: [record] })
+    const [a] = await makeServiceNowConnector(cfg, f as unknown as typeof fetch).search('x', 5)
+    expect(a.body).toBe('Reimage the terminal and reboot.')
+  })
+
+  it('scopes the query to published articles in allowlisted knowledge bases', async () => {
+    const f = fetchStub({ result: [] })
+    await makeServiceNowConnector(cfg, f as unknown as typeof fetch).search('printer', 5)
+
+    const searchUrl = decodeURIComponent(String(f.mock.calls[1][0]))
+    expect(searchUrl).toContain('workflow_state=published')
+    expect(searchUrl).toContain('kb_knowledge_baseINkb1,kb2')
+    expect(searchUrl).toContain('123TEXTQUERY321=printer')
+  })
+
+  it('sanitises characters that would break query syntax', async () => {
+    const f = fetchStub({ result: [] })
+    await makeServiceNowConnector(cfg, f as unknown as typeof fetch).search('a^b=c&d', 5)
+    const searchUrl = decodeURIComponent(String(f.mock.calls[1][0]))
+    expect(searchUrl).toContain('123TEXTQUERY321=a b c d')
+  })
+
+  it('returns an empty array when the instance finds nothing', async () => {
+    const f = fetchStub({ result: [] })
+    expect(await makeServiceNowConnector(cfg, f as unknown as typeof fetch).search('zzz', 5)).toEqual([])
+  })
+
+  it('raises PlatformUnavailableError on an HTTP failure', async () => {
+    const f = fetchStub({ error: 'boom' }, 500)
+    await expect(
+      makeServiceNowConnector(cfg, f as unknown as typeof fetch).search('x', 5),
+    ).rejects.toThrow(PlatformUnavailableError)
+  })
+})
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `npx vitest run tests/servicenow-search.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: Implement `src/connectors/servicenow/search.ts`**
+
+```ts
+import type { Config } from '../../config.js'
+import type { Article, KnowledgeConnector, HealthStatus } from '../types.js'
+import { PlatformUnavailableError } from '../types.js'
+import { makeTokenProvider } from './auth.js'
+
+interface SnRecord {
+  sys_id: string
+  number?: string
+  short_description?: string
+  text?: string
+}
+
+const ENTITIES: Record<string, string> = {
+  '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'",
+}
+
+/** Article bodies are HTML. Reduce to readable plain text. */
+export function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/(p|div|li|tr|h[1-6])>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;|&amp;|&lt;|&gt;|&quot;|&#39;/g, (m) => ENTITIES[m] ?? m)
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** `^`, `=` and `&` break sysparm_query syntax, so they never reach the instance. */
+export function sanitiseQuery(q: string): string {
+  return q.replace(/[\^=&]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+}
+
+export function makeServiceNowConnector(
+  cfg: Config,
+  fetchImpl: typeof fetch = fetch,
+): KnowledgeConnector {
+  const tokens = makeTokenProvider(cfg, fetchImpl)
+
+  async function call(path: string): Promise<SnRecord[]> {
+    const token = await tokens.getToken()
+    let res: Response
+    try {
+      res = await fetchImpl(`${cfg.sn.instanceUrl}${path}`, {
+        headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+      })
+    } catch (e) {
+      throw new PlatformUnavailableError(`Cannot reach ${cfg.sn.instanceUrl}.`, e)
+    }
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      throw new PlatformUnavailableError(
+        `ServiceNow search failed (HTTP ${res.status}). ${detail.slice(0, 200)}`,
+      )
+    }
+    const json = (await res.json()) as { result?: SnRecord[] }
+    return json.result ?? []
+  }
+
+  function buildPath(query: string, limit: number): string {
+    const sysparmQuery = [
+      'workflow_state=published',
+      `kb_knowledge_baseIN${cfg.sn.kbAllowlist.join(',')}`,
+      `123TEXTQUERY321=${sanitiseQuery(query)}`,
+    ].join('^')
+
+    const params = new URLSearchParams({
+      sysparm_limit: String(limit),
+      sysparm_fields: 'sys_id,number,short_description,text',
+      sysparm_query: sysparmQuery,
+    })
+    return `/api/now/table/kb_knowledge?${params.toString()}`
+  }
+
+  return {
+    name: 'servicenow',
+
+    async search(query: string, limit: number): Promise<Article[]> {
+      const records = await call(buildPath(query, limit))
+      return records.map((r) => ({
+        id: r.sys_id,
+        label: r.number,
+        title: (r.short_description ?? '').trim(),
+        body: stripHtml(r.text ?? ''),
+        // Link by sys_id: number is not unique on this instance (D10).
+        url: `${cfg.sn.instanceUrl}/kb_view.do?sys_kb_id=${r.sys_id}`,
+      }))
+    },
+
+    async health(): Promise<HealthStatus> {
+      try {
+        await call(buildPath('test', 1))
+        return { ok: true, detail: `${cfg.sn.kbAllowlist.length} knowledge bases in scope` }
+      } catch (e) {
+        return { ok: false, detail: e instanceof Error ? e.message : String(e) }
+      }
+    },
+  }
+}
+```
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `npx vitest run tests/servicenow-search.test.ts`
+Expected: PASS, 6 tests
+
+- [ ] **Step 5: Verify against the live instance**
+
+```bash
+npx tsx -e "import {loadConfig} from './src/config.js';import {makeServiceNowConnector} from './src/connectors/servicenow/search.js';makeServiceNowConnector(loadConfig()).search('Self-checkout lanes 1-4 down at Store #208 after image push',5).then(r=>console.log(r.map(a=>a.label+' '+a.title)))"
+```
+
+Expected: `KB0010141 Self-checkout NCR terminal will not boot after image push` first. That is eval question `inc-01`.
+
+Note this needs the gateway variables present in `.env` only because `loadConfig()` validates the whole environment. If they are not yet available, put placeholder values in `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` and `CLAUDE_MODEL` for this step — nothing calls the gateway here.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/servicenow tests/servicenow.test.ts
-git commit -m "feat: ServiceNow OAuth refresh grant and paged kb_knowledge fetch"
+git add src/connectors/servicenow/search.ts tests/servicenow-search.test.ts
+git commit -m "feat: live ServiceNow knowledge search mapped to Article"
 ```
 
 ---
 
-## Task 5: Discover the knowledge base allowlist and capture the test fixture
-
-This is the task that turns D9 from a decision into a value. `SN_KB_ALLOWLIST` cannot be guessed: nine of the knowledge bases holding the best content have ACL-restricted `kb_knowledge_base` records, so their titles are unreadable and only their `sys_id` — visible on the articles themselves — identifies them.
+## Task 5: Tokeniser and coverage scoring
 
 **Files:**
-- Create: `scripts/discover-allowlist.ts`, `tests/fixtures/kb-articles.json`
-- Modify: `.env` (add `SN_KB_ALLOWLIST=`, uncommitted)
+- Create: `src/gate/tokenise.ts`
+- Test: `tests/tokenise.test.ts`
 
 **Interfaces:**
-- Consumes: `loadConfig`, `getAccessToken`, `mapArticle`.
-- Produces: a committed `tests/fixtures/kb-articles.json` in raw API-response shape (`{ result: RawArticle[] }`), and the `SN_KB_ALLOWLIST` value written into `.env`.
+- Consumes: nothing (pure)
+- Produces: `tokenise(s: string): string[]`; `coverage(query: string, doc: string): number`
 
-- [ ] **Step 1: Write the discovery script**
+- [ ] **Step 1: Write the failing test**
 
-Create `scripts/discover-allowlist.ts`:
+`tests/tokenise.test.ts`:
 
 ```ts
+import { describe, it, expect } from 'vitest'
+import { tokenise, coverage } from '../src/gate/tokenise.js'
+
+describe('tokenise', () => {
+  it('lowercases and splits on punctuation', () => {
+    expect(tokenise('Printer, JAM!')).toEqual(['printer', 'jam'])
+  })
+
+  it('drops stopwords and very short tokens', () => {
+    expect(tokenise('the printer is on my desk')).toEqual(['printer', 'desk'])
+  })
+
+  it('keeps error codes and identifiers intact', () => {
+    expect(tokenise('AP_MAX_AMOUNT and $.entities')).toEqual(['ap_max_amount', '$.entities'])
+  })
+
+  it('reduces greeting-only input to a single term', () => {
+    expect(tokenise('Hi Team,')).toEqual(['team'])
+  })
+})
+
+describe('coverage', () => {
+  it('is 1 when every query term appears', () => {
+    expect(coverage('printer jam', 'the printer has a jam')).toBe(1)
+  })
+
+  it('is 0.5 when half appear', () => {
+    expect(coverage('printer jam', 'the printer is fine')).toBe(0.5)
+  })
+
+  it('is 0 for no overlap', () => {
+    expect(coverage('printer jam', 'network outage')).toBe(0)
+  })
+
+  it('is 0 when the query has no meaningful terms', () => {
+    expect(coverage('the is a', 'anything')).toBe(0)
+  })
+
+  it('counts each distinct term once', () => {
+    expect(coverage('printer printer jam', 'printer jam')).toBe(1)
+  })
+})
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `npx vitest run tests/tokenise.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: Implement `src/gate/tokenise.ts`**
+
+```ts
+const STOPWORDS = new Set([
+  'the','a','an','is','are','was','were','to','of','in','on','for','and','or','it','this',
+  'that','with','my','we','our','not','no','be','been','has','have','do','does','did','can',
+  'cannot','am','at','as','by','from','get','got','will','would','should','when','what','why',
+  'how','after','into','out','up','down','me','you','your','their','there','they',
+])
+
 /**
- * One-off operator script. Fetches every published kb_knowledge record with no
- * allowlist filter, groups by kb_knowledge_base sys_id, and prints what each
- * group contains so a human can choose the allowlist (D9).
- *
- * Run: npx tsx scripts/discover-allowlist.ts
+ * Lowercase, strip punctuation, drop stopwords and 1-2 character tokens.
+ * `$`, `.`, `-` and `_` survive so error codes stay intact.
  */
-import { writeFileSync } from 'node:fs';
-import { loadConfig } from '../src/config.js';
-import { getAccessToken } from '../src/servicenow/auth.js';
-import { mapArticle, type RawArticle } from '../src/servicenow/articles.js';
-
-// This script runs before the gateway credentials arrive and before the allowlist
-// exists, so satisfy the schema with placeholders for everything it does not use.
-// Only the SN_* variables, already in .env, are actually exercised here.
-const cfg = loadConfig({
-  SN_KB_ALLOWLIST: 'pending',
-  RETRIEVAL_MIN_SCORE: '0',
-  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? 'unused-by-this-script',
-  ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL ?? 'https://placeholder.invalid',
-  CLAUDE_MODEL: process.env.CLAUDE_MODEL ?? 'unused-by-this-script',
-});
-const token = await getAccessToken(cfg);
-
-const PAGE = 500;
-const raw: RawArticle[] = [];
-for (let offset = 0; ; offset += PAGE) {
-  const url = new URL('/api/now/table/kb_knowledge', cfg.SN_INSTANCE_URL);
-  url.searchParams.set('sysparm_query', 'workflow_state=published');
-  url.searchParams.set(
-    'sysparm_fields',
-    'sys_id,number,short_description,text,kb_category,kb_knowledge_base',
-  );
-  url.searchParams.set('sysparm_display_value', 'false');
-  url.searchParams.set('sysparm_limit', String(PAGE));
-  url.searchParams.set('sysparm_offset', String(offset));
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) throw new Error(`fetch failed: ${res.status} ${await res.text()}`);
-  const page = ((await res.json()) as { result: RawArticle[] }).result;
-  raw.push(...page);
-  if (page.length < PAGE) break;
+export function tokenise(s: string): string[] {
+  if (!s) return []
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9$._\- ]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length > 2 && !STOPWORDS.has(t))
 }
 
-const articles = raw.map(mapArticle);
-const groups = new Map<string, typeof articles>();
-for (const a of articles) {
-  const list = groups.get(a.kbSysId) ?? [];
-  list.push(a);
-  groups.set(a.kbSysId, list);
+/** Fraction of the query's distinct meaningful terms that appear in the document. */
+export function coverage(query: string, doc: string): number {
+  const terms = [...new Set(tokenise(query))]
+  if (terms.length === 0) return 0
+  const haystack = doc.toLowerCase()
+  const hits = terms.filter((t) => haystack.includes(t)).length
+  return Math.round((hits / terms.length) * 100) / 100
 }
-
-console.log(`${articles.length} published articles in ${groups.size} knowledge bases\n`);
-for (const [kbSysId, list] of [...groups].sort((a, b) => b[1].length - a[1].length)) {
-  const avgLen = Math.round(list.reduce((s, a) => s + a.body.length, 0) / list.length);
-  console.log(`${kbSysId || '(none)'}  ${String(list.length).padStart(4)} articles  avg ${avgLen} chars`);
-  for (const a of list.slice(0, 5)) console.log(`      ${a.number}  ${a.title.slice(0, 76)}`);
-  console.log('');
-}
-
-// Full-corpus length distribution — the one still-open measurement from spec §3.
-const lengths = articles.map((a) => a.body.length).sort((x, y) => x - y);
-const at = (p: number) => lengths[Math.floor((lengths.length - 1) * p)];
-console.log(`body length  p50=${at(0.5)}  p90=${at(0.9)}  p99=${at(0.99)}  max=${at(1)}`);
-
-// Duplicate-number check (D10).
-const byNumber = new Map<string, number>();
-for (const a of articles) byNumber.set(a.number, (byNumber.get(a.number) ?? 0) + 1);
-const dupes = [...byNumber].filter(([, n]) => n > 1);
-console.log(`\n${dupes.length} article numbers are duplicated: ${dupes.map(([n]) => n).join(', ')}`);
-
-writeFileSync('tests/fixtures/kb-articles-full.json', JSON.stringify({ result: raw }, null, 2));
-console.log('\nWrote tests/fixtures/kb-articles-full.json');
 ```
 
-- [ ] **Step 2: Run the script against the live instance**
+- [ ] **Step 4: Run to verify it passes**
 
-Run: `npx tsx scripts/discover-allowlist.ts`
-Expected: a per-knowledge-base breakdown, the length percentiles, the duplicate-number list, and `tests/fixtures/kb-articles-full.json`.
+Run: `npx vitest run tests/tokenise.test.ts`
+Expected: PASS, 9 tests
 
-If it fails with a token error, the refresh token in `.env` has expired — re-export it from the working PowerShell connection before continuing.
-
-- [ ] **Step 3: Choose the allowlist**
-
-Include every knowledge base whose sample titles are genuine content. Exclude the ~489-article **Security Incident** demo knowledge base — it is 67% of the corpus and it is noise (spec §3, D5).
-
-Cross-check against `tests/fixtures/retrieval-eval.json`: **every `expectedSysId` in the eval set must belong to an article in an allowlisted knowledge base.** Verify it:
+- [ ] **Step 5: Commit**
 
 ```bash
-npx tsx -e "
-import { readFileSync } from 'node:fs';
-const raw = JSON.parse(readFileSync('tests/fixtures/kb-articles-full.json','utf8')).result;
-const evalSet = JSON.parse(readFileSync('tests/fixtures/retrieval-eval.json','utf8'));
-const allow = new Set(process.argv[1].split(','));
-const kept = new Set(raw.filter(a => allow.has(a.kb_knowledge_base?.value ?? '')).map(a => a.sys_id));
-const missing = evalSet.inScope.filter(q => !kept.has(q.expectedSysId));
-console.log(missing.length ? 'MISSING: ' + missing.map(m => m.id + '/' + m.expectedSysId).join(', ') : 'all eval articles covered');
-" "<comma,separated,sys_ids>"
-```
-
-Expected: `all eval articles covered`. If anything is missing, widen the allowlist — the eval set is the ground truth here, not the allowlist.
-
-- [ ] **Step 4: Write the allowlist into `.env`**
-
-Append to `.env` (this file is gitignored — never commit it):
-
-```
-SN_KB_ALLOWLIST=<the comma-separated sys_ids chosen in step 3>
-```
-
-Also record the same value in `.env.example` as a **comment** documenting the chosen list, so the next person does not have to rerun discovery:
-
-```
-# Chosen 2026-09-13 (excludes the Security Incident demo KB): <sys_ids>
-SN_KB_ALLOWLIST=
-```
-
-- [ ] **Step 5: Reduce the full dump to a committed fixture**
-
-The full dump may be large and contains every published article. Keep a filtered, allowlist-only fixture for tests:
-
-```bash
-npx tsx -e "
-import { readFileSync, writeFileSync, rmSync } from 'node:fs';
-const raw = JSON.parse(readFileSync('tests/fixtures/kb-articles-full.json','utf8')).result;
-const allow = new Set(process.env.SN_KB_ALLOWLIST.split(',').map(s=>s.trim()));
-const kept = raw.filter(a => allow.has(a.kb_knowledge_base?.value ?? ''));
-writeFileSync('tests/fixtures/kb-articles.json', JSON.stringify({ result: kept }, null, 2));
-rmSync('tests/fixtures/kb-articles-full.json');
-console.log('kept', kept.length, 'articles');
-"
-```
-
-Expected: roughly 200 articles kept.
-
-- [ ] **Step 6: Confirm the fixture carries no secrets**
-
-Run: `grep -c -E 'refresh_token|client_secret|Bearer|sk-' tests/fixtures/kb-articles.json`
-Expected: `0`. The fixture is article content only.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add scripts/discover-allowlist.ts tests/fixtures/kb-articles.json .env.example
-git commit -m "feat: discover knowledge base allowlist by sys_id; capture article fixture"
+git add src/gate/tokenise.ts tests/tokenise.test.ts
+git commit -m "feat: tokeniser and term-coverage scoring"
 ```
 
 ---
 
-## Task 6: Retrieval eval and threshold calibration
-
-This produces `RETRIEVAL_MIN_SCORE` — the constant the whole "I don't know" behaviour rests on — and leaves the eval behind as a regression test (spec §9, acceptance criterion 7).
+## Task 6: The relevance gate
 
 **Files:**
-- Create: `scripts/calibrate.ts`, `tests/retrieval-eval.test.ts`
-- Modify: `.env` (set `RETRIEVAL_MIN_SCORE`, uncommitted), `.env.example` (document the calibrated value)
+- Create: `src/gate/decide.ts`
+- Test: `tests/gate.test.ts`
 
 **Interfaces:**
-- Consumes: `buildIndex`, `search`, `mapArticle`, and the fixtures from Task 5.
-- Produces: the calibrated `RETRIEVAL_MIN_SCORE` value, plus the baseline constants `MIN_SCORE`, `MIN_RECALL_AT_1`, `MIN_RECALL_AT_5` recorded at the top of `tests/retrieval-eval.test.ts`.
+- Consumes: `tokenise`, `coverage` (Task 5), `Article` (Task 2)
+- Produces: `type GateReason = 'too_few_tokens' | 'low_coverage' | 'model_declined' | 'platform_unavailable' | null`; `interface GateResult { answer: boolean; reason: GateReason; topCoverage: number }`; `decide(query: string, articles: Article[], opts: { minTokens: number; minCoverage: number }): GateResult`
 
-- [ ] **Step 1: Write the calibration script**
+This is layers 1 and 2 of D11. Layer 3 (the model declining) is handled in Task 8.
 
-Create `scripts/calibrate.ts`:
+- [ ] **Step 1: Write the failing test**
+
+`tests/gate.test.ts`:
 
 ```ts
+import { describe, it, expect } from 'vitest'
+import { decide } from '../src/gate/decide.js'
+import type { Article } from '../src/connectors/types.js'
+
+const opts = { minTokens: 2, minCoverage: 0.3 }
+const art = (title: string, body = ''): Article => ({ id: 'x', title, body, url: 'u' })
+
+describe('gate layer 1 — token guard', () => {
+  it('declines greeting-only input', () => {
+    const r = decide('Hi Team,', [], opts)
+    expect(r.answer).toBe(false)
+    expect(r.reason).toBe('too_few_tokens')
+  })
+
+  it('declines null-value tickets', () => {
+    expect(decide('nan', [], opts).reason).toBe('too_few_tokens')
+  })
+
+  it('declines a two-word fragment below the floor', () => {
+    expect(decide('Bky OLO', [], opts).reason).toBe('too_few_tokens')
+  })
+})
+
+describe('gate layer 2 — coverage floor', () => {
+  it('declines when no article is relevant enough', () => {
+    const r = decide('what is the capital of France', [art('Feedback Mechanisms in Knowledge')], opts)
+    expect(r.answer).toBe(false)
+    expect(r.reason).toBe('low_coverage')
+  })
+
+  it('declines when the platform returned nothing', () => {
+    expect(decide('printer jam in warehouse', [], opts).reason).toBe('low_coverage')
+  })
+
+  it('answers when the top article covers the query', () => {
+    const r = decide('printer jam warehouse', [art('Printer jam', 'clear the warehouse printer')], opts)
+    expect(r.answer).toBe(true)
+    expect(r.reason).toBe(null)
+    expect(r.topCoverage).toBe(1)
+  })
+
+  it('scores against the best article, not merely the first', () => {
+    const r = decide('vpn connect failure', [art('Unrelated'), art('VPN connect failure guide')], opts)
+    expect(r.answer).toBe(true)
+  })
+})
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `npx vitest run tests/gate.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: Implement `src/gate/decide.ts`**
+
+```ts
+import type { Article } from '../connectors/types.js'
+import { tokenise, coverage } from './tokenise.js'
+
+export type GateReason =
+  | 'too_few_tokens'
+  | 'low_coverage'
+  | 'model_declined'
+  | 'platform_unavailable'
+  | null
+
+export interface GateResult {
+  answer: boolean
+  reason: GateReason
+  topCoverage: number
+}
+
 /**
- * One-off operator script. Sweeps RETRIEVAL_MIN_SCORE across the eval set and
- * prints the widest separating band between in-scope and out-of-scope top scores.
+ * Mechanical layers 1 and 2 of the three-layer gate (D11).
  *
- * Run: npx tsx scripts/calibrate.ts
+ * A single coverage threshold was measured and rejected: the in-scope and
+ * out-of-scope distributions overlap. "Hi Team," scores 1.00, because after
+ * stopword removal only one term remains and it appears in the article — hence
+ * the token guard runs first and short-circuits before coverage is consulted.
  */
-import { readFileSync } from 'node:fs';
-import { buildIndex } from '../src/index/build.js';
-import { search } from '../src/index/search.js';
-import { mapArticle, type RawArticle } from '../src/servicenow/articles.js';
-
-type InScope = { id: string; question: string; expectedSysId: string; confidence: string };
-type OutOfScope = { id: string; question: string };
-
-const raw = JSON.parse(readFileSync('tests/fixtures/kb-articles.json', 'utf8')) as { result: RawArticle[] };
-const evalSet = JSON.parse(readFileSync('tests/fixtures/retrieval-eval.json', 'utf8')) as {
-  inScope: InScope[];
-  outOfScope: OutOfScope[];
-};
-
-const index = buildIndex(raw.result.map(mapArticle));
-const TOP_K = 5;
-
-const inScope = evalSet.inScope.map((q) => {
-  const results = search(index, q.question, TOP_K);
-  const rank = results.findIndex((r) => r.article.sysId === q.expectedSysId);
-  return { ...q, top: results[0]?.score ?? 0, rank: rank === -1 ? null : rank + 1 };
-});
-const outOfScope = evalSet.outOfScope.map((q) => ({
-  ...q,
-  top: search(index, q.question, TOP_K)[0]?.score ?? 0,
-}));
-
-const recallAt = (n: number) =>
-  inScope.filter((q) => q.rank !== null && q.rank <= n).length / inScope.length;
-
-console.log(`index: ${index.n} articles, avg weighted length ${index.avgLen.toFixed(1)}\n`);
-console.log(`recall@1 ${(recallAt(1) * 100).toFixed(1)}%   recall@5 ${(recallAt(5) * 100).toFixed(1)}%\n`);
-
-console.log('in-scope misses (expected article not in top 5):');
-for (const q of inScope.filter((x) => x.rank === null)) {
-  console.log(`  ${q.id} [${q.confidence}] "${q.question.slice(0, 64)}"`);
-}
-
-const lowestInScope = Math.min(...inScope.map((q) => q.top));
-const highestOutOfScope = Math.max(...outOfScope.map((q) => q.top));
-console.log(`\nlowest in-scope top score    ${lowestInScope.toFixed(3)}`);
-console.log(`highest out-of-scope score   ${highestOutOfScope.toFixed(3)}`);
-
-if (lowestInScope > highestOutOfScope) {
-  const threshold = (lowestInScope + highestOutOfScope) / 2;
-  console.log(`\nCLEAN SEPARATION. RETRIEVAL_MIN_SCORE=${threshold.toFixed(2)}`);
-} else {
-  console.log('\nNO CLEAN SEPARATION — pick the threshold with the best trade-off:\n');
-  const candidates = [...new Set([...inScope, ...outOfScope].map((q) => q.top))].sort((a, b) => a - b);
-  for (const t of candidates) {
-    const pass = inScope.filter((q) => q.top >= t).length;
-    const leak = outOfScope.filter((q) => q.top >= t).length;
-    console.log(
-      `  t=${t.toFixed(2)}  in-scope answered ${pass}/${inScope.length}  out-of-scope leaked ${leak}/${outOfScope.length}`,
-    );
+export function decide(
+  query: string,
+  articles: Article[],
+  opts: { minTokens: number; minCoverage: number },
+): GateResult {
+  if (tokenise(query).length < opts.minTokens) {
+    return { answer: false, reason: 'too_few_tokens', topCoverage: 0 }
   }
-  console.log('\nPrefer zero leakage: an unsourced answer to noise is worse than an extra "no match".');
-  console.log('Offenders at the chosen threshold:');
-  for (const q of outOfScope.sort((a, b) => b.top - a.top).slice(0, 5)) {
-    console.log(`  ${q.top.toFixed(2)}  ${q.id}  "${q.question.slice(0, 64)}"`);
+
+  const top = articles.reduce(
+    (best, a) => Math.max(best, coverage(query, `${a.title} ${a.body}`)),
+    0,
+  )
+
+  if (top < opts.minCoverage) {
+    return { answer: false, reason: 'low_coverage', topCoverage: top }
   }
+  return { answer: true, reason: null, topCoverage: top }
 }
 ```
 
-- [ ] **Step 2: Run the calibration**
+- [ ] **Step 4: Run to verify it passes**
 
-Run: `npx tsx scripts/calibrate.ts`
-Expected: recall figures, the separation report, and a recommended threshold.
+Run: `npx vitest run tests/gate.test.ts`
+Expected: PASS, 7 tests
 
-Choose the threshold by this rule, in order:
-1. **Zero out-of-scope leakage.** The out-of-scope set is built from the real dominant traffic on this instance (monitoring alerts, phishing reports, `"nan"`). A wrong grounded-looking answer to that traffic is the worst failure this system can produce.
-2. Subject to that, the highest in-scope pass rate.
-3. `medium`-confidence in-scope questions may fall below the threshold. That is acceptable — they test graceful degradation, not precision. `high`-confidence questions falling below is not acceptable; investigate scoring instead of lowering the threshold.
-
-- [ ] **Step 3: If recall@5 on `high`-confidence questions is below ~85%, investigate before proceeding**
-
-Look at the printed misses. The likely causes, in order of likelihood:
-- The expected article is not in the allowlist → widen it (back to Task 5 step 3).
-- The question and article share no vocabulary (e.g. `inc-04 "Network connectivity Issues"`) → this is a genuine limit of keyword retrieval on a 4-word query; record it, do not fix it by adding embeddings. Spec §3 is explicit that embeddings need a *measured* failure, and a handful of vocabulary-mismatch misses on hand-made mappings is not yet that.
-- `TITLE_WEIGHT` or `CODE_BOOST` is miscalibrated → try 2 and 4 for `TITLE_WEIGHT`, rerun, keep the best. Changing a constant is in scope; adding a retrieval strategy is not.
-
-Record whatever you conclude in the commit message.
-
-- [ ] **Step 4: Write the failing regression test**
-
-Create `tests/retrieval-eval.test.ts`. Replace the three baseline constants with the numbers step 2 actually produced — do not leave the placeholders:
-
-```ts
-import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
-import { buildIndex } from '../src/index/build.js';
-import { search } from '../src/index/search.js';
-import { mapArticle, type RawArticle } from '../src/servicenow/articles.js';
-
-// ---- Baselines measured by scripts/calibrate.ts on 2026-09-13. ----
-// Raise them when retrieval improves; never lower them to make a change pass.
-const MIN_SCORE = 0; // <-- replace with the calibrated RETRIEVAL_MIN_SCORE
-const MIN_RECALL_AT_1 = 0; // <-- replace with the measured recall@1, minus 0.05 margin
-const MIN_RECALL_AT_5 = 0; // <-- replace with the measured recall@5, minus 0.05 margin
-const TOP_K = 5;
-
-type InScope = { id: string; question: string; expectedSysId: string; confidence: 'high' | 'medium' };
-type OutOfScope = { id: string; question: string };
-
-const raw = JSON.parse(readFileSync('tests/fixtures/kb-articles.json', 'utf8')) as { result: RawArticle[] };
-const evalSet = JSON.parse(readFileSync('tests/fixtures/retrieval-eval.json', 'utf8')) as {
-  inScope: InScope[];
-  outOfScope: OutOfScope[];
-};
-const index = buildIndex(raw.result.map(mapArticle));
-
-const rankOf = (question: string, sysId: string): number | null => {
-  const i = search(index, question, TOP_K).findIndex((r) => r.article.sysId === sysId);
-  return i === -1 ? null : i + 1;
-};
-const topScore = (question: string): number => search(index, question, TOP_K)[0]?.score ?? 0;
-
-describe('retrieval eval', () => {
-  it('indexes the captured corpus', () => {
-    expect(index.n).toBeGreaterThan(100);
-  });
-
-  it('every eval article exists in the index', () => {
-    const known = new Set(index.docs.map((d) => d.article.sysId));
-    const missing = evalSet.inScope.filter((q) => !known.has(q.expectedSysId)).map((q) => q.id);
-    expect(missing).toEqual([]);
-  });
-
-  it.each(evalSet.outOfScope)('out-of-scope $id scores below the threshold', (q) => {
-    expect(topScore(q.question)).toBeLessThan(MIN_SCORE);
-  });
-
-  it('meets the recall@1 baseline', () => {
-    const hits = evalSet.inScope.filter((q) => rankOf(q.question, q.expectedSysId) === 1).length;
-    expect(hits / evalSet.inScope.length).toBeGreaterThanOrEqual(MIN_RECALL_AT_1);
-  });
-
-  it('meets the recall@5 baseline', () => {
-    const hits = evalSet.inScope.filter((q) => rankOf(q.question, q.expectedSysId) !== null).length;
-    expect(hits / evalSet.inScope.length).toBeGreaterThanOrEqual(MIN_RECALL_AT_5);
-  });
-
-  it('resolves the duplicated KB0010141 to the right article by sysId (D10)', () => {
-    // syn-20 and inc-01 target two different articles that share one number.
-    for (const id of ['syn-20', 'inc-01']) {
-      const q = evalSet.inScope.find((x) => x.id === id)!;
-      expect(rankOf(q.question, q.expectedSysId)).toBe(1);
-    }
-  });
-});
-```
-
-- [ ] **Step 5: Run the test to verify it fails, then passes**
-
-Run: `npm test -- tests/retrieval-eval.test.ts`
-Expected: FAIL while the constants are still `0` (every out-of-scope assertion fails, since no score is below 0). Fill in the measured constants, rerun.
-Expected: PASS.
-
-If the `syn-20`/`inc-01` duplicate test cannot reach rank 1 for both, that is a genuine retrieval finding — record it and relax that single assertion to `toBeLessThanOrEqual(3)` with a comment explaining the measurement. Do not delete the test.
-
-- [ ] **Step 6: Record the calibrated threshold**
-
-Set `RETRIEVAL_MIN_SCORE=<calibrated value>` in `.env`, and update the `.env.example` comment to name the value and the date it was measured.
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add scripts/calibrate.ts tests/retrieval-eval.test.ts .env.example
-git commit -m "feat: calibrate retrieval threshold against the eval set; add regression test"
+git add src/gate/decide.ts tests/gate.test.ts
+git commit -m "feat: two mechanical layers of the relevance gate"
 ```
 
 ---
@@ -1499,876 +1115,551 @@ git commit -m "feat: calibrate retrieval threshold against the eval set; add reg
 ## Task 7: Gateway client, prompt assembly and citation verification
 
 **Files:**
-- Create: `src/llm/client.ts`
-- Test: `tests/llm.test.ts`
+- Create: `src/llm/prompt.ts`, `src/llm/client.ts`
+- Test: `tests/prompt.test.ts`
 
 **Interfaces:**
-- Consumes: `Scored` from `src/types.js`; `Turn` from `src/types.js`.
-- Produces:
-  - `SYSTEM_PROMPT: string`
-  - `NO_MATCH_ANSWER: string`
-  - `buildContextBlock(results: Scored[], budget: number): { block: string; used: Scored[] }`
-  - `extractCitations(answer: string, maxLabel: number): { valid: number[]; invalid: number[] }`
-  - `answerQuestion(client, opts): Promise<{ answer: string; used: Scored[]; valid: number[]; invalid: number[] }>` where `opts` is `{ question: string; results: Scored[]; history: Turn[]; model: string; budget: number }`
-  - `preflight(client, model: string): Promise<void>`
-  - `type MessagesClient = { messages: { create: (...) => Promise<{ content: Array<{ type: string; text?: string }> }> } }` — structurally satisfied by `Anthropic`, so tests need no SDK mock library.
+- Consumes: `Config` (Task 1), `Article` (Task 2), `mask`/`log` (Task 1)
+- Produces: `SYSTEM_PROMPT`; `buildContextBlock(articles: Article[]): string`; `parseCitations(answer: string): number[]`; `verifyCitations(cited: number[], supplied: Article[]): { sources: Article[]; fabricated: number[] }`; `stripCitationMarkup(answer: string): string`; `interface Turn { role: 'user' | 'assistant'; content: string }`; `makeLlm(cfg: Config): { preflight(): Promise<void>; answer(o: { question: string; articles: Article[]; history: Turn[]; model?: string }): Promise<{ text: string; model: string }> }`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/llm.test.ts`:
+`tests/prompt.test.ts`:
 
 ```ts
-import { describe, expect, it, vi } from 'vitest';
+import { describe, it, expect } from 'vitest'
 import {
-  answerQuestion,
-  buildContextBlock,
-  extractCitations,
-  preflight,
-  type MessagesClient,
-} from '../src/llm/client.js';
-import type { Scored } from '../src/types.js';
+  buildContextBlock, parseCitations, verifyCitations, stripCitationMarkup,
+} from '../src/llm/prompt.js'
+import type { Article } from '../src/connectors/types.js'
 
-const scored = (sysId: string, number: string, title: string, body: string, score: number): Scored => ({
-  article: { sysId, number, title, body, kbSysId: 'kb-1', category: 'c' },
-  score,
-});
-
-const results = [
-  scored('s1', 'KB0010141', 'Self-checkout will not boot', 'Reimage the lane.', 12),
-  scored('s2', 'KB0010096', 'VPN will not connect', 'Restart the client.', 8),
-];
-
-const stubClient = (answer: string): MessagesClient & { calls: unknown[] } => {
-  const calls: unknown[] = [];
-  return {
-    calls,
-    messages: {
-      create: vi.fn(async (args: unknown) => {
-        calls.push(args);
-        return { content: [{ type: 'text', text: answer }] };
-      }),
-    },
-  } as MessagesClient & { calls: unknown[] };
-};
+const arts: Article[] = [
+  { id: 'sysA', label: 'KB0010141', title: 'Epson printer', body: 'reseat the roll', url: 'uA' },
+  { id: 'sysB', label: 'KB0010140', title: 'Zebra printer', body: 'check the label size', url: 'uB' },
+]
 
 describe('buildContextBlock', () => {
-  it('labels articles from 1 and includes number, title and body', () => {
-    const { block, used } = buildContextBlock(results, 10_000);
-    expect(used).toHaveLength(2);
-    expect(block).toContain('[1] KB0010141 — Self-checkout will not boot');
-    expect(block).toContain('[2] KB0010096 — VPN will not connect');
-    expect(block).toContain('Restart the client.');
-  });
+  it('labels articles [1]..[n]', () => {
+    const b = buildContextBlock(arts)
+    expect(b).toContain('[1]')
+    expect(b).toContain('[2]')
+    expect(b).toContain('Epson printer')
+  })
 
-  it('drops trailing articles that exceed the character budget', () => {
-    const { used } = buildContextBlock(results, 60);
-    expect(used).toHaveLength(1);
-    expect(used[0]!.article.sysId).toBe('s1');
-  });
+  it('never puts ids in the prompt — labels are the citation key', () => {
+    expect(buildContextBlock(arts)).not.toContain('sysA')
+  })
+})
 
-  it('always includes the top article even if it alone exceeds the budget', () => {
-    const { used } = buildContextBlock(results, 1);
-    expect(used).toHaveLength(1);
-  });
+describe('parseCitations', () => {
+  it('extracts bracketed labels', () => {
+    expect(parseCitations('Reseat the roll [1] then retry [2].')).toEqual([1, 2])
+  })
 
-  it('returns an empty block for no results', () => {
-    expect(buildContextBlock([], 10_000)).toEqual({ block: '', used: [] });
-  });
-});
+  it('de-duplicates repeated citations', () => {
+    expect(parseCitations('[1] and again [1]')).toEqual([1])
+  })
 
-describe('extractCitations', () => {
-  it('collects valid labels, deduplicated and sorted', () => {
-    expect(extractCitations('Do X [2] then Y [1] and see [2].', 2)).toEqual({
-      valid: [1, 2],
-      invalid: [],
-    });
-  });
+  it('finds nothing when the model declines', () => {
+    expect(parseCitations('NO_ANSWER_IN_KB')).toEqual([])
+  })
+})
 
-  it('separates labels outside the supplied range', () => {
-    expect(extractCitations('See [1] and [7].', 2)).toEqual({ valid: [1], invalid: [7] });
-  });
+describe('verifyCitations', () => {
+  it('maps labels back to the supplied articles', () => {
+    const { sources, fabricated } = verifyCitations([1], arts)
+    expect(sources.map((s) => s.id)).toEqual(['sysA'])
+    expect(fabricated).toEqual([])
+  })
 
-  it('treats label 0 as invalid', () => {
-    expect(extractCitations('See [0].', 2)).toEqual({ valid: [], invalid: [0] });
-  });
+  it('strips citations outside the supplied set', () => {
+    const { sources, fabricated } = verifyCitations([1, 7], arts)
+    expect(sources.map((s) => s.id)).toEqual(['sysA'])
+    expect(fabricated).toEqual([7])
+  })
 
-  it('ignores a fabricated KB number, which is not a bracketed label', () => {
-    expect(extractCitations('See KB0099999 for more.', 2)).toEqual({ valid: [], invalid: [] });
-  });
+  it('returns no sources when nothing was cited', () => {
+    expect(verifyCitations([], arts).sources).toEqual([])
+  })
+})
 
-  it('returns nothing for an uncited answer', () => {
-    expect(extractCitations('No citation here.', 2)).toEqual({ valid: [], invalid: [] });
-  });
-});
-
-describe('answerQuestion', () => {
-  it('sends the system prompt, the context block and the question', async () => {
-    const client = stubClient('Reimage the lane [1].');
-    await answerQuestion(client, {
-      question: 'lanes down after image push',
-      results,
-      history: [],
-      model: 'gateway-model',
-      budget: 10_000,
-    });
-
-    const args = client.calls[0] as { model: string; system: string; messages: Array<{ content: string }> };
-    expect(args.model).toBe('gateway-model');
-    expect(args.system).toMatch(/ONLY/);
-    expect(args.messages.at(-1)!.content).toContain('[1] KB0010141');
-    expect(args.messages.at(-1)!.content).toContain('lanes down after image push');
-  });
-
-  it('passes at most the last six turns of history', async () => {
-    const client = stubClient('ok');
-    const history = Array.from({ length: 10 }, (_, i) => ({
-      role: (i % 2 === 0 ? 'user' : 'assistant') as const,
-      content: `turn-${i}`,
-    }));
-    await answerQuestion(client, { question: 'q', results, history, model: 'm', budget: 10_000 });
-
-    const args = client.calls[0] as { messages: Array<{ content: string }> };
-    expect(args.messages).toHaveLength(7); // 6 history + the current question
-    expect(args.messages[0]!.content).toBe('turn-4');
-  });
-
-  it('reports valid and fabricated citations separately', async () => {
-    const client = stubClient('Try [1], or see [9].');
-    const out = await answerQuestion(client, {
-      question: 'q',
-      results,
-      history: [],
-      model: 'm',
-      budget: 10_000,
-    });
-    expect(out.valid).toEqual([1]);
-    expect(out.invalid).toEqual([9]);
-    expect(out.used).toHaveLength(2);
-  });
-
-  it('joins multiple text blocks and ignores non-text blocks', async () => {
-    const client = {
-      messages: {
-        create: async () => ({
-          content: [{ type: 'text', text: 'Part one. ' }, { type: 'thinking' }, { type: 'text', text: 'Part two.' }],
-        }),
-      },
-    } as unknown as MessagesClient;
-    const out = await answerQuestion(client, {
-      question: 'q',
-      results,
-      history: [],
-      model: 'm',
-      budget: 10_000,
-    });
-    expect(out.answer).toBe('Part one. Part two.');
-  });
-});
-
-describe('preflight', () => {
-  it('resolves when the gateway accepts the configured model', async () => {
-    await expect(preflight(stubClient('pong'), 'gateway-model')).resolves.toBeUndefined();
-  });
-
-  it('throws naming the model when the gateway rejects it', async () => {
-    const client = {
-      messages: { create: async () => { throw new Error('model_not_found'); } },
-    } as unknown as MessagesClient;
-    await expect(preflight(client, 'wrong-id')).rejects.toThrowError(/wrong-id[\s\S]*model_not_found/);
-  });
-
-  it('sends a minimal request so preflight stays cheap', async () => {
-    const client = stubClient('pong');
-    await preflight(client, 'gateway-model');
-    expect((client.calls[0] as { max_tokens: number }).max_tokens).toBe(1);
-  });
-});
+describe('stripCitationMarkup', () => {
+  it('removes labels from the user-facing answer', () => {
+    expect(stripCitationMarkup('Reseat the roll [1] then retry [2].')).toBe('Reseat the roll then retry.')
+  })
+})
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 2: Run to verify it fails**
 
-Run: `npm test -- tests/llm.test.ts`
-Expected: FAIL — `Failed to resolve import "../src/llm/client.js"`.
+Run: `npx vitest run tests/prompt.test.ts`
+Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement `src/llm/client.ts`**
+- [ ] **Step 3: Implement `src/llm/prompt.ts`**
 
 ```ts
-import type { Scored, Turn } from '../types.js';
+import type { Article } from '../connectors/types.js'
 
-/**
- * Structural shape of the bit of the Anthropic SDK this module uses.
- * `Anthropic` satisfies it, and tests can supply a plain object.
- */
-export type MessagesClient = {
-  messages: {
-    create(args: {
-      model: string;
-      max_tokens: number;
-      system?: string;
-      messages: Array<{ role: 'user' | 'assistant'; content: string }>;
-    }): Promise<{ content: Array<{ type: string; text?: string }> }>;
-  };
-};
-
-export const NO_MATCH_ANSWER = 'No knowledge base match — not answered';
-
-/**
- * Labels, not KB numbers (D10). Article numbers are not unique on this instance,
- * and a small integer drawn from a five-item list is much harder to fabricate
- * than a plausible-looking KB00… string.
- */
-export const SYSTEM_PROMPT = `You answer questions using ONLY the knowledge base articles supplied in the CONTEXT block below.
+export const SYSTEM_PROMPT = `You answer questions using ONLY the knowledge base articles supplied in the CONTEXT block.
 
 Rules:
-- Use only facts stated in the supplied articles. Never fall back on general knowledge.
-- Cite every article you used with its bracketed label, for example [1] or [2][3].
-- Cite labels only. Never cite an article number such as KB0010096.
-- If the supplied articles do not answer the question, say exactly: The knowledge base does not cover this.
-- Be concise: a direct answer first, then the steps the article gives.`;
+- Use only the supplied articles. Never use outside knowledge, even if you are confident.
+- Cite every claim with the bracketed label of the article it came from, like [1] or [2].
+- Cite ONLY labels that appear in the CONTEXT block.
+- If the articles do not contain the answer, reply exactly: NO_ANSWER_IN_KB
+- Be concise and practical. Prefer numbered steps when the article gives steps.`
 
-const MAX_HISTORY_TURNS = 6;
-const MAX_ANSWER_TOKENS = 1024;
+/** Articles are labelled [1]..[n]. The model cites labels, never ids or numbers (D10). */
+export function buildContextBlock(articles: Article[]): string {
+  return articles.map((a, i) => `[${i + 1}] ${a.title}\n${a.body}`).join('\n\n---\n\n')
+}
 
-/**
- * Assemble the delimited context block, capped by a total character budget so a
- * few long articles cannot crowd out the prompt (spec §9). The top-scoring
- * article is always included, budget or not — dropping it would mean calling the
- * model with nothing to ground on.
- */
-export function buildContextBlock(
-  results: Scored[],
-  budget: number,
-): { block: string; used: Scored[] } {
-  const used: Scored[] = [];
-  const parts: string[] = [];
-  let spent = 0;
+export function parseCitations(answer: string): number[] {
+  const found = [...answer.matchAll(/\[(\d{1,2})\]/g)].map((m) => Number(m[1]))
+  return [...new Set(found)]
+}
 
-  for (const result of results) {
-    const { number, title, body } = result.article;
-    const part = `[${used.length + 1}] ${number} — ${title}\n${body}`;
-    if (used.length > 0 && spent + part.length > budget) break;
-    parts.push(part);
-    used.push(result);
-    spent += part.length;
+/** Intersects cited labels with those actually supplied. Anything else is fabricated. */
+export function verifyCitations(
+  cited: number[],
+  supplied: Article[],
+): { sources: Article[]; fabricated: number[] } {
+  const sources: Article[] = []
+  const fabricated: number[] = []
+  for (const label of cited) {
+    const a = supplied[label - 1]
+    if (a) sources.push(a)
+    else fabricated.push(label)
   }
-
-  return { block: parts.join('\n\n'), used };
+  return { sources, fabricated }
 }
 
-/**
- * Prompt instructions are not guarantees (spec §10). Intersect what the model
- * cited with what was actually supplied; anything else is fabricated.
- */
-export function extractCitations(
-  answer: string,
-  maxLabel: number,
-): { valid: number[]; invalid: number[] } {
-  const cited = [...answer.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1]));
-  const inRange = (n: number) => n >= 1 && n <= maxLabel;
+/** Removes bracketed labels once sources are rendered separately. */
+export function stripCitationMarkup(answer: string): string {
+  return answer.replace(/\s*\[\d{1,2}\]/g, '').replace(/\s{2,}/g, ' ').trim()
+}
+```
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `npx vitest run tests/prompt.test.ts`
+Expected: PASS, 9 tests
+
+- [ ] **Step 5: Implement `src/llm/client.ts`**
+
+```ts
+import Anthropic from '@anthropic-ai/sdk'
+import type { Config } from '../config.js'
+import type { Article } from '../connectors/types.js'
+import { SYSTEM_PROMPT, buildContextBlock } from './prompt.js'
+import { log, mask } from '../log.js'
+
+export interface Turn {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export function makeLlm(cfg: Config) {
+  // Two env vars, standard SDK, no wrapper (nowstudio-reference §1).
+  const client = new Anthropic({
+    apiKey: cfg.anthropicApiKey,
+    baseURL: cfg.anthropicBaseUrl,
+  })
+
   return {
-    valid: [...new Set(cited.filter(inRange))].sort((a, b) => a - b),
-    invalid: [...new Set(cited.filter((n) => !inRange(n)))].sort((a, b) => a - b),
-  };
-}
+    /**
+     * One cheap call against the configured model id. The gateway renames
+     * models, and a wrong id produces a silent wrong answer rather than an
+     * error — so this must fail the boot, loudly (spec §7 rule 2).
+     */
+    async preflight(): Promise<void> {
+      try {
+        await client.messages.create({
+          model: cfg.claudeModel,
+          max_tokens: 4,
+          messages: [{ role: 'user', content: 'ping' }],
+        })
+        log('llm.preflight.ok', { model: cfg.claudeModel, baseUrl: cfg.anthropicBaseUrl })
+      } catch (e) {
+        throw new Error(
+          `Gateway preflight failed for model '${cfg.claudeModel}' at ${cfg.anthropicBaseUrl} ` +
+            `(key ${mask(cfg.anthropicApiKey)}). Model ids are gateway-specific — do not assume a ` +
+            `public Anthropic id works. Original error: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      }
+    },
 
-export async function answerQuestion(
-  client: MessagesClient,
-  opts: { question: string; results: Scored[]; history: Turn[]; model: string; budget: number },
-): Promise<{ answer: string; used: Scored[]; valid: number[]; invalid: number[] }> {
-  const { block, used } = buildContextBlock(opts.results, opts.budget);
+    async answer(opts: {
+      question: string
+      articles: Article[]
+      history: Turn[]
+      model?: string
+    }): Promise<{ text: string; model: string }> {
+      const model =
+        opts.model && cfg.claudeModelChoices.includes(opts.model) ? opts.model : cfg.claudeModel
 
-  const res = await client.messages.create({
-    model: opts.model,
-    max_tokens: MAX_ANSWER_TOKENS,
-    system: SYSTEM_PROMPT,
-    messages: [
-      ...opts.history.slice(-MAX_HISTORY_TURNS),
-      { role: 'user', content: `CONTEXT\n${block}\nEND CONTEXT\n\nQuestion: ${opts.question}` },
-    ],
-  });
+      const messages: Turn[] = [
+        ...opts.history.slice(-6),
+        {
+          role: 'user',
+          content: `CONTEXT:\n\n${buildContextBlock(opts.articles)}\n\nQUESTION: ${opts.question}`,
+        },
+      ]
 
-  const answer = res.content
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text ?? '')
-    .join('')
-    .trim();
+      const res = await client.messages.create({
+        model,
+        max_tokens: 1024,
+        system: SYSTEM_PROMPT,
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      })
 
-  return { answer, used, ...extractCitations(answer, used.length) };
-}
+      const text = res.content
+        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+        .map((b) => b.text)
+        .join('')
 
-/**
- * Spec §7 rule 2. The gateway renames models, and a wrong id is a silent wrong
- * answer rather than an error — so this must be a boot failure, not a surprise
- * in production.
- */
-export async function preflight(client: MessagesClient, model: string): Promise<void> {
-  try {
-    await client.messages.create({
-      model,
-      max_tokens: 1,
-      messages: [{ role: 'user', content: 'ping' }],
-    });
-  } catch (err) {
-    throw new Error(`Gateway preflight failed for model "${model}": ${(err as Error).message}`);
+      return { text, model }
+    },
   }
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 6: Verify preflight against the live gateway**
 
-Run: `npm test -- tests/llm.test.ts`
-Expected: PASS, 16 tests.
-
-- [ ] **Step 5: Commit**
+Requires `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` and `CLAUDE_MODEL` in `.env` — the one outstanding input in spec §17.
 
 ```bash
-git add src/llm/client.ts tests/llm.test.ts
+npx tsx -e "import {loadConfig} from './src/config.js';import {makeLlm} from './src/llm/client.js';makeLlm(loadConfig()).preflight().then(()=>console.log('preflight OK')).catch(e=>{console.error(e.message);process.exit(1)})"
+```
+
+Expected: `preflight OK`. On failure the message names the model id and base URL — check the id against the gateway's configured list rather than assuming a public Anthropic id.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/llm tests/prompt.test.ts
 git commit -m "feat: gateway client, label-based prompting and citation verification"
 ```
 
 ---
 
-## Task 8: Routes, app and boot sequence
-
-**Blocked without the gateway credentials** for step 7 only; steps 1–6 stub the client and run offline.
+## Task 8: Routes, app and boot
 
 **Files:**
 - Create: `src/server/routes.ts`, `src/server/app.ts`, `src/main.ts`
 - Test: `tests/routes.test.ts`
 
 **Interfaces:**
-- Consumes: everything built so far.
-- Produces:
-  - `type AppState = { index: KbIndex; articleCount: number; lastSync: string | null; gatewayOk: boolean }`
-  - `type Deps = { cfg: Config; state: AppState; client: MessagesClient; sync: () => Promise<Article[]> }`
-  - `pickModel(requested: unknown, cfg: Config): string`
-  - `createRoutes(deps: Deps): Router`
-  - `createApp(deps: Deps): Express`
+- Consumes: everything from Tasks 1-7
+- Produces: `makeRoutes(deps): Router`; `makeApp(deps: { cfg: Config; connector: KnowledgeConnector; llm: Llm }): express.Express`. `POST /api/chat` returns `{ answer: string; sources: { id, label, title, url }[]; grounded: boolean; gateReason: GateReason }`. `GET /api/health` returns `{ ok, connector, platform, model, modelChoices }`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/routes.test.ts`:
+`tests/routes.test.ts`:
 
 ```ts
-import { describe, expect, it, vi } from 'vitest';
-import { loadConfig } from '../src/config.js';
-import { buildIndex } from '../src/index/build.js';
-import { createApp } from '../src/server/app.js';
-import type { AppState } from '../src/server/routes.js';
-import { pickModel } from '../src/server/routes.js';
-import type { MessagesClient } from '../src/llm/client.js';
-import type { Article } from '../src/types.js';
+import { describe, it, expect, vi } from 'vitest'
+import { createServer } from 'node:http'
+import { makeApp } from '../src/server/app.js'
+import { makeFakeConnector } from '../src/connectors/fake.js'
+import { parseConfig } from '../src/config.js'
+import type { Article } from '../src/connectors/types.js'
+import { PlatformUnavailableError } from '../src/connectors/types.js'
 
-const cfg = loadConfig(
-  {
-    ANTHROPIC_API_KEY: 'sk-abc123456789wxyz',
-    ANTHROPIC_BASE_URL: 'https://llmproxy.example.com',
-    CLAUDE_MODEL: 'model-default',
-    CLAUDE_MODEL_CHOICES: 'model-alt',
-    SN_INSTANCE_URL: 'https://abhrademo4.service-now.com',
-    SN_CLIENT_ID: 'cid',
-    SN_CLIENT_SECRET: 'csecret',
-    SN_REFRESH_TOKEN: 'rtoken',
-    SN_KB_ALLOWLIST: 'kb-aaa',
-    RETRIEVAL_MIN_SCORE: '3',
-    MAX_MESSAGE_CHARS: '50',
-  },
-  {},
-);
+const cfg = parseConfig({
+  ANTHROPIC_API_KEY: 'sk-test-abcdefghijkl',
+  ANTHROPIC_BASE_URL: 'https://llmproxy.example.com',
+  CLAUDE_MODEL: 'm',
+  SN_INSTANCE_URL: 'https://abhrademo4.service-now.com',
+  SN_CLIENT_ID: 'c', SN_CLIENT_SECRET: 's', SN_REFRESH_TOKEN: 'r',
+  SN_KB_ALLOWLIST: 'kb1',
+})
 
 const articles: Article[] = [
-  {
-    sysId: 'sys-vpn',
-    number: 'KB0010096',
-    title: 'VPN will not connect from home',
-    body: 'Restart the VPN client, then reconnect to the corporate VPN gateway.',
-    kbSysId: 'kb-aaa',
-    category: 'network',
-  },
-];
+  { id: 'sysA', label: 'KB0010141', title: 'Printer jam warehouse', body: 'clear the warehouse printer jam', url: 'uA' },
+]
 
-const makeState = (): AppState => ({
-  index: buildIndex(articles),
-  articleCount: articles.length,
-  lastSync: '2026-09-13T10:00:00.000Z',
-  gatewayOk: true,
-});
+const fakeLlm = (text: string) => ({
+  preflight: async () => {},
+  answer: async () => ({ text, model: 'm' }),
+})
 
-/** Typed as a mock so the "was never called" assertions typecheck. */
-type StubClient = MessagesClient & { messages: { create: ReturnType<typeof vi.fn> } };
-
-const stub = (answer: string): StubClient =>
-  ({
-    messages: { create: vi.fn(async () => ({ content: [{ type: 'text', text: answer }] })) },
-  }) as unknown as StubClient;
-
-const appWith = (over: Partial<Parameters<typeof createApp>[0]> = {}) =>
-  createApp({
-    cfg,
-    state: makeState(),
-    client: stub('Restart the client [1].'),
-    sync: async () => articles,
-    ...over,
-  });
-
-describe('pickModel', () => {
-  it('falls back to the configured default when none is requested', () => {
-    expect(pickModel(undefined, cfg)).toBe('model-default');
-  });
-
-  it('accepts a model that is on the configured list', () => {
-    expect(pickModel('model-alt', cfg)).toBe('model-alt');
-  });
-
-  it('rejects a model that is not on the list rather than forwarding it', () => {
-    expect(() => pickModel('claude-3-opus-20240229', cfg)).toThrowError(/not available/);
-  });
-
-  it('rejects a non-string model', () => {
-    expect(() => pickModel(42, cfg)).toThrowError(/not available/);
-  });
-});
-```
-
-Then add the route tests. They drive the app over a real HTTP round-trip using Node's own server — **no new dependency** (`supertest` is not on the allowed list):
-
-```ts
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import type { Express } from 'express';
-
-async function call(
-  app: Express,
-  method: 'GET' | 'POST',
-  path: string,
-  body?: unknown,
-): Promise<{ status: number; json: any }> {
-  const server = createServer(app).listen(0);
-  await new Promise((r) => server.once('listening', r));
-  const { port } = server.address() as AddressInfo;
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}${path}`, {
-      method,
-      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    return { status: res.status, json: await res.json() };
-  } finally {
-    server.close();
-  }
+async function post(app: ReturnType<typeof makeApp>, body: unknown) {
+  const server = createServer(app)
+  await new Promise<void>((r) => server.listen(0, r))
+  const { port } = server.address() as { port: number }
+  const res = await fetch(`http://127.0.0.1:${port}/api/chat`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const json = (await res.json()) as Record<string, never>
+  server.close()
+  return { status: res.status, json }
 }
 
 describe('POST /api/chat', () => {
-  it('answers a grounded question with verified sources', async () => {
-    const res = await call(appWith(), 'POST', '/api/chat', { message: 'cannot connect to VPN' });
-    expect(res.status).toBe(200);
-    expect(res.json.grounded).toBe(true);
-    expect(res.json.answer).toContain('Restart the client');
-    expect(res.json.sources).toEqual([
-      expect.objectContaining({
-        sysId: 'sys-vpn',
-        number: 'KB0010096',
-        url: 'https://abhrademo4.service-now.com/kb_view.do?sys_kb_id=sys-vpn',
-      }),
-    ]);
-  });
+  it('answers and returns verified sources', async () => {
+    const app = makeApp({ cfg, connector: makeFakeConnector(articles), llm: fakeLlm('Clear the jam [1].') })
+    const { json } = await post(app, { message: 'printer jam warehouse' })
+    expect(json.grounded).toBe(true)
+    expect((json.sources as { id: string }[])[0].id).toBe('sysA')
+    expect(json.answer as string).not.toContain('[1]')
+  })
 
-  it('returns no match without calling the model when the score is below threshold', async () => {
-    const client = stub('should never be called');
-    const res = await call(appWith({ client }), 'POST', '/api/chat', { message: 'nan' });
-    expect(res.json.grounded).toBe(false);
-    expect(res.json.sources).toEqual([]);
-    expect(client.messages.create).not.toHaveBeenCalled();
-  });
+  it('declines short input without calling the model', async () => {
+    const llm = { preflight: async () => {}, answer: vi.fn() }
+    const app = makeApp({ cfg, connector: makeFakeConnector(articles), llm: llm as never })
+    const { json } = await post(app, { message: 'Hi Team,' })
+    expect(json.grounded).toBe(false)
+    expect(json.gateReason).toBe('too_few_tokens')
+    expect(llm.answer).not.toHaveBeenCalled()
+  })
 
-  it('strips a fabricated citation from the source line', async () => {
-    const res = await call(
-      appWith({ client: stub('Restart it [1], and also see [4].') }),
-      'POST',
-      '/api/chat',
-      { message: 'cannot connect to VPN' },
-    );
-    expect(res.json.sources).toHaveLength(1);
-    expect(res.json.sources[0].sysId).toBe('sys-vpn');
-  });
+  it('declines irrelevant questions without calling the model', async () => {
+    const llm = { preflight: async () => {}, answer: vi.fn() }
+    const app = makeApp({ cfg, connector: makeFakeConnector(articles), llm: llm as never })
+    const { json } = await post(app, { message: 'what is the capital of France' })
+    expect(json.gateReason).toBe('low_coverage')
+    expect(llm.answer).not.toHaveBeenCalled()
+  })
 
-  it('returns every retrieved article when the model cites nothing', async () => {
-    const res = await call(appWith({ client: stub('Restart it.') }), 'POST', '/api/chat', {
-      message: 'cannot connect to VPN',
-    });
-    expect(res.json.sources).toHaveLength(1);
-  });
+  it('honours the model declining even when the gate let it through', async () => {
+    const app = makeApp({ cfg, connector: makeFakeConnector(articles), llm: fakeLlm('NO_ANSWER_IN_KB') })
+    const { json } = await post(app, { message: 'printer jam warehouse' })
+    expect(json.grounded).toBe(false)
+    expect(json.gateReason).toBe('model_declined')
+  })
 
-  it('rejects an empty message', async () => {
-    const res = await call(appWith(), 'POST', '/api/chat', { message: '   ' });
-    expect(res.status).toBe(400);
-  });
+  it('strips fabricated citations', async () => {
+    const app = makeApp({ cfg, connector: makeFakeConnector(articles), llm: fakeLlm('Do this [1] and that [9].') })
+    const { json } = await post(app, { message: 'printer jam warehouse' })
+    expect(json.sources).toHaveLength(1)
+  })
 
-  it('rejects a message over the length cap before reaching the gateway', async () => {
-    const client = stub('x');
-    const res = await call(appWith({ client }), 'POST', '/api/chat', { message: 'x'.repeat(51) });
-    expect(res.status).toBe(400);
-    expect(client.messages.create).not.toHaveBeenCalled();
-  });
+  it('reports an unreachable platform differently from no match', async () => {
+    const broken = {
+      name: 'broken',
+      search: async () => { throw new PlatformUnavailableError('instance down') },
+      health: async () => ({ ok: false }),
+    }
+    const app = makeApp({ cfg, connector: broken, llm: fakeLlm('x') })
+    const { status, json } = await post(app, { message: 'printer jam warehouse' })
+    expect(status).toBe(503)
+    expect(json.gateReason).toBe('platform_unavailable')
+    expect(json.answer as string).toMatch(/reach the knowledge base/i)
+  })
 
-  it('rejects a model that is not on the configured list', async () => {
-    const res = await call(appWith(), 'POST', '/api/chat', {
-      message: 'cannot connect to VPN',
-      model: 'claude-3-opus-20240229',
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('returns 503 and preserves the conversation when the gateway fails', async () => {
-    const client = {
-      messages: { create: async () => { throw new Error('529 overloaded'); } },
-    } as unknown as MessagesClient;
-    const res = await call(appWith({ client }), 'POST', '/api/chat', { message: 'cannot connect to VPN' });
-    expect(res.status).toBe(503);
-    expect(res.json.error).toMatch(/busy/i);
-  });
-
-  it('never leaks a secret in an error response', async () => {
-    const client = {
-      messages: { create: async () => { throw new Error('auth failed for sk-abc123456789wxyz'); } },
-    } as unknown as MessagesClient;
-    const res = await call(appWith({ client }), 'POST', '/api/chat', { message: 'cannot connect to VPN' });
-    expect(JSON.stringify(res.json)).not.toContain('sk-abc123456789wxyz');
-  });
-});
-
-describe('POST /api/sync', () => {
-  it('rebuilds the index and reports the count and duration', async () => {
-    const res = await call(appWith(), 'POST', '/api/sync', {});
-    expect(res.status).toBe(200);
-    expect(res.json.articleCount).toBe(1);
-    expect(typeof res.json.durationMs).toBe('number');
-  });
-
-  it('keeps serving the existing index when the sync fails', async () => {
-    const app = appWith({ sync: async () => { throw new Error('invalid_grant'); } });
-    const sync = await call(app, 'POST', '/api/sync', {});
-    expect(sync.status).toBe(502);
-
-    const health = await call(app, 'GET', '/api/health');
-    expect(health.json.articleCount).toBe(1);
-  });
-
-  it('refuses to replace a working index with an empty one', async () => {
-    const app = appWith({ sync: async () => [] });
-    const res = await call(app, 'POST', '/api/sync', {});
-    expect(res.status).toBe(502);
-    expect((await call(app, 'GET', '/api/health')).json.articleCount).toBe(1);
-  });
-});
-
-describe('GET /api/health', () => {
-  it('reports the model, choices, article count and last sync', async () => {
-    const res = await call(appWith(), 'GET', '/api/health');
-    expect(res.json).toMatchObject({
-      ok: true,
-      model: 'model-default',
-      models: ['model-default', 'model-alt'],
-      articleCount: 1,
-      lastSync: '2026-09-13T10:00:00.000Z',
-      gateway: 'reachable',
-    });
-  });
-
-  it('never includes a secret', async () => {
-    const res = await call(appWith(), 'GET', '/api/health');
-    expect(JSON.stringify(res.json)).not.toContain('sk-abc123456789wxyz');
-  });
-});
+  it('rejects oversized input before searching', async () => {
+    const app = makeApp({ cfg, connector: makeFakeConnector(articles), llm: fakeLlm('x') })
+    const { status } = await post(app, { message: 'x'.repeat(5000) })
+    expect(status).toBe(400)
+  })
+})
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 2: Run to verify it fails**
 
-Run: `npm test -- tests/routes.test.ts`
-Expected: FAIL — `Failed to resolve import "../src/server/app.js"`.
+Run: `npx vitest run tests/routes.test.ts`
+Expected: FAIL — module not found
 
 - [ ] **Step 3: Implement `src/server/routes.ts`**
 
 ```ts
-import { Router, type Request, type Response } from 'express';
-import { redact, type Config } from '../config.js';
-import { buildIndex, type KbIndex } from '../index/build.js';
-import { search } from '../index/search.js';
-import { answerQuestion, NO_MATCH_ANSWER, type MessagesClient } from '../llm/client.js';
-import { articleUrl } from '../servicenow/articles.js';
-import type { Article, Scored, Source, Turn } from '../types.js';
+import { Router } from 'express'
+import type { Config } from '../config.js'
+import type { Article, KnowledgeConnector } from '../connectors/types.js'
+import { PlatformUnavailableError } from '../connectors/types.js'
+import { decide } from '../gate/decide.js'
+import { parseCitations, verifyCitations, stripCitationMarkup } from '../llm/prompt.js'
+import type { Turn } from '../llm/client.js'
+import { log } from '../log.js'
 
-export type AppState = {
-  index: KbIndex;
-  articleCount: number;
-  lastSync: string | null;
-  gatewayOk: boolean;
-};
+const MAX_MESSAGE_LENGTH = 2000
+const DECLINE_TEXT = 'I do not have that in the knowledge base.'
+const UNAVAILABLE_TEXT = 'I cannot reach the knowledge base right now. Please try again shortly.'
 
-export type Deps = {
-  cfg: Config;
-  state: AppState;
-  client: MessagesClient;
-  sync: () => Promise<Article[]>;
-};
-
-/**
- * Input validation at a trust boundary: the model id comes from the browser and
- * is forwarded to the gateway, so it must be one we configured, not any string.
- */
-export function pickModel(requested: unknown, cfg: Config): string {
-  if (requested === undefined || requested === null || requested === '') return cfg.CLAUDE_MODEL;
-  if (typeof requested !== 'string' || !cfg.modelChoices.includes(requested)) {
-    throw new Error(`Model not available. Choose one of: ${cfg.modelChoices.join(', ')}`);
-  }
-  return requested;
+export interface Llm {
+  preflight(): Promise<void>
+  answer(o: {
+    question: string
+    articles: Article[]
+    history: Turn[]
+    model?: string
+  }): Promise<{ text: string; model: string }>
 }
 
-const toSource = (cfg: Config, { article, score }: Scored): Source => ({
-  number: article.number,
-  title: article.title,
-  sysId: article.sysId,
-  score: Number(score.toFixed(3)),
-  url: articleUrl(cfg.SN_INSTANCE_URL, article.sysId),
-});
+export function makeRoutes(deps: { cfg: Config; connector: KnowledgeConnector; llm: Llm }): Router {
+  const { cfg, connector, llm } = deps
+  const conversations = new Map<string, Turn[]>()
+  const router = Router()
 
-export function createRoutes(deps: Deps): Router {
-  const { cfg, state, client } = deps;
-  const router = Router();
-  // Process-lifetime conversation memory. No database (spec §4).
-  const conversations = new Map<string, Turn[]>();
-
-  const log = (fields: Record<string, unknown>): void => {
-    console.log(redact(JSON.stringify({ t: new Date().toISOString(), ...fields }), cfg));
-  };
-
-  router.post('/api/chat', async (req: Request, res: Response) => {
-    const { message, conversationId = 'default', model } = (req.body ?? {}) as Record<string, unknown>;
-
-    if (typeof message !== 'string' || message.trim() === '') {
-      return res.status(400).json({ error: 'message is required' });
-    }
-    if (message.length > cfg.MAX_MESSAGE_CHARS) {
-      return res.status(400).json({ error: `message too long (max ${cfg.MAX_MESSAGE_CHARS} characters)` });
-    }
-
-    let chosenModel: string;
-    try {
-      chosenModel = pickModel(model, cfg);
-    } catch (err) {
-      return res.status(400).json({ error: (err as Error).message });
-    }
-
-    const started = Date.now();
-    const results = search(state.index, message, cfg.RETRIEVAL_TOP_K);
-    const topScore = results[0]?.score ?? 0;
-
-    // Spec §4 step 3: "I don't know" is a retrieval decision, made before any model call.
-    if (topScore < cfg.RETRIEVAL_MIN_SCORE) {
-      log({
-        event: 'chat',
-        grounded: false,
-        query: message,
-        topScore: Number(topScore.toFixed(3)),
-        latencyMs: Date.now() - started,
-      });
-      return res.json({ answer: NO_MATCH_ANSWER, sources: [], grounded: false });
-    }
-
-    const key = String(conversationId);
-    const history = conversations.get(key) ?? [];
-
-    try {
-      const { answer, used, valid, invalid } = await answerQuestion(client, {
-        question: message,
-        results,
-        history,
-        model: chosenModel,
-        budget: cfg.CONTEXT_CHAR_BUDGET,
-      });
-
-      // Cite only what was verified. An uncited answer still shows what was retrieved.
-      const citedResults = valid.length > 0 ? valid.map((label) => used[label - 1]!) : used;
-      const sources = citedResults.map((r) => toSource(cfg, r));
-
-      conversations.set(key, [
-        ...history,
-        { role: 'user', content: message },
-        { role: 'assistant', content: answer },
-      ]);
-      state.gatewayOk = true;
-
-      if (invalid.length > 0) {
-        log({ event: 'citation_stripped', conversationId: key, invalid, supplied: used.length });
-      }
-      log({
-        event: 'chat',
-        grounded: true,
-        query: message,
-        model: chosenModel,
-        // sys_id, because the article number is not unique (D10).
-        retrieved: results.map((r) => ({ sysId: r.article.sysId, number: r.article.number, score: Number(r.score.toFixed(3)) })),
-        latencyMs: Date.now() - started,
-      });
-
-      return res.json({ answer, sources, grounded: true });
-    } catch (err) {
-      state.gatewayOk = false;
-      log({ event: 'chat_error', model: chosenModel, error: (err as Error).message });
-      // The conversation is untouched, so the user can retry on the same thread.
-      return res.status(503).json({ error: 'The model is busy. Please try again.' });
-    }
-  });
-
-  router.post('/api/sync', async (_req: Request, res: Response) => {
-    const started = Date.now();
-    try {
-      const articles = await deps.sync();
-      if (articles.length === 0) {
-        // A stale index beats an empty one (spec §13).
-        log({ event: 'sync_empty' });
-        return res.status(502).json({ error: 'Sync returned no articles; the existing index is unchanged.' });
-      }
-      state.index = buildIndex(articles);
-      state.articleCount = articles.length;
-      state.lastSync = new Date().toISOString();
-      const durationMs = Date.now() - started;
-      log({ event: 'sync', articleCount: articles.length, durationMs });
-      return res.json({ articleCount: articles.length, durationMs, lastSync: state.lastSync });
-    } catch (err) {
-      log({ event: 'sync_error', error: (err as Error).message });
-      return res.status(502).json({
-        error: `Sync failed: ${redact((err as Error).message, cfg)}. The existing index is still serving.`,
-      });
-    }
-  });
-
-  router.get('/api/health', (_req: Request, res: Response) => {
+  router.get('/health', async (_req, res) => {
+    const platform = await connector.health()
     res.json({
-      ok: state.articleCount > 0,
-      model: cfg.CLAUDE_MODEL,
-      models: cfg.modelChoices,
-      articleCount: state.articleCount,
-      lastSync: state.lastSync,
-      gateway: state.gatewayOk ? 'reachable' : 'unreachable',
-    });
-  });
+      ok: platform.ok,
+      connector: connector.name,
+      platform,
+      model: cfg.claudeModel,
+      modelChoices: cfg.claudeModelChoices,
+    })
+  })
 
-  return router;
+  router.post('/chat', async (req, res, next) => {
+    try {
+      const message = String(req.body?.message ?? '').trim()
+      const conversationId = String(req.body?.conversationId ?? 'default')
+      const model = req.body?.model ? String(req.body.model) : undefined
+      const started = Date.now()
+      const opts = { minTokens: cfg.gateMinTokens, minCoverage: cfg.gateMinCoverage }
+
+      if (!message) return res.status(400).json({ error: 'message is required' })
+      if (message.length > MAX_MESSAGE_LENGTH) {
+        return res.status(400).json({ error: `message exceeds ${MAX_MESSAGE_LENGTH} characters` })
+      }
+
+      // Layer 1 runs before any network call — noise must never reach the instance.
+      const pre = decide(message, [], opts)
+      if (!pre.answer && pre.reason === 'too_few_tokens') {
+        log('chat', { q: message, gate: pre.reason, ms: Date.now() - started })
+        return res.json({ answer: DECLINE_TEXT, sources: [], grounded: false, gateReason: pre.reason })
+      }
+
+      let articles: Article[]
+      try {
+        articles = await connector.search(message, cfg.searchLimit)
+      } catch (e) {
+        if (e instanceof PlatformUnavailableError) {
+          log('chat.platform_unavailable', { q: message, detail: e.message })
+          return res.status(503).json({
+            answer: UNAVAILABLE_TEXT, sources: [], grounded: false, gateReason: 'platform_unavailable',
+          })
+        }
+        throw e
+      }
+
+      // Layer 2.
+      const gate = decide(message, articles, opts)
+      if (!gate.answer) {
+        log('chat', {
+          q: message, candidates: articles.map((a) => a.label), cov: gate.topCoverage,
+          gate: gate.reason, ms: Date.now() - started,
+        })
+        return res.json({ answer: DECLINE_TEXT, sources: [], grounded: false, gateReason: gate.reason })
+      }
+
+      const history = conversations.get(conversationId) ?? []
+      const { text, model: used } = await llm.answer({ question: message, articles, history, model })
+
+      // Layer 3.
+      if (text.includes('NO_ANSWER_IN_KB')) {
+        log('chat', {
+          q: message, cov: gate.topCoverage, gate: 'model_declined', model: used, ms: Date.now() - started,
+        })
+        return res.json({
+          answer: DECLINE_TEXT, sources: [], grounded: false, gateReason: 'model_declined',
+        })
+      }
+
+      const { sources, fabricated } = verifyCitations(parseCitations(text), articles)
+      if (fabricated.length) log('chat.fabricated_citation', { q: message, labels: fabricated })
+
+      conversations.set(
+        conversationId,
+        [...history, { role: 'user' as const, content: message }, { role: 'assistant' as const, content: text }].slice(-12),
+      )
+
+      log('chat', {
+        q: message, candidates: articles.map((a) => a.label), cov: gate.topCoverage,
+        gate: 'answered', cited: sources.map((s) => s.label), model: used, ms: Date.now() - started,
+      })
+
+      res.json({
+        answer: stripCitationMarkup(text),
+        sources: sources.map((s) => ({ id: s.id, label: s.label, title: s.title, url: s.url })),
+        grounded: true,
+        gateReason: null,
+      })
+    } catch (e) {
+      next(e)
+    }
+  })
+
+  return router
 }
 ```
 
 - [ ] **Step 4: Implement `src/server/app.ts`**
 
 ```ts
-import express, { type Express } from 'express';
-import { createRoutes, type Deps } from './routes.js';
+import express from 'express'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+import type { Config } from '../config.js'
+import type { KnowledgeConnector } from '../connectors/types.js'
+import { makeRoutes, type Llm } from './routes.js'
+import { log } from '../log.js'
 
-export function createApp(deps: Deps): Express {
-  const app = express();
-  app.use(express.json({ limit: '64kb' }));
-  app.use(createRoutes(deps));
-  app.use(express.static('public'));
-  return app;
+const here = dirname(fileURLToPath(import.meta.url))
+
+export function makeApp(deps: { cfg: Config; connector: KnowledgeConnector; llm: Llm }) {
+  const app = express()
+  app.use(express.json({ limit: '64kb' }))
+  app.use('/api', makeRoutes(deps))
+  app.use(express.static(join(here, '../../public')))
+
+  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    log('error.unhandled', { message: err.message })
+    res.status(500).json({ error: 'internal error' })
+  })
+
+  return app
 }
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
-
-Run: `npm test -- tests/routes.test.ts`
-Expected: PASS, 18 tests.
-
-- [ ] **Step 6: Implement `src/main.ts`**
+- [ ] **Step 5: Implement `src/main.ts`**
 
 ```ts
-import Anthropic from '@anthropic-ai/sdk';
-import { loadConfig, mask } from './config.js';
-import { buildIndex } from './index/build.js';
-import { preflight } from './llm/client.js';
-import { fetchArticles } from './servicenow/articles.js';
-import { getAccessToken } from './servicenow/auth.js';
-import { createApp } from './server/app.js';
-import type { AppState } from './server/routes.js';
+import { loadConfig } from './config.js'
+import { getConnector } from './connectors/index.js'
+import { makeLlm } from './llm/client.js'
+import { makeApp } from './server/app.js'
+import { log } from './log.js'
 
-/** Spec §7: each step fails fast with a specific, actionable message. */
-const die = (message: string): never => {
-  console.error(`\n${message}\n`);
-  process.exit(1);
-};
+async function main() {
+  const cfg = loadConfig()
 
-const cfg = (() => {
-  try {
-    return loadConfig();
-  } catch (err) {
-    return die(`Startup failed while loading configuration.\n${(err as Error).message}`);
+  const llm = makeLlm(cfg)
+  await llm.preflight() // fails the boot on a bad model id or key
+
+  const connector = getConnector(cfg)
+  const health = await connector.health()
+  if (!health.ok) {
+    throw new Error(`Connector '${connector.name}' is not reachable: ${health.detail}`)
   }
-})();
+  log('connector.ok', { connector: connector.name, detail: health.detail })
 
-const client = new Anthropic({
-  apiKey: cfg.ANTHROPIC_API_KEY,
-  baseURL: cfg.ANTHROPIC_BASE_URL,
-});
-
-try {
-  await preflight(client, cfg.CLAUDE_MODEL);
-  console.log(`preflight ok  model=${cfg.CLAUDE_MODEL}  gateway=${cfg.ANTHROPIC_BASE_URL}`);
-} catch (err) {
-  die(
-    `${(err as Error).message}\n` +
-      `  gateway: ${cfg.ANTHROPIC_BASE_URL}\n` +
-      `  key:     ${mask(cfg.ANTHROPIC_API_KEY)}\n` +
-      `A wrong model id is a silent wrong answer, so this is a boot failure by design (spec §7).`,
-  );
+  makeApp({ cfg, connector, llm }).listen(cfg.port, () => {
+    log('listening', { port: cfg.port, connector: connector.name, model: cfg.claudeModel })
+  })
 }
 
-const sync = async () => fetchArticles(cfg, await getAccessToken(cfg));
-
-const articles = await sync().catch((err: Error) =>
-  die(`Startup failed while fetching articles from ${cfg.SN_INSTANCE_URL}.\n${err.message}`),
-);
-
-if (articles.length === 0) {
-  die(
-    `Startup failed: the allowlisted knowledge bases returned no published articles.\n` +
-      `  SN_KB_ALLOWLIST: ${cfg.SN_KB_ALLOWLIST}\n` +
-      `Nothing to ground on means every answer would be "no match" (spec §13).`,
-  );
-}
-
-const state: AppState = {
-  index: buildIndex(articles),
-  articleCount: articles.length,
-  lastSync: new Date().toISOString(),
-  gatewayOk: true,
-};
-
-console.log(`index built  ${state.articleCount} articles`);
-
-createApp({ cfg, state, client, sync }).listen(cfg.PORT, () => {
-  console.log(`nowops-chat listening on http://localhost:${cfg.PORT}`);
-});
+main().catch((e) => {
+  console.error(`\nSTARTUP FAILED\n${e instanceof Error ? e.message : String(e)}\n`)
+  process.exit(1)
+})
 ```
 
-- [ ] **Step 7: Typecheck, then boot (needs the gateway credentials in `.env`)**
+- [ ] **Step 6: Run to verify the tests pass**
 
-Run: `npm run typecheck && npm test`
-Expected: no type errors; all suites pass.
+Run: `npx vitest run tests/routes.test.ts`
+Expected: PASS, 7 tests
 
-Run: `npm run dev`
-Expected, in order:
-```
-preflight ok  model=<gateway model id>  gateway=https://llmproxy...
-index built  <n> articles
-nowops-chat listening on http://localhost:3000
-```
-
-If the gateway credentials are not yet available, stop here and record that acceptance criteria 1, 2, 3 and 5 are unverified. Everything else in this task is done.
-
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/server src/main.ts tests/routes.test.ts
-git commit -m "feat: chat, sync and health routes with boot preflight"
+git commit -m "feat: chat and health routes with three-layer gate wiring"
 ```
 
 ---
@@ -2379,365 +1670,445 @@ git commit -m "feat: chat, sync and health routes with boot preflight"
 - Create: `public/index.html`, `public/app.js`, `public/styles.css`
 
 **Interfaces:**
-- Consumes: `POST /api/chat`, `GET /api/health`.
-- Produces: nothing importable.
-
-No test framework for this — there is no DOM test runner on the dependency list and adding one is a plan violation. Verification is manual, in step 4.
+- Consumes: `POST /api/chat`, `GET /api/health` (Task 8)
+- Produces: nothing consumed by later tasks
 
 - [ ] **Step 1: Create `public/index.html`**
 
 ```html
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>NowOps Knowledge Assistant</title>
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <header>
-      <h1>NowOps Knowledge Assistant</h1>
-      <div class="meta">
-        <label for="model">Model</label>
-        <select id="model"></select>
-        <span id="status" class="status">connecting…</span>
-      </div>
-    </header>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NowOps Assistant</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>NowOps Assistant</h1>
+    <select id="model" aria-label="Model"></select>
+    <span id="health" class="pill">checking…</span>
+  </header>
 
-    <main id="log" aria-live="polite" aria-label="Conversation"></main>
+  <main id="log" aria-live="polite"></main>
 
-    <form id="composer">
-      <label class="sr-only" for="message">Your question</label>
-      <input id="message" name="message" autocomplete="off" placeholder="Ask about a knowledge base article…" required />
-      <button type="submit" id="send">Send</button>
-    </form>
+  <form id="composer">
+    <input id="q" autocomplete="off" placeholder="Ask about the knowledge base…" />
+    <button>Send</button>
+  </form>
 
-    <script src="app.js"></script>
-  </body>
+  <script src="app.js" type="module"></script>
+</body>
 </html>
 ```
 
-- [ ] **Step 2: Create `public/app.js`**
+- [ ] **Step 2: Create `public/styles.css`**
+
+```css
+:root { --bg:#0f1115; --panel:#171a21; --ink:#e8eaed; --muted:#9aa4b2; --accent:#5b9dff; --warn:#e0a458; }
+* { box-sizing:border-box; }
+body { margin:0; font:15px/1.55 "Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--ink);
+       display:flex; flex-direction:column; height:100vh; }
+header { display:flex; gap:.75rem; align-items:center; padding:.75rem 1rem; border-bottom:1px solid #262b35; }
+h1 { font-size:1rem; margin:0; flex:1; font-weight:600; }
+select { background:var(--panel); color:var(--ink); border:1px solid #2b3240; border-radius:6px; padding:.3rem; }
+.pill { font-size:.75rem; color:var(--muted); border:1px solid #2b3240; border-radius:999px; padding:.15rem .6rem; }
+.pill.ok { color:#7ee787; border-color:#2ea04326; }
+.pill.bad { color:#ff7b72; border-color:#ff7b7226; }
+main { flex:1; overflow-y:auto; padding:1rem; display:flex; flex-direction:column; gap:.9rem; }
+.msg { max-width:46rem; }
+.msg.user { align-self:flex-end; background:#22304a; padding:.55rem .8rem; border-radius:10px 10px 2px 10px; }
+.msg.bot { align-self:flex-start; background:var(--panel); padding:.55rem .8rem; border-radius:10px 10px 10px 2px; white-space:pre-wrap; }
+.sources { font-size:.78rem; color:var(--muted); margin-top:.45rem; }
+.sources a { color:var(--accent); text-decoration:none; }
+.sources a:hover { text-decoration:underline; }
+.sources.none { color:var(--warn); }
+form { display:flex; gap:.5rem; padding:.75rem 1rem; border-top:1px solid #262b35; }
+input { flex:1; background:var(--panel); border:1px solid #2b3240; color:var(--ink); padding:.6rem .8rem; border-radius:8px; }
+button { background:var(--accent); border:0; color:#08121f; font-weight:600; padding:.6rem 1.1rem; border-radius:8px; cursor:pointer; }
+.typing { color:var(--muted); font-style:italic; }
+```
+
+- [ ] **Step 3: Create `public/app.js`**
+
+The three source-line states come from spec §12.
 
 ```js
-const log = document.getElementById('log');
-const form = document.getElementById('composer');
-const input = document.getElementById('message');
-const send = document.getElementById('send');
-const modelSelect = document.getElementById('model');
-const status = document.getElementById('status');
+const logEl = document.getElementById('log')
+const form = document.getElementById('composer')
+const input = document.getElementById('q')
+const modelSel = document.getElementById('model')
+const healthEl = document.getElementById('health')
+const conversationId = crypto.randomUUID()
 
-const conversationId = crypto.randomUUID();
-
-function addBubble(role, text) {
-  const el = document.createElement('div');
-  el.className = `bubble ${role}`;
-  el.textContent = text;
-  log.append(el);
-  log.scrollTop = log.scrollHeight;
-  return el;
+function bubble(cls, text) {
+  const el = document.createElement('div')
+  el.className = `msg ${cls}`
+  el.textContent = text
+  logEl.appendChild(el)
+  logEl.scrollTop = logEl.scrollHeight
+  return el
 }
 
-/** Spec §12: three states, and links always resolve by sys_id (D10). */
-function addSourceLine(after, data) {
-  const el = document.createElement('div');
-  el.className = 'sources';
+function renderSources(el, data) {
+  const line = document.createElement('div')
+  line.className = 'sources'
 
-  if (!data.grounded) {
-    el.classList.add('no-match');
-    el.textContent = 'No knowledge base match — not answered';
-  } else if (data.sources.length === 0) {
-    el.classList.add('no-match');
-    el.textContent = 'No verified citation';
+  if (!data.grounded || !data.sources || data.sources.length === 0) {
+    line.classList.add('none')
+    line.textContent =
+      data.gateReason === 'platform_unavailable'
+        ? 'Knowledge base unreachable — not answered'
+        : 'No knowledge base match — not answered'
   } else {
-    el.append('Sources: ');
+    line.append('Sources: ')
     data.sources.forEach((s, i) => {
-      if (i > 0) el.append(' · ');
-      const a = document.createElement('a');
-      a.href = s.url;
-      a.target = '_blank';
-      a.rel = 'noopener';
-      a.textContent = s.number;
-      a.title = `${s.title} (score ${s.score})`;
-      el.append(a);
-    });
+      if (i) line.append(' · ')
+      const a = document.createElement('a')
+      a.href = s.url
+      a.target = '_blank'
+      a.rel = 'noopener'
+      a.textContent = s.label || s.title
+      a.title = s.title
+      line.appendChild(a)
+    })
   }
-
-  after.insertAdjacentElement('afterend', el);
-  log.scrollTop = log.scrollHeight;
+  el.appendChild(line)
 }
 
 async function loadHealth() {
   try {
-    const res = await fetch('/api/health');
-    const health = await res.json();
-    modelSelect.replaceChildren(
-      ...health.models.map((m) => {
-        const opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m;
-        return opt;
-      }),
-    );
-    status.textContent = `${health.articleCount} articles · gateway ${health.gateway}`;
-    status.classList.toggle('bad', !health.ok || health.gateway !== 'reachable');
+    const h = await (await fetch('/api/health')).json()
+    healthEl.textContent = h.ok ? `${h.connector} ready` : `${h.connector} unreachable`
+    healthEl.className = `pill ${h.ok ? 'ok' : 'bad'}`
+    modelSel.innerHTML = ''
+    for (const m of h.modelChoices ?? [h.model]) {
+      const o = document.createElement('option')
+      o.value = m
+      o.textContent = m
+      modelSel.appendChild(o)
+    }
   } catch {
-    status.textContent = 'server unreachable';
-    status.classList.add('bad');
+    healthEl.textContent = 'server unreachable'
+    healthEl.className = 'pill bad'
   }
 }
 
-form.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const message = input.value.trim();
-  if (!message) return;
+form.addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const message = input.value.trim()
+  if (!message) return
+  input.value = ''
+  bubble('user', message)
 
-  addBubble('user', message);
-  input.value = '';
-  send.disabled = true;
-
-  const typing = addBubble('assistant typing', '…');
+  const pending = bubble('bot typing', 'Searching the knowledge base…')
 
   try {
     const res = await fetch('/api/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, conversationId, model: modelSelect.value }),
-    });
-    const data = await res.json();
-
-    if (!res.ok) {
-      typing.className = 'bubble error';
-      typing.textContent = data.error ?? 'Request failed.';
-      return;
-    }
-
-    typing.className = 'bubble assistant';
-    typing.textContent = data.answer;
-    addSourceLine(typing, data);
-  } catch (err) {
-    typing.className = 'bubble error';
-    typing.textContent = 'Could not reach the server.';
-  } finally {
-    send.disabled = false;
-    input.focus();
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message, conversationId, model: modelSel.value }),
+    })
+    const data = await res.json()
+    pending.className = 'msg bot'
+    pending.textContent = data.answer ?? data.error ?? 'No response.'
+    renderSources(pending, data)
+  } catch {
+    pending.className = 'msg bot'
+    pending.textContent = 'Request failed.'
   }
-});
+})
 
-loadHealth();
+loadHealth()
 ```
 
-- [ ] **Step 3: Create `public/styles.css`**
+- [ ] **Step 4: Verify by hand**
 
-```css
-:root {
-  --bg: #0f1115;
-  --panel: #171a21;
-  --text: #e6e8ec;
-  --muted: #949bab;
-  --accent: #4b9fff;
-  --bad: #ff6b6b;
-}
-
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  height: 100vh;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-  background: var(--bg);
-  color: var(--text);
-}
-
-header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: baseline;
-  justify-content: space-between;
-  padding: 14px 20px;
-  border-bottom: 1px solid #262b36;
-}
-
-h1 { font-size: 17px; margin: 0; font-weight: 600; }
-
-.meta { display: flex; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); }
-.meta select { background: var(--panel); color: var(--text); border: 1px solid #2c323f; border-radius: 6px; padding: 4px 8px; }
-.status.bad { color: var(--bad); }
-
-main {
-  overflow-y: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.bubble {
-  max-width: 68ch;
-  padding: 10px 14px;
-  border-radius: 12px;
-  white-space: pre-wrap;
-  margin-top: 10px;
-}
-.bubble.user { align-self: flex-end; background: var(--accent); color: #06101f; }
-.bubble.assistant { align-self: flex-start; background: var(--panel); }
-.bubble.error { align-self: flex-start; background: #2a1618; color: var(--bad); }
-.bubble.typing { color: var(--muted); }
-
-.sources { align-self: flex-start; font-size: 13px; color: var(--muted); padding-left: 14px; }
-.sources a { color: var(--accent); }
-.sources.no-match { font-style: italic; }
-
-form { display: flex; gap: 10px; padding: 14px 20px; border-top: 1px solid #262b36; }
-input[name='message'] {
-  flex: 1;
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid #2c323f;
-  background: var(--panel);
-  color: var(--text);
-  font: inherit;
-}
-button {
-  padding: 10px 20px;
-  border: 0;
-  border-radius: 10px;
-  background: var(--accent);
-  color: #06101f;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-button:disabled { opacity: 0.5; cursor: default; }
-
-.sr-only {
-  position: absolute;
-  width: 1px; height: 1px;
-  padding: 0; margin: -1px;
-  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
-}
+```bash
+npm run dev
 ```
 
-- [ ] **Step 4: Verify the three source-line states by hand**
+Open `http://localhost:3000` and check all three states:
 
-Run: `npm run dev`, open `http://localhost:3000`, and check each:
-
-1. **Grounded** — ask a question from `tests/fixtures/retrieval-eval.json` `inScope` (e.g. `"Workday password reset"`). Expect an answer plus `Sources: KB00…`. **Click the link and confirm it opens the article whose `sys_id` matches `expectedSysId`.**
-2. **No match** — ask an `outOfScope` question (e.g. `"nan"`). Expect `No knowledge base match — not answered`, and **no entry in the server log with `"grounded":true`**.
-3. **Model picker** — switch models and re-ask question 1. Expect an answer still carrying a source line.
+1. `Self-checkout lanes 1-4 down at Store #208 after image push` → an answer with a linked source; the link opens KB0010141 in abhrademo4
+2. `Hi Team,` → "No knowledge base match — not answered"
+3. `what is the capital of France` → the same decline
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add public/
-git commit -m "feat: chat UI with model picker and three-state source line"
+git add public
+git commit -m "feat: chat UI with three-state source line"
 ```
 
 ---
 
-## Task 10: Acceptance run
+## Task 10: Eval and calibration tooling
 
 **Files:**
-- Create: `docs/superpowers/plans/2026-09-13-acceptance.md` (the recorded result)
-- Modify: `README.md` (create it — setup and run instructions)
+- Create: `tools/eval.ts`, `tools/calibrate.ts`
+- Modify: `tests/fixtures/retrieval-eval.json` (only if a mapping proves wrong)
 
-- [ ] **Step 1: Create `README.md`**
+**Interfaces:**
+- Consumes: `getConnector` (Task 2), `coverage`/`tokenise` (Task 5), the eval fixture
+- Produces: `npm run eval`, `npm run calibrate`
 
-```markdown
-# nowops-chat
+These are the platform-agnostic instruments from spec §19: they take a connector and an eval file, so a future Jira connector reuses them unchanged.
 
-Answers questions from the abhrademo4 ServiceNow knowledge base using Claude via the
-UST LLM gateway. Every answer cites the articles it used, and questions the knowledge
-base cannot answer are refused before the model is ever called.
+- [ ] **Step 1: Implement `tools/eval.ts`**
 
-Design: [docs/superpowers/specs/2026-09-13-nowops-chatbot-design.md](docs/superpowers/specs/2026-09-13-nowops-chatbot-design.md)
+```ts
+import { readFileSync } from 'node:fs'
+import { loadConfig } from '../src/config.js'
+import { getConnector } from '../src/connectors/index.js'
+import { coverage } from '../src/gate/tokenise.js'
 
-## Setup
+interface EvalQ {
+  id: string
+  source: string
+  confidence?: string
+  question: string
+  expectedSysId?: string
+  acceptableSysIds?: string[]
+}
 
-```bash
-nvm use          # Node 22
-npm install
-cp .env.example .env   # then fill in the values
-npm run dev            # http://localhost:3000
+/** Baseline from spec §9. Falling below this is a regression. */
+const BASELINE_AT1 = 26
+
+const cfg = loadConfig()
+const connector = getConnector(cfg)
+const data = JSON.parse(readFileSync('tests/fixtures/retrieval-eval.json', 'utf8')) as {
+  inScope: EvalQ[]
+  outOfScope: EvalQ[]
+}
+
+const accept = (q: EvalQ) => q.acceptableSysIds ?? (q.expectedSysId ? [q.expectedSysId] : [])
+
+async function main() {
+  const ranks: { id: string; rank: number; source: string }[] = []
+
+  console.log('=== IN-SCOPE ===')
+  for (const q of data.inScope) {
+    const results = await connector.search(q.question, cfg.searchLimit)
+    const ok = accept(q)
+    const rank = results.findIndex((a) => ok.includes(a.id)) + 1
+    ranks.push({ id: q.id, rank, source: q.source })
+
+    const cov = results.length ? coverage(q.question, `${results[0].title} ${results[0].body}`) : 0
+    console.log(
+      `${q.id.padEnd(9)} ${(rank ? `#${rank}` : 'MISS').padEnd(6)} cov=${cov} ${results[0]?.label ?? '-'}`,
+    )
+  }
+
+  console.log('\n=== OUT-OF-SCOPE ===')
+  for (const q of data.outOfScope) {
+    const results = await connector.search(q.question, cfg.searchLimit)
+    const cov = results.length ? coverage(q.question, `${results[0].title} ${results[0].body}`) : 0
+    console.log(`${q.id.padEnd(12)} n=${results.length} cov=${cov} ${results[0]?.label ?? '-'}`)
+  }
+
+  const n = ranks.length
+  const at = (k: number) => ranks.filter((r) => r.rank >= 1 && r.rank <= k).length
+  const bySrc = (s: string) => {
+    const all = ranks.filter((r) => r.source === s)
+    return `${all.filter((r) => r.rank >= 1).length}/${all.length}`
+  }
+
+  console.log('\n=== SUMMARY ===')
+  console.log(`Recall@1 : ${at(1)}/${n} (${Math.round((100 * at(1)) / n)}%)`)
+  console.log(`Recall@5 : ${at(5)}/${n} (${Math.round((100 * at(5)) / n)}%)`)
+  console.log(`incident : ${bySrc('incident')}   synthetic: ${bySrc('synthetic')}`)
+  console.log(`Misses   : ${ranks.filter((r) => !r.rank).map((r) => r.id).join(', ') || 'none'}`)
+
+  if (at(1) < BASELINE_AT1) {
+    console.error(`\nREGRESSION: recall@1 ${at(1)} is below the recorded baseline of ${BASELINE_AT1}`)
+    process.exit(1)
+  }
+}
+
+main()
 ```
 
-`.env` needs the gateway key, base URL and exact model id from the project owner, plus the
-ServiceNow OAuth client id, secret and refresh token. `SN_KB_ALLOWLIST` and
-`RETRIEVAL_MIN_SCORE` are produced by the two scripts below.
+- [ ] **Step 2: Implement `tools/calibrate.ts`**
 
-## Scripts
+```ts
+import { readFileSync } from 'node:fs'
+import { loadConfig } from '../src/config.js'
+import { getConnector } from '../src/connectors/index.js'
+import { coverage, tokenise } from '../src/gate/tokenise.js'
 
-| Command | Purpose |
-|---|---|
-| `npm run dev` | Boot with preflight, sync and index |
-| `npm test` | Unit, route and retrieval-eval suites |
-| `npx tsx scripts/discover-allowlist.ts` | List knowledge bases by sys_id to choose `SN_KB_ALLOWLIST` |
-| `npx tsx scripts/calibrate.ts` | Sweep the eval set to choose `RETRIEVAL_MIN_SCORE` |
+const cfg = loadConfig()
+const connector = getConnector(cfg)
+const data = JSON.parse(readFileSync('tests/fixtures/retrieval-eval.json', 'utf8')) as {
+  inScope: { question: string }[]
+  outOfScope: { question: string }[]
+}
+
+/** -1 means the token guard caught it before coverage was ever consulted. */
+async function topCoverage(question: string): Promise<number> {
+  if (tokenise(question).length < cfg.gateMinTokens) return -1
+  const r = await connector.search(question, cfg.searchLimit)
+  return r.length ? coverage(question, `${r[0].title} ${r[0].body}`) : 0
+}
+
+async function main() {
+  const inCov: number[] = []
+  for (const q of data.inScope) inCov.push(await topCoverage(q.question))
+  const outCov: number[] = []
+  for (const q of data.outOfScope) outCov.push(await topCoverage(q.question))
+
+  const guarded = outCov.filter((c) => c === -1).length
+  console.log(`Connector: ${connector.name}`)
+  console.log(`Token guard alone rejects ${guarded}/${outCov.length} noise questions\n`)
+  console.log('cutoff  keeps(good)  rejects(noise)  score')
+
+  let best = { cutoff: cfg.gateMinCoverage, score: -1 }
+  for (let c = 0.1; c <= 0.9001; c += 0.05) {
+    const cutoff = Math.round(c * 100) / 100
+    const keeps = inCov.filter((v) => v >= cutoff).length
+    const rejects = outCov.filter((v) => v < cutoff).length
+    // Keeping good answers and rejecting noise are weighted equally.
+    const score = keeps / inCov.length + rejects / outCov.length
+    console.log(
+      `${String(cutoff).padEnd(7)} ${`${keeps}/${inCov.length}`.padEnd(12)} ` +
+        `${`${rejects}/${outCov.length}`.padEnd(15)} ${score.toFixed(3)}`,
+    )
+    if (score > best.score) best = { cutoff, score }
+  }
+
+  console.log(`\nRecommended GATE_MIN_COVERAGE=${best.cutoff}`)
+  console.log(`Currently configured: ${cfg.gateMinCoverage}`)
+}
+
+main()
+```
+
+- [ ] **Step 3: Run both tools live**
+
+```bash
+npm run eval
+npm run calibrate
+```
+
+Expected from `npm run eval`: recall@1 at or above **26/35 (74%)** and recall@5 at or above **29/35 (83%)** — the spec §9 baseline. A lower number exits non-zero; investigate rather than lowering the baseline.
+
+Expected from `npm run calibrate`: a sweep table and a recommended cutoff. If it differs materially from `0.3`, update `GATE_MIN_COVERAGE` in `.env` and record the change in spec §9.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add tools
+git commit -m "feat: platform-agnostic eval and calibration tooling"
+```
+
+---
+
+## Task 11: Seam proof and acceptance run
+
+**Files:**
+- Create: `tests/seam.test.ts`
+
+**Interfaces:**
+- Consumes: everything
+- Produces: evidence that spec §16 acceptance criteria hold
+
+- [ ] **Step 1: Write the seam test**
+
+This is acceptance criterion 10 — proof that D12 is real rather than decorative.
+
+`tests/seam.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+
+function tsFilesUnder(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const p = join(dir, entry)
+    if (statSync(p).isDirectory()) return tsFilesUnder(p)
+    return p.endsWith('.ts') ? [p] : []
+  })
+}
+
+describe('connector seam (D12)', () => {
+  it('no module above the seam imports ServiceNow code', () => {
+    const guarded = ['src/gate', 'src/llm', 'src/server']
+    const offenders: string[] = []
+
+    for (const dir of guarded) {
+      for (const file of tsFilesUnder(dir)) {
+        if (/from ['"].*connectors\/servicenow/.test(readFileSync(file, 'utf8'))) {
+          offenders.push(file)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('only connectors/index.ts names a concrete connector', () => {
+    expect(readFileSync('src/connectors/index.ts', 'utf8')).toContain('servicenow')
+  })
+})
+```
+
+- [ ] **Step 2: Run the whole suite and a type check**
+
+Run: `npx vitest run && npx tsc --noEmit`
+Expected: all tests PASS, no type errors.
+
+- [ ] **Step 3: Walk the acceptance criteria (spec §16)**
+
+Record the outcome of each:
+
+- [ ] 1. `npm run dev` boots; gateway preflight passes; the ServiceNow probe succeeds
+- [ ] 2. `/api/health` shows gateway reachable, model id, ServiceNow reachable
+- [ ] 3. Five known questions answer correctly with working links. Use `inc-01`, `inc-04`, `inc-06`, `syn-09`, `syn-18` from the eval fixture
+- [ ] 4. `Hi Team,` gives `too_few_tokens` and `what is the capital of France` gives `low_coverage`; neither calls the model (confirm in the logs)
+- [ ] 5. Temporarily set `SN_INSTANCE_URL=https://invalid.example.com` and confirm the reply is "cannot reach the knowledge base", **not** "no match". Restore afterwards
+- [ ] 6. The model picker switches models and answers still ground
+- [ ] 7. No secrets in captured logs — search them for `sk-` and for the client id
+- [ ] 8. `npm run eval` meets or beats 26/35 recall@1
+- [ ] 9. `npm run calibrate` emits a recommendation
+- [ ] 10. `npx vitest run tests/seam.test.ts` passes
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add tests/seam.test.ts
+git commit -m "test: prove the connector seam and complete the acceptance run"
+```
+
+---
 
 ## Things that will bite you
 
-- **Article numbers are not unique on this instance.** `KB0010004` maps to four articles.
-  Resolve and link by `sys_id` only.
-- **The knowledge base allowlist is keyed by knowledge base `sys_id`, not title.** The nine
-  most useful knowledge bases have ACL-restricted records with no readable title.
-- **The gateway renames Claude model ids.** A public id will not work, and a wrong one is a
-  silent wrong answer — which is why the server refuses to start if preflight fails.
-- **Most real traffic on this instance is not knowledge-base-answerable.** Monitoring alerts
-  and phishing reports dominate. "No knowledge base match" is the correct answer for them.
-```
-
-- [ ] **Step 2: Run the full test suite**
-
-Run: `npm test`
-Expected: every suite passes, including `tests/retrieval-eval.test.ts`. **Paste the actual output into the acceptance record — do not summarise it.**
-
-- [ ] **Step 3: Walk the acceptance criteria from spec §16**
-
-Record a verbatim result for each in `docs/superpowers/plans/2026-09-13-acceptance.md`:
-
-1. `npm run dev` boots, preflight passes, the index reports its article count.
-2. `curl -s localhost:3000/api/health | jq` shows gateway reachable, model id, article count, last sync.
-3. Five `inScope` eval questions return correct answers with correct citations, **and each link opens the article whose `sys_id` matches `expectedSysId`**. Check the `sys_id` in the URL, not the KB number on screen — that is the whole point of D10.
-4. An `outOfScope` question returns no match, **and the server log line for it carries `"grounded":false` with no model call**.
-5. The model picker switches models and answers still ground correctly.
-6. `npm run dev 2>&1 | tee /tmp/boot.log` then `grep -E "$(node -e "const e=process.env;console.log([e.ANTHROPIC_API_KEY,e.SN_CLIENT_SECRET,e.SN_REFRESH_TOKEN].join('|'))")" /tmp/boot.log` returns nothing. Repeat against a chat request log.
-7. The retrieval eval passes (step 2).
-
-- [ ] **Step 4: Record what is not done**
-
-In the same file, list explicitly: anything from spec §2 "out of scope", plus any acceptance criterion that could not be verified and why. A criterion skipped for missing credentials is a recorded gap, not a pass.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add README.md docs/superpowers/plans/2026-09-13-acceptance.md
-git commit -m "docs: README and acceptance run record"
-```
+- **Use `Article.id`, never `label`.** `KB0010004` maps to four different articles on abhrademo4 and `KB0010141` to two. Any lookup, comparison or link keyed on the number is a bug waiting for a demo.
+- **Gateway model ids are renamed by LiteLLM.** A wrong id fails at *runtime with a plausible answer*, not at startup — which is why preflight exists. Never hardcode a public Anthropic id as a fallback.
+- **`123TEXTQUERY321` needs sanitising.** A `^` or `=` in the user's question breaks `sysparm_query` and produces confusing results rather than an error.
+- **Layer 1 of the gate runs before searching.** Do not "simplify" by searching first — greeting-shaped noise should never reach the instance or the model.
+- **Expect most real traffic to be declined.** Of 36,023 incidents on abhrademo4, most are monitoring alerts and fragments. A high decline rate is the system working (spec §9).
+- **PowerShell's single-object trap**, if you extend tooling in PS rather than TS: a one-element result is a scalar and `.Count` is `$null`, which silently scores every one-result query as a miss. Always `@()`-wrap.
+- **`.env` holds live secrets** and is gitignored. Check `git status` before `git add -A`.
 
 ---
 
 ## Spec coverage
 
-| Spec section | Covered by |
+| Spec section | Tasks |
 |---|---|
-| §2 scope | Tasks 1–9; out-of-scope items recorded in Task 10 step 4 |
-| §4 architecture, request flow | Tasks 2–4, 7, 8 |
-| §6 layout, thin dependencies | Task 1 (plus the three deviations noted above) |
-| §7 config, gateway rules, startup sequence | Tasks 1, 7, 8 |
-| §8 ServiceNow ingestion | Tasks 4, 5 |
-| §9 indexing, scoring, calibration | Tasks 2, 3, 6 |
-| §10 prompt, labels, citation verification, history | Tasks 7, 8 |
-| §11 API contract | Task 8 |
-| §12 frontend, three source states | Task 9 |
-| §13 error handling — all seven rows | Tasks 4, 7, 8 (`tests/routes.test.ts`, `src/main.ts`) |
-| §14 observability | Task 8 (`log()` in `routes.ts`) |
-| §15 testing — all four layers | Tasks 1–8 unit and integration, Task 6 eval, Task 10 smoke |
-| §16 acceptance criteria | Task 10 |
-| §17 remaining inputs | Task 5 (allowlist, full-corpus length distribution), Task 6 (threshold) |
-| D1–D10 | D1/D3/D6 by construction; D2 Task 8; D4 Task 8; D5/D9 Task 5; D7 Task 4; D8 already true; D10 Tasks 3, 4, 7, 8, 9 |
-
-One spec item is deliberately **not** given a task: §3's open "full-corpus article length distribution". It is folded into Task 5 step 2, which prints the percentiles — a measurement, not a deliverable.
+| §4 architecture | 2, 8 |
+| §5 decisions | D1 T1 · D2 T4 · D3 T9 · D4 T6, T8 · D5 T1 · D6 T8 · D7 T4 · D8 T1 · D9 T1, T4 · D10 T4, T7 · D11 T6, T8 · D12 T2, T11 |
+| §6 layout | 1-10 |
+| §7 config and gateway rules | 1, 7 |
+| §8 ServiceNow search | 3, 4 |
+| §9 gate and eval | 6, 10 |
+| §10 prompt and citations | 7 |
+| §11 API contract | 8 |
+| §12 frontend | 9 |
+| §13 error handling | 3, 4, 8 |
+| §14 observability | 1, 8 |
+| §15 testing | every task |
+| §16 acceptance | 11 |
+| §19 portability | 2, 10, 11 |
