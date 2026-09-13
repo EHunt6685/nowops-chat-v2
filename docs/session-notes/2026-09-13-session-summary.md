@@ -79,7 +79,7 @@ Write-Host ("  SN_REFRESH_TOKEN {0} chars (not shown)" -f $refresh.Length)
 
 ### `docs/superpowers/specs/2026-09-13-nowops-chatbot-design.md`
 
-478 lines, revision 5, 19 sections. Decisions D1–D13:
+629 lines, revision 5, 19 sections. Decisions D1–D13:
 
 - D1 TypeScript + Express
 - D2 live ServiceNow search
@@ -97,7 +97,7 @@ Write-Host ("  SN_REFRESH_TOKEN {0} chars (not shown)" -f $refresh.Length)
 
 ### `docs/superpowers/plans/2026-09-13-nowops-chatbot.md`
 
-1,682 lines, 7 tasks:
+2,062 lines, 7 tasks:
 
 1. Scaffold, config, logging
 2. ServiceNow OAuth + search
@@ -247,7 +247,15 @@ silently. `SN_KB_ALLOWLIST` was stripped from the live `.env` (1084 → 605 byte
 UTF-8 mojibake reintroduced into the spec was repaired.
 
 Verified: no remaining allowlist machinery in the plan, no placeholders, zero mojibake
-in either document, plan 1,682 lines, spec 478 lines. Committed as `af0aab6`
+in either document, plan 2,062 lines, spec 629 lines. Committed as `af0aab6`
+
+> **Later correction.** The "1,682 / 478" figures reported at the time were wrong —
+> `Measure-Object -Line` scores a blank line as zero lines, so those were non-blank
+> counts, not line counts. The same pass also reported "zero mojibake" while two
+> U+FFFD replacement characters sat in spec line 169: the check matched the
+> `Ã`/`â€`/`Â` byte signature, which cannot catch U+FFFD because the original byte
+> is already destroyed. Both were fixed in a later commit; encoding checks now test
+> for U+FFFD as well.
 "Remove the knowledge base allowlist after A/B measurement (rev 5)", working tree
 clean.
 

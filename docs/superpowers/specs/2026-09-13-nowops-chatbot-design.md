@@ -166,7 +166,7 @@ from the version without retry, and setting `RETRY_ENABLED=false` restores it ex
 | D9 | *withdrawn* | — | Specified how to key the corpus allowlist. Deleted in rev 5 along with the allowlist itself (D5). Retained as a numbered placeholder so D10–D13 keep their identities in earlier commits and discussion |
 | D10 | Citation and identity key | **Article `sys_id`**, with `[n]` labels in the prompt | Article `number` — not unique on this instance, so number-based citation can resolve to the wrong article |
 | D11 | Relevance gate | **Three layers: token-count guard, coverage floor, then Claude** | A single coverage threshold — measured, and the distributions overlap too much (section 9). No single cutoff both keeps good answers and rejects noise |
-| D13 | Weak search results | **Triage with Claude, then retry the search once with better terms** | Accepting the first result set. Measured: of the 6 questions the baseline misses, **5 are recovered at rank 1** by rewriting the query � lifting recall@1 from 26/35 (74%) to roughly 31/35 (89%). Both worst failures (`"windows security pop up � outlook."` and `"new joiner starts on monday"` both returning *"What is the Windows key?"*) are vocabulary mismatches, which rewriting fixes and no scoring change can. Rejected alternatives: re-ranking the existing 5 results, capped at recall@5 = 83% because it cannot promote an article it was never given; and unconditional retry, which doubles cost on traffic that is mostly noise |
+| D13 | Weak search results | **Triage with Claude, then retry the search once with better terms** | Accepting the first result set. Measured: of the 6 questions the baseline misses, **5 are recovered at rank 1** by rewriting the query — lifting recall@1 from 26/35 (74%) to roughly 31/35 (89%). Both worst failures (`"windows security pop up everytime i try to use outlook."` and `"new joiner starts on monday"` both returning *"What is the Windows key?"*) are vocabulary mismatches, which rewriting fixes and no scoring change can. Rejected alternatives: re-ranking the existing 5 results, capped at recall@5 = 83% because it cannot promote an article it was never given; and unconditional retry, which doubles cost on traffic that is mostly noise |
 | D12 | Platform coupling | **Call ServiceNow directly. No connector interface** | *Reversed in rev 4.* Rev 3 introduced a `KnowledgeConnector` seam for future Jira support. Reversed on the owner's decision: this proof targets ServiceNow only, and the seam added an interface, a selector, a fake implementation and a contract test to a project whose whole point is to be small. Adding a second platform later means refactoring two files rather than adding one — an acceptable trade at this size. `Article` remains as a plain record type |
 
 ---
@@ -361,7 +361,8 @@ remains and it appears in the article. Short queries saturate the metric.
 ### The three-layer gate (D11)
 
 1. **Token-count guard** — fewer than `GATE_MIN_TOKENS` (2) meaningful terms → decline
-   immediately, without searching. Eliminates `"Hi Team,"`, `"nan"`, `"Bky OLO"`.
+   immediately, without searching. Eliminates `"Hi Team,"` and `"nan"`. (`"Bky OLO"` is two
+   tokens, exactly at the floor — it falls to layers 2 and 3.)
 2. **Coverage floor** — top candidate below `GATE_MIN_COVERAGE` (0.3) → decline. Removes
    `"what is the capital of France"` (0.00) and `"Critical alert…"` (0.11) while keeping
    31/35 good answers.

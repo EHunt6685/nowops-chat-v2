@@ -780,8 +780,10 @@ describe('gate layer 1 — token guard', () => {
     expect(decide('nan', [], opts).reason).toBe('too_few_tokens')
   })
 
-  it('declines a two-word fragment below the floor', () => {
-    expect(decide('Bky OLO', [], opts).reason).toBe('too_few_tokens')
+  it('lets a two-token fragment through to the later layers', () => {
+    // 'Bky OLO' is two 3-char tokens, exactly at the floor. The coverage floor and
+    // triage handle it — the token guard is only for one-term noise.
+    expect(decide('Bky OLO', [], opts).reason).toBe('low_coverage')
   })
 })
 
@@ -852,6 +854,7 @@ export function coverage(query: string, doc: string): number {
 export type GateReason =
   | 'too_few_tokens'
   | 'low_coverage'
+  | 'out_of_scope'
   | 'model_declined'
   | 'servicenow_unavailable'
   | null
@@ -1306,8 +1309,9 @@ describe('POST /api/chat', () => {
 
   it('declines irrelevant questions without calling the model', async () => {
     const answer = vi.fn()
+    // Retry off: with it on, low coverage would go to triage — that path has its own tests below.
     const app = makeApp({
-      cfg,
+      cfg: { ...cfg, retryEnabled: false },
       sn: { search: async () => [{ id: 'z', title: 'Feedback Mechanisms', body: '', url: 'u' }], health: async () => ({ ok: true }) },
       llm: { preflight: async () => {}, answer } as never,
     })
@@ -1439,7 +1443,7 @@ Expected: FAIL — module not found
 
 ```ts
 import express from 'express'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { loadConfig, type Config } from './config.js'
 import type { Article } from './servicenow/types.js'
@@ -1545,8 +1549,11 @@ export function makeApp(deps: { cfg: Config; sn: Sn; llm: Llm }) {
         try {
           const second = await sn.search(rewritten, cfg.searchLimit)
           // Union, deduped by sys_id: a good article from the first search is never lost.
-          const seen = new Set(articles.map((a) => a.id))
-          articles = [...articles, ...second.filter((a) => !seen.has(a.id))].slice(0, cfg.searchLimit)
+          // Rewritten results go first — they are what the gate scores against — and
+          // nothing is truncated: the first search usually fills the limit on its own,
+          // so a slice here would drop everything the rewrite found.
+          const seen = new Set(second.map((a) => a.id))
+          articles = [...second, ...articles.filter((a) => !seen.has(a.id))]
         } catch (e) {
           if (!(e instanceof ServiceNowUnavailableError)) throw e
           // Second search failed: fall through and decline on what we already had.
@@ -1639,7 +1646,8 @@ async function main() {
 }
 
 // Only boot when run directly, so tests can import makeApp without starting a server.
-if (process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
+// pathToFileURL handles the Windows form (file:///C:/...) that a hand-built string does not.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((e) => {
     console.error(`\nSTARTUP FAILED\n${e instanceof Error ? e.message : String(e)}\n`)
     process.exit(1)
@@ -1824,7 +1832,7 @@ Open `http://localhost:3000` and check all three states:
 
 1. `Self-checkout lanes 1-4 down at Store #208 after image push` → an answer with a linked source; the link opens KB0010141 in abhrademo4. **In stub mode the prose is canned, but the article, the citation and the link are all real** — which is exactly what this step is verifying
 2. `Hi Team,` → "No knowledge base match — not answered"
-3. `what is the capital of France` → the same decline (in stub mode this is `low_coverage`, since triage needs a live model)
+3. `what is the capital of France` → the same decline (in stub mode this is `out_of_scope`, because the stub triage always returns null)
 
 - [ ] **Step 5: Commit**
 
@@ -1893,8 +1901,8 @@ async function lookup(question: string) {
     if (rewritten) {
       retried = true
       const second = await sn.search(rewritten, cfg.searchLimit)
-      const seen = new Set(articles.map((a) => a.id))
-      articles = [...articles, ...second.filter((a) => !seen.has(a.id))].slice(0, cfg.searchLimit)
+      const seen = new Set(second.map((a) => a.id))
+      articles = [...second, ...articles.filter((a) => !seen.has(a.id))]
     }
   }
   return { articles, retried }
