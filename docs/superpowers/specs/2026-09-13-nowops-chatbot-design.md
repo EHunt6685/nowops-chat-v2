@@ -1,6 +1,6 @@
 # NowOps Chatbot V2 — Design Spec
 
-- **Date:** 2026-09-14 (revision 7 — metric catalogue removed after measurement; D14/D15 reversed)
+- **Date:** 2026-09-14 (revision 8 — coverage floor and model picker removed; triage merged into the single call)
 - **Status:** Pending approval
 - **Owner:** Sachin Chavan (UST)
 - **Supersedes:** revision 5, which remains buildable in the `nowops-chat` repository
@@ -66,7 +66,7 @@ failures are cheap to diagnose.
 - **Live knowledge base search against abhrademo4** over OAuth, per question
 - **Operational KPI answers**: Claude composes a read-only aggregate query, the server
   executes it against `/api/now/stats/`, and the query is always shown (D14)
-- A three-layer relevance gate deciding whether to answer or decline
+- A two-layer relevance gate deciding whether to answer or decline
 - Single Claude call per question, which either answers from articles, selects one
   metric, or declines (D16)
 - Static HTML + vanilla JS chat UI
@@ -217,21 +217,19 @@ process. Postgres arrives with the standalone app, following the nowstudio-refer
    before any network call.
 3. Search abhrademo4 live, returning up to 5 candidate articles.
 4. Claude is called **once**, given the question and the ≤5 articles labelled `[1]`–`[5]`.
-   It returns exactly one of:
-   - **`answer`** — prose grounded in the articles, citing `[n]` labels;
-   - **`metric`** — `{ table, filter, aggregate, field?, phrasing }`;
-   - **`decline`** — neither path applies.
-5. **If `metric`:** validate the aggregate is one of the five permitted, execute a
-   read-only `GET` against `/api/now/stats/<table>`, and format the result. Jump to
-   step 9.
-6. **If `answer`:** apply the coverage floor (gate layer 2) to the articles it used.
-   Clears → step 8.
-7. **Otherwise triage the weak result** (D13). Claude either declares the question out of
-   scope, or proposes better search terms; given better terms, **search once more** and
-   union with the first set, deduplicated by `sys_id`. Re-apply the coverage floor; still
-   weak → decline. **One retry maximum, ever.**
-8. Cited labels are verified against those supplied; fabrications are stripped and logged.
-9. Response returns `{ answer, kind, sources[], metric?, grounded, gateReason, retried }`;
+   It replies with exactly one of:
+   - **`ANSWER`** — prose grounded in the articles, citing `[n]` labels;
+   - **`METRIC`** — `{ table, filter, aggregate, field? }`;
+   - **`SEARCH`** — better keywords, because the articles are poor but the question is fair;
+   - **`NO_ANSWER`** — nothing here answers it.
+5. **`METRIC`:** check the aggregate is one of the five permitted, execute a read-only
+   `GET` against `/api/now/stats/<table>`, format. → step 8.
+6. **`SEARCH`:** search once more, union with the first set deduplicated by `sys_id`, and
+   call Claude again with the combined articles. **One retry maximum, ever** — the second
+   call may return `ANSWER` or `NO_ANSWER`, never another `SEARCH`.
+7. **`ANSWER`:** cited labels are verified against those supplied; fabrications are
+   stripped and logged.
+8. Response returns `{ answer, kind, sources[], metric?, grounded, gateReason, retried }`;
    the UI renders the source line appropriate to `kind`.
 
 Two properties are worth stating explicitly, because they are what make the metric path
@@ -264,12 +262,12 @@ likewise reduces V2 to revision 5's behaviour, which is how the two are compared
 | D8 | Project location | **`C:\dev\nowops-chat`** | Inside OneDrive — `node_modules` sync-thrash, and `.env` secrets uploaded to cloud version history |
 | D9 | *withdrawn* | — | Specified how to key the corpus allowlist. Deleted in rev 5 along with the allowlist itself (D5). Retained as a numbered placeholder so D10–D13 keep their identities in earlier commits and discussion |
 | D10 | Citation and identity key | **Article `sys_id`**, with `[n]` labels in the prompt | Article `number` — not unique on this instance, so number-based citation can resolve to the wrong article |
-| D11 | Relevance gate | **Three layers: token-count guard, coverage floor, then Claude** | A single coverage threshold — measured, and the distributions overlap too much (section 9). No single cutoff both keeps good answers and rejects noise |
+| D11 | Relevance gate | **Two layers: token-count guard, then Claude** | *Reduced from three in rev 8.* Rev 1–7 had a coverage floor between them. It was justified when a decline cost zero model calls — but D13 removed that: once a weak result triages instead of declining, the floor no longer saves a call, it only chooses which prompt to send (spec's own words, previously in section 9: *"a decline now costs one Claude call instead of zero"*). Merging the two prompts into one call (D16) gives **identical call counts** while deleting a tuned threshold, a scoring function, a config knob, a decline reason and a branch. Also rejected, still: a single coverage threshold as the *only* gate — the distributions overlap, `"Hi Team,"` scores 1.00, which is why the token guard remains and runs first |
 | D13 | Weak search results | **Triage with Claude, then retry the search once with better terms** | Accepting the first result set. Measured: of the 6 questions the baseline misses, **5 are recovered at rank 1** by rewriting the query — lifting recall@1 from 26/35 (74%) to roughly 31/35 (89%). Both worst failures (`"windows security pop up everytime i try to use outlook."` and `"new joiner starts on monday"` both returning *"What is the Windows key?"*) are vocabulary mismatches, which rewriting fixes and no scoring change can. Rejected alternatives: re-ranking the existing 5 results, capped at recall@5 = 83% because it cannot promote an article it was never given; and unconditional retry, which doubles cost on traffic that is mostly noise |
 | D12 | Platform coupling | **Call ServiceNow directly. No connector interface** | *Reversed in rev 4.* Rev 3 introduced a `KnowledgeConnector` seam for future Jira support. Reversed on the owner's decision: this proof targets ServiceNow only, and the seam added an interface, a selector, a fake implementation and a contract test to a project whose whole point is to be small. Adding a second platform later means refactoring two files rather than adding one — an acceptable trade at this size. `Article` remains as a plain record type |
 | D14 | How KPI questions are answered | **Claude composes a read-only aggregate query; the server executes it and always shows it** | *Reversed in rev 7.* Rev 6 forbade query composition and required selecting a stored `sys_report` definition. **Measured: 15 of 15 model-composed queries executed correctly on the first attempt** — including dotted-field traversal (`assignment_group.name=Network`), `javascript:` date functions, relative-date windows and AVG aggregates. Zero syntax errors, zero permission failures, every number defensible; `state=3` returned 1, matching the QBR On-Hold tile exactly. The rev 6 justification was the `Backlog Incidents Count` tile: 1,292 stored versus 5,377 generated. That gap is real but was misread — they are **two different questions**, and "5,377 open and in-progress" is not wrong, merely not NowOps' house definition. Rendering the filter beside the number makes the difference visible in one glance, which is the same safety property the catalogue offered at a fraction of the cost. Decisively, generation answers questions nobody anticipated: *"how many P1s are still unresolved after 30 days"* returned 6, and no catalogue would have held that entry |
 | D15 | *withdrawn* | — | Specified the curated catalogue's construction, curation rules and staleness handling. Deleted in rev 7 along with the catalogue itself (D14). Retained as a numbered placeholder so D16 keeps its identity in earlier commits and discussion. The measurement that produced it stands and is worth keeping: Zing text search over `sys_report` scores **5 of 8**, failing *"how many open incidents are there"* — so had a catalogue been needed, selection rather than retrieval would have been the right way to build it |
-| D16 | Routing between the two paths | **One Claude call sees the articles and decides: answer, query, or decline** | Rejected: a separate classifier call (doubles latency and cost on every question, and a wrong route is unrecoverable downstream); and keyword routing on "how many" (brittle — *"what is our SLA adherence"* contains no count word, *"how many steps to reset a password"* is an article question). Preserves D6: exactly one model call on the common path |
+| D16 | Routing between the paths | **One Claude call, one prompt, four possible replies: `ANSWER`, `METRIC`, `SEARCH`, `NO_ANSWER`** | *Widened in rev 8 to absorb triage.* Rejected: a separate classifier call (doubles latency and cost on every question, and a wrong route is unrecoverable downstream); keyword routing on "how many" (brittle both ways — *"what is our SLA adherence"* has no count word, *"how many steps to reset a password"* is an article question); and keeping triage as its own prompt behind a coverage threshold, which costs the same number of calls for more machinery (D11). Preserves D6: exactly one model call on the common path, two only when a rewrite is attempted |
 
 ---
 
@@ -284,20 +282,19 @@ nowops-chat/
 ├── .env                   real secrets, gitignored, never committed
 ├── src/
 │   ├── config.ts          load + validate env (zod), fail fast
+│   ├── log.ts             one-line JSON logging, masks secrets
+│   ├── guard.ts           tokenise + token-count guard  (~25 lines, pure)
 │   ├── servicenow/
-│   │   ├── types.ts       Article + PlatformUnavailableError
+│   │   ├── types.ts       Article + ServiceNowUnavailableError
 │   │   ├── auth.ts        refresh-token grant → cached access token
-│   │   └── search.ts      live kb_knowledge text search
-│   ├── gate/
-│   │   ├── tokenise.ts    lowercase, strip punctuation, stopwords
-│   │   └── decide.ts      token guard + coverage floor → answer or decline
+│   │   ├── search.ts      live kb_knowledge text search
+│   │   └── stats.ts       run one aggregate → value + deep link      [V2]
 │   ├── llm/
-│   │   └── client.ts      Anthropic SDK → gateway; prompts; citation checks
-│   └── server/
-│       ├── app.ts         Express, static, middleware
-│       └── routes.ts      /api/chat, /api/health
+│   │   └── client.ts      gateway client; one prompt; parse reply; citation checks
+│   └── server.ts          Express, /api/chat, /api/health, boot
 ├── tools/
-│   └── eval.ts            npm run eval — recall@k plus a threshold sweep
+│   ├── eval.ts            npm run eval — recall@k over the 45 questions
+│   └── eval-metrics.ts    npm run eval:metrics — composed-query correctness  [V2]
 ├── public/
 │   ├── index.html
 │   ├── app.js
@@ -338,7 +335,6 @@ Dependencies stay thin: `express`, `@anthropic-ai/sdk`, `dotenv`, `zod`; dev-onl
 ANTHROPIC_API_KEY        gateway key
 ANTHROPIC_BASE_URL       https://llmproxy.<domain>
 CLAUDE_MODEL             exact gateway model id
-CLAUDE_MODEL_CHOICES     optional, comma-separated, powers the UI model picker
 
 # ServiceNow
 SN_INSTANCE_URL          https://abhrademo4.service-now.com
@@ -349,9 +345,8 @@ SN_REFRESH_TOKEN         exported from the existing connection via Export-SnEnvF
 
 # Relevance gate
 GATE_MIN_TOKENS          default 2
-GATE_MIN_COVERAGE        default 0.3
 SEARCH_LIMIT             default 5
-RETRY_ENABLED            default true — set false to disable D13 retry entirely
+RETRY_ENABLED            default true — set false to treat SEARCH as NO_ANSWER
 
 # Metrics (V2)
 METRICS_ENABLED          default true — set false to reduce V2 to revision 5 exactly
@@ -562,7 +557,8 @@ In-scope  coverage: avg 0.68
 Out-scope coverage: avg 0.26, max 1.00
 ```
 
-Threshold sweep:
+Threshold sweep — retained as the evidence that **no cutoff works**, which is why rev 8
+removed the coverage floor rather than retuning it:
 
 | Cutoff | Keeps good answers | Rejects noise |
 |---|---|---|
@@ -574,26 +570,30 @@ At 0.7 a third of correct answers are discarded to reject 90% of noise. The dege
 case shows why: `"Hi Team,"` scores **1.00**, because after stopword removal only "team"
 remains and it appears in the article. Short queries saturate the metric.
 
-### The three-layer gate (D11)
+### The two-layer gate (D11)
 
 1. **Token-count guard** — fewer than `GATE_MIN_TOKENS` (2) meaningful terms → decline
-   immediately, without searching. Eliminates `"Hi Team,"` and `"nan"`. (`"Bky OLO"` is two
-   tokens, exactly at the floor — it falls to layers 2 and 3.)
-2. **Coverage floor** — top candidate below `GATE_MIN_COVERAGE` (0.3) → decline. Removes
-   `"what is the capital of France"` (0.00) and `"Critical alert…"` (0.11) while keeping
-   31/35 good answers.
-3. **Claude as final judge** — survivors go to the model, which is explicitly permitted to
-   decline. Not trusted alone; it is the last line behind two mechanical filters.
+   immediately, without searching and without a model call. Eliminates `"Hi Team,"` and
+   `"nan"` for free. (`"Bky OLO"` is two tokens, exactly at the floor, and falls through
+   to layer 2.)
+2. **Claude** — everything else goes to the model, which returns `ANSWER`, `METRIC`,
+   `SEARCH` or `NO_ANSWER` (D16).
 
-Applied to the measured run, this rejects 9–10 of 10 noise cases while keeping 31 of 35
-good answers. The sole survivor is `"EOM JOB STATUS"` → *"SOP – Resolving Batch Job Non-OK
-Status"*, which is arguably a fair answer.
+**Why the coverage floor was removed in rev 8.** It sat between these two and declined
+anything scoring below 0.3. That earned its place when a decline cost zero model calls.
+D13 ended that: a weak result now triages rather than declining, so the floor stopped
+saving calls and merely selected which prompt to send. Merging the prompts costs the same
+and deletes a threshold, a scoring function, a config knob, a decline reason and a branch.
+
+The coverage measurements that justified it remain true and remain the reason the token
+guard runs first: the in-scope and out-of-scope distributions overlap badly, and
+`"Hi Team,"` scores 1.00 because one term survives stopword removal and appears in the
+article. No single coverage cutoff was ever going to work.
 
 ### Query rewriting and retry (D13)
 
-Failing layer 2 no longer means an immediate decline. Instead Claude triages the weak
-result and either declares the question out of scope, or proposes better search terms for
-one more attempt.
+When the articles are poor but the question is fair, Claude replies `SEARCH` with better
+keywords instead of `NO_ANSWER`, and we try once more.
 
 **Measured on the six baseline misses, five are recovered at rank 1:**
 
@@ -610,19 +610,19 @@ Expected recall@1: **26/35 (74%) → ~31/35 (89%)**.
 
 **Constraints that keep this safe:**
 
-- **One retry maximum.** No loops, no second rewrite.
+- **One retry maximum.** The second call may return `ANSWER` or `NO_ANSWER`, never another
+  `SEARCH`. No loops.
 - **Results are unioned**, deduplicated by `sys_id`, so a good article found by the first
   search is never lost by the second.
-- **Triage is a separate, small call** — it returns either `OUT_OF_SCOPE` or a query string,
-  never prose.
-- `RETRY_ENABLED=false` restores the previous behaviour exactly, for A/B comparison.
+- `RETRY_ENABLED=false` makes `SEARCH` behave as `NO_ANSWER`, restoring pre-D13 behaviour
+  for A/B comparison.
 
-**The cost, stated plainly.** Coverage cannot distinguish "badly worded" from "genuinely
-absent" — `"windows security pop up… outlook"` scores 0.29 and `"what is the capital of
-France"` scores 0.00, and the first is rescuable while the second is not. So triage fires on
-every question that passes the token guard and fails the coverage floor. Since most real
-traffic is declined, **a decline now costs one Claude call instead of zero**, and a rescued
-answer costs three. Latency for a rescued answer roughly doubles, to ~5s.
+**The cost, stated plainly.** Distinguishing "badly worded" from "genuinely absent" is a
+judgement, not a score — `"windows security pop up… outlook"` is rescuable and `"what is
+the capital of France"` is not, and no coverage number separates them. So the model makes
+that call, which means **a decline costs one Claude call rather than zero**, and a rescued
+answer costs two. Latency for a rescued answer roughly doubles, to ~5s. The token guard is
+what keeps the cheapest noise — `"Hi Team,"`, `"nan"` — free.
 
 Claude is the right judge for that discrimination — telling "capital of France" from "Outlook
 password prompt" is exactly what a model is good at, and the token guard still filters the
@@ -704,8 +704,8 @@ as "what about the second one?" retrieve poorly, that is the signal to revisit D
 }
 ```
 
-`gateReason` explains a decline (`too_few_tokens`, `low_coverage`, `out_of_scope`,
-`model_declined`, `servicenow_unavailable`, `metric_unavailable`) and `retried: boolean`
+`gateReason` explains a decline (`too_few_tokens`, `model_declined`,
+`servicenow_unavailable`, `metric_unavailable`) and `retried: boolean`
 records whether D13 fired, so the UI and logs can distinguish them.
 
 There is no `/api/sync` — nothing is cached to sync (D7).
@@ -751,7 +751,7 @@ Principle: **fail loudly at boot, degrade gracefully at runtime.**
 | Gateway 429 / 5xx at runtime | SDK retry with backoff; on exhaustion the UI shows "the model is busy" and the conversation is preserved |
 | **ServiceNow unreachable or search fails at runtime** | The chat turn returns "I can't reach the knowledge base right now" — explicitly *not* the same message as "no match", so users and logs can tell an outage from an absent answer |
 | ServiceNow refresh token expired or revoked | Same user-facing message; logs name the cause and the fix (`Connect-SnOAuth` then `Export-SnEnvFile`) |
-| Search returns zero results | Normal decline path, `gateReason: low_coverage` |
+| Search returns zero results | Claude is called with an empty context block and replies `NO_ANSWER` → `gateReason: model_declined` |
 | Triage call fails (D13) | Fall back to declining on the first result set. A retry failure must never surface as an error — the user gets the ordinary "not in the knowledge base" |
 | Triage returns an unusable rewrite (empty, or the original query unchanged) | Skip the second search and decline. No loop |
 | Oversized or abusive input | Message length cap, rejected before reaching search or the gateway |
@@ -829,17 +829,17 @@ month"* (not a query) — because a model that can always compose *something* wi
 3. Five known questions return correct answers with correct citations, and every link opens
    the right article in abhrademo4.
 4. `"Hi Team,"` is declined **without calling the model at all** (`too_few_tokens`).
-   `"what is the capital of France"` reaches triage, is declared `out_of_scope`, and is
-   declined **without a second search and without an answer call**.
-5. `"new joiner starts on monday"` — a baseline miss — is **answered correctly after one
-   retry**, with `retried: true` and the rewritten query visible in the logs.
-6. Retry never fires twice for one question, and a failing triage call degrades to an
-   ordinary decline rather than an error.
+   `"what is the capital of France"` returns `NO_ANSWER` on the first call and is declined
+   **without a second search**.
+5. `"new joiner starts on monday"` — a baseline miss — returns `SEARCH`, then is
+   **answered correctly on the second call**, with `retried: true` and the rewritten query
+   visible in the logs.
+6. A second `SEARCH` is never honoured, and a failed second call degrades to an ordinary
+   decline rather than an error.
 7. Stopping network access to abhrademo4 produces "can't reach the knowledge base", not
    "no match".
 8. No secrets appear in any log line.
-9. `npm run eval` matches or beats the section 9 baseline (74% recall@1, 83% @5) and prints
-   a threshold sweep.
+9. `npm run eval` matches or beats the section 9 baseline (74% recall@1, 83% @5).
 10. `npm run eval -- --with-retry` reports materially better recall@1 than the deterministic
     run. If it does not, D13 is not earning its cost and should be reconsidered.
 
