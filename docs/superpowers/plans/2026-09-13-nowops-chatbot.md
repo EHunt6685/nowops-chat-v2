@@ -128,11 +128,14 @@ node -e "require('fs').writeFileSync('.nvmrc','22\n')"
     "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "types": ["node"]
   },
   "include": ["src/**/*.ts", "tools/**/*.ts", "tests/**/*.ts"]
 }
 ```
+
+`"types": ["node"]` is required: the installed TypeScript (7.x) does not pick up `@types/node` automatically and `process` is otherwise unresolved.
 
 `noEmit` because nothing is compiled — `tsx` runs the source. `tests/` is included so a test that calls a function with the wrong arguments fails `npm run typecheck` instead of silently passing under vitest, which strips types without checking them. `noUncheckedIndexedAccess` matters here: `articles[0]` is `Article | undefined`, which forces the empty-result case to be handled rather than discovered in a demo.
 
