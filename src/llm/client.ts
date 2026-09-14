@@ -42,7 +42,9 @@ NO_ANSWER
 Rules for METRIC:
 - "filter" is a ServiceNow encoded query: clauses joined by ^, e.g. active=true^priority=1
 - Open/active tickets are active=true. Priorities are priority=1..5. Incident states: 1 New, 2 In Progress, 3 On Hold, 6 Resolved, 7 Closed, 8 Cancelled. Be careful: "closed" usually means both 6 and 7, so use stateIN6,7 unless the user clearly means only one.
+- "Tickets" means incidents (table incident) unless the user names requests (sc_req_item), changes (change_request) or problems (problem). "All" or "total" means no active filter; only add active=true when the user says open, active, current or outstanding.
 - Breached SLAs are task_sla with has_breached=true. Security incidents are sn_si_incident.
+- Breakdowns ("by priority", "per group", "trend over time") are not supported: reply NO_ANSWER rather than returning a single total.
 - Relative dates use ServiceNow javascript functions, e.g. opened_at<javascript:gs.daysAgoStart(30)
 - Never invent a table or field you are not confident exists. Prefer NO_ANSWER.
 - If the data plainly does not exist in ServiceNow (uptime, latency, synthetic checks, anything from a monitoring tool), reply NO_ANSWER.
@@ -85,40 +87,53 @@ export function stripCitationMarkup(answer: string): string {
  * This function never repairs; it only accepts or declines.
  */
 export function parseReply(raw: string, originalQuery: string): Reply {
-  const lines = raw.trim().split('\n')
-  const verbLine = (lines.shift() ?? '').trim().toUpperCase()
-  const rest = lines.join('\n').trim()
+  // Models add preambles, colons and code fences even when told not to. Those are
+  // formatting noise, not a different intent: find the verb line wherever it is,
+  // and drop fence markers. Nothing here changes what the model asked for.
+  const lines = raw.replace(/```[a-z]*/gi, '').trim().split('\n')
+  const verbAt = lines.findIndex((l) => /^\s*(ANSWER|METRIC|SEARCH|NO_ANSWER)\s*:?\s*$/i.test(l))
+  if (verbAt === -1) return { kind: 'no_answer' }
+  const verb = lines[verbAt]!.trim().replace(/:$/, '').toUpperCase()
+  const rest = lines.slice(verbAt + 1).join('\n').trim()
 
-  if (verbLine === 'ANSWER') {
+  if (verb === 'ANSWER') {
     return rest ? { kind: 'answer', text: rest } : { kind: 'no_answer' }
   }
 
-  if (verbLine === 'METRIC') {
+  if (verb === 'METRIC') {
+    // The JSON object may be followed by chatter; take the first {...} only.
+    const json = rest.match(/\{[\s\S]*?\}/)?.[0]
     let parsed: unknown
     try {
-      parsed = JSON.parse(rest)
+      parsed = JSON.parse(json ?? '')
     } catch {
       return { kind: 'no_answer' }
     }
-    const o = parsed as Partial<MetricRequest>
+    const o = parsed as Partial<Record<keyof MetricRequest, unknown>>
     if (typeof o?.table !== 'string' || !o.table.trim()) return { kind: 'no_answer' }
-    if (!isAggregate(o.aggregate)) return { kind: 'no_answer' }
-    if (o.aggregate !== 'count' && (typeof o.field !== 'string' || !o.field.trim())) {
+    // Case is formatting; "COUNT" means count. Anything not in the five is still a decline.
+    const aggregate = typeof o.aggregate === 'string' ? o.aggregate.toLowerCase() : undefined
+    if (!isAggregate(aggregate)) return { kind: 'no_answer' }
+    if (aggregate !== 'count' && (typeof o.field !== 'string' || !o.field.trim())) {
       return { kind: 'no_answer' }
     }
+    const filter = typeof o.filter === 'string' ? o.filter.trim() : ''
+    // /stats/ ignores GROUPBY and returns the total — a right number for the wrong
+    // question. Breakdowns are out of scope (spec §2), so decline rather than mislead.
+    if (/GROUPBY/i.test(filter)) return { kind: 'no_answer' }
     return {
       kind: 'metric',
       request: {
         table: o.table.trim(),
-        filter: typeof o.filter === 'string' ? o.filter.trim() : '',
-        aggregate: o.aggregate,
-        ...(o.field ? { field: o.field.trim() } : {}),
+        filter,
+        aggregate,
+        ...(typeof o.field === 'string' && o.field.trim() ? { field: o.field.trim() } : {}),
         ...(typeof o.label === 'string' && o.label.trim() ? { label: o.label.trim() } : {}),
       },
     }
   }
 
-  if (verbLine === 'SEARCH') {
+  if (verb === 'SEARCH') {
     const q = rest.replace(/^["'`]+|["'`]+$/g, '').trim()
     if (!q) return { kind: 'no_answer' }
     // Re-running the identical search burns a call for identical results.

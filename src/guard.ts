@@ -1,13 +1,11 @@
-const STOPWORDS = new Set([
-  'the','a','an','is','are','was','were','to','of','in','on','for','and','or','it','this',
-  'that','with','my','we','our','not','no','be','been','has','have','do','does','did','can',
-  'cannot','am','at','as','by','from','get','got','will','would','should','when','what','why',
-  'how','after','into','out','up','down','me','you','your','their','there','they','many',
-])
-
 /**
- * Lowercase, strip punctuation, drop stopwords and 1-2 character tokens.
+ * Lowercase, strip punctuation, drop 1-2 character tokens.
  * `$`, `.`, `-` and `_` survive so error codes stay intact.
+ *
+ * No stopword list. One was tried and it declined "how many incidents" for free,
+ * because every word but one was a stopword. The guard exists for one-word noise
+ * ("Hi Team,", "nan"); judging whether three real words are a question is the
+ * model's job (D11 layer 2), not this function's.
  */
 export function tokenise(s: string): string[] {
   if (!s) return []
@@ -15,7 +13,7 @@ export function tokenise(s: string): string[] {
     .toLowerCase()
     .replace(/[^a-z0-9$._\- ]/g, ' ')
     .split(/\s+/)
-    .filter((t) => t.length > 2 && !STOPWORDS.has(t))
+    .filter((t) => t.length > 2)
 }
 
 /** Two real words. Not configurable: nobody has ever wanted a different number. */

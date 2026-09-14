@@ -53,6 +53,18 @@ describe('POST /api/chat', () => {
     expect(r.status).toBe(400)
   })
 
+  it('rejects a malformed JSON body with 400, not 500', async () => {
+    const app = makeApp({ cfg, sn: okSn(), stats: noStats, llm: fakeLlm(() => ({ kind: 'no_answer' })) })
+    const server = app.listen(0)
+    const port = (server.address() as { port: number }).port
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/chat`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{not json',
+      })
+      expect(res.status).toBe(400)
+    } finally { server.close() }
+  })
+
   it('declines greeting noise without searching or calling the model', async () => {
     const search = vi.fn()
     const decide = vi.fn()

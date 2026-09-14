@@ -82,6 +82,41 @@ describe('parseReply', () => {
   it('tolerates leading blank lines and stray whitespace', () => {
     expect(parseReply('\n\n  ANSWER  \nText [1]', 'q').kind).toBe('answer')
   })
+
+  // Real models are sloppy in predictable ways. Each of these is a formatting
+  // variation, not a different intent, and must not turn into a decline.
+  it('reads a METRIC wrapped in a code fence', () => {
+    const r = parseReply('METRIC\n```json\n{"table":"change_request","filter":"active=true","aggregate":"count"}\n```', 'q')
+    expect(r.kind).toBe('metric')
+  })
+
+  it('skips a preamble before the verb line', () => {
+    const r = parseReply('Sure! Here is the query:\nMETRIC\n{"table":"problem","filter":"active=true","aggregate":"count"}', 'q')
+    expect(r.kind).toBe('metric')
+  })
+
+  it('accepts a colon after the verb', () => {
+    expect(parseReply('METRIC:\n{"table":"incident","filter":"","aggregate":"count"}', 'q').kind).toBe('metric')
+    expect(parseReply('ANSWER:\nText [1]', 'q').kind).toBe('answer')
+  })
+
+  it('normalises aggregate case — COUNT is count, not a different aggregate', () => {
+    const r = parseReply('METRIC\n{"table":"incident","filter":"state=8","aggregate":"COUNT"}', 'q')
+    expect(r.kind).toBe('metric')
+    if (r.kind === 'metric') expect(r.request.aggregate).toBe('count')
+  })
+
+  it('ignores chatter after the JSON object', () => {
+    const r = parseReply('METRIC\n{"table":"alm_asset","filter":"","aggregate":"count"}\n\nLet me know if you need anything else!', 'q')
+    expect(r.kind).toBe('metric')
+  })
+
+  it('declines a METRIC that asks for a breakdown — series are out of scope', () => {
+    // ServiceNow ignores GROUPBY on /stats/ and returns the total, which is a correct
+    // number for the wrong question. Decline rather than show it.
+    const r = parseReply('METRIC\n{"table":"incident","filter":"active=true^GROUPBYpriority","aggregate":"count"}', 'q')
+    expect(r.kind).toBe('no_answer')
+  })
 })
 
 describe('verifyCitations', () => {

@@ -191,7 +191,9 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
 
   app.use(express.static(join(here, '../public')))
 
-  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  app.use((err: Error & { type?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    // body-parser's own error for unparseable JSON: the client's fault, not ours.
+    if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'body must be JSON' })
     log('error.unhandled', { message: err.message })
     res.status(500).json({ error: 'internal error' })
   })

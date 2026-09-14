@@ -26,7 +26,10 @@ Every task's requirements implicitly include this section.
 - **There is no coverage threshold** (D11, removed in rev 8). Two gate layers only: the token guard, then Claude. Do not reintroduce a coverage score — the sweep in spec §9 shows no cutoff works.
 - **The model never builds a request.** For metrics it returns `table`, `filter`, `aggregate` and optionally `field` as *data*. Our code builds the URL, and it can only build a read-only `GET` to `/api/now/stats/` (D14).
 - **`aggregate` must be one of `count`, `avg`, `sum`, `min`, `max`.** Anything else is a decline, not a coercion.
-- **A malformed filter is never repaired.** ServiceNow rejects it; we decline. A second guess at a query is a second chance to be confidently wrong.
+- **A malformed filter is never repaired.** Prose is stopped by a clause-shape check before any request (ServiceNow silently ignores it and returns the whole table — measured); anything ServiceNow itself rejects, we decline. A second guess at a query is a second chance to be confidently wrong.
+- **A `GROUPBY` filter is declined at parse time.** `/stats/` ignores it and returns the total, which is a right number for the wrong question. Series are out of scope.
+- **The parser tolerates formatting noise, never intent changes.** Code fences, a preamble line, `METRIC:` with a colon, `COUNT` in uppercase and chatter after the JSON are all read as intended. An unknown verb, an aggregate outside the five, a missing table or a non-JSON body are still declines.
+- **The token guard has no stopword list.** It counts words of three or more characters and requires two. A stopword list declined *"how many incidents"* for free.
 - **Every metric answer renders its filter.** Wrap it; never truncate it. The filter is the only thing that makes the number checkable.
 - **There is no table allowlist.** The OAuth user's ACLs are the access boundary. An allowlist would block legitimate questions while adding no protection. The table name **is** shape-checked (`^[a-z0-9_]+$`) because it is interpolated into a URL path — that is input validation at a trust boundary, not a list of permitted tables.
 - **One ServiceNow client.** `makeSnClient` owns the OAuth token cache, the bearer header, the request timeout and the error mapping. Search and stats both call it; neither builds its own token provider or its own `fetch`.
@@ -1028,10 +1031,17 @@ export function makeStats(sn: SnClient) {
 }
 ```
 
+> **Added after the scenario run (rev 10):** `isEncodedQuery(filter)` — every `^`-separated
+> clause must be a lowercase field name followed immediately by an operator (`=`, `!=`, `<`,
+> `>`, or an uppercase keyword such as `IN`, `ISEMPTY`, `ON`); `EQ`, `ORDERBY…`, `OR…` and
+> `NQ…` clauses are allowed. `run()` checks it after the table name and before any request.
+> Reason: ServiceNow silently ignored `this is not a query!!` and returned the whole table.
+> The committed `src/servicenow/stats.ts` and `tests/stats.test.ts` are the reference.
+
 - [x] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run tests/stats.test.ts`
-Expected: PASS, 15 tests
+Expected: PASS, 18 tests
 
 - [x] **Step 5: Verify against the live instance**
 
@@ -2485,6 +2495,8 @@ git commit -m "feat: article and metric evals with acceptance walkthrough"
 - **`123TEXTQUERY321` needs sanitising.** A `^` or `=` in the user's question breaks `sysparm_query` and produces confusing results rather than an error.
 - **The metric filter is NOT sanitised** — it is a `sysparm_query` by design and `^` is its clause separator. It goes through `URLSearchParams`, never string concatenation, and never through `sanitiseQuery`. **The table name IS shape-checked**, because it is the one model-supplied value that lands in a URL path.
 - **"Closed" is two states.** `state=6` is Resolved and `state=7` is Closed. A query using only one silently undercounts, and the number looks perfectly reasonable. This is the single likeliest wrong answer the system will produce.
+- **ServiceNow does not reject a bad filter.** `sysparm_query=this is not a query!!` on `/stats/incident` returned 36,030 — the whole table — with HTTP 200. `GROUPBYpriority` likewise returned the ungrouped total. Both are caught before the request now (`isEncodedQuery`, GROUPBY check in `parseReply`); do not remove them on the theory that the instance will complain.
+- **Averaging a text field returns a number.** `avg(short_description)` gave 35,245,419. Accepted and displayed with the field name (spec §8b); fixing it needs a dictionary lookup, which is a subsystem.
 - **ServiceNow returns aggregates as strings**, and durations as `HH:MM:SS`. `Number('00:43:22')` is `NaN` — hence the `coerce` helper.
 - **The token guard runs before searching.** Do not "simplify" by searching first — greeting-shaped noise should never reach the instance or the model.
 - **PowerShell scalar trap, if you script against this.** A one-element ServiceNow result is a scalar whose `.Count` is `$null`, so `for ($i=0; $i -lt $r.Count; ...)` never runs. Always `@()`-wrap. This once made an eval report 54% when the true figure was 80%.

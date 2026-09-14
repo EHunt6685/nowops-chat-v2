@@ -467,9 +467,17 @@ there?"* is a fair question with a correct answer) while providing no protection
 ACLs do not already give. The shape check above is not an allowlist: any real table
 name passes it.
 
-Malformed filters are rejected by ServiceNow, not by us. We catch the error and decline
-rather than attempt repair — a second guess at a query is a second chance to be
-confidently wrong.
+Malformed filters are **not** reliably rejected by ServiceNow. Measured 2026-09-14: the
+filter `this is not a query!!` was silently ignored and `/stats/incident` returned the
+whole table, 36,030, as confidently as any real answer. So the filter gets a shape check
+before it leaves the process: every `^`-separated clause must start with a field name
+followed immediately by an operator (`=`, `!=`, `<`, `>`, `IN`, `ISEMPTY`, `ON`, …). It is
+a shape check, not a validator — a wrong field name still goes through and ServiceNow
+answers it — but prose can no longer masquerade as a query. A filter containing
+`GROUPBY` is also declined: `/stats/` ignores it and returns the total, which is a right
+number for the wrong question (series are out of scope, section 2). Whatever ServiceNow
+does reject, we catch and decline rather than attempt repair — a second guess at a
+query is a second chance to be confidently wrong.
 
 ### Measured basis (2026-09-14, live)
 
@@ -500,7 +508,10 @@ the rendered filter and neither is worth a subsystem:
   incidents. The filter is on screen; the deep link settles it.
 - **A meaningless aggregate.** `AVG(task_sla.percentage)` returned **326,252** — SLA
   percentages exceed 100 without bound on breached records, so the mean is garbage. It is
-  obvious garbage, and the field name is displayed.
+  obvious garbage, and the field name is displayed. Likewise `AVG(incident.short_description)`
+  returns 35,245,419 (measured): ServiceNow averages a text field without complaint.
+  Rejecting this properly needs a `sys_dictionary` type lookup per field, which is a
+  subsystem; the rendered `avg(short_description)` is the guard for now.
 
 ### Presentation
 
@@ -596,10 +607,13 @@ remains and it appears in the article. Short queries saturate the metric.
 
 ### The two-layer gate (D11)
 
-1. **Token-count guard** — fewer than `MIN_TOKENS` (2) meaningful terms → decline
-   immediately, without searching and without a model call. Eliminates `"Hi Team,"` and
-   `"nan"` for free. (`"Bky OLO"` is two tokens, exactly at the floor, and falls through
-   to layer 2.)
+1. **Token-count guard** — fewer than `MIN_TOKENS` (2) words of three or more characters
+   → decline immediately, without searching and without a model call. Eliminates
+   `"Hi Team,"` and `"nan"` for free. (`"Bky OLO"` is two tokens, exactly at the floor,
+   and falls through to layer 2.) **There is no stopword list.** Rev 10 removed it after
+   a scenario run showed it declining *"how many incidents"*, *"how many users do we
+   have"* and *"what is our uptime"* for free — every word but one was a stopword. The
+   guard exists for one-word noise; judging three real words is the model's job.
 2. **Claude** — everything else goes to the model, which returns `ANSWER`, `METRIC`,
    `SEARCH` or `NO_ANSWER` (D16).
 
@@ -783,7 +797,11 @@ Principle: **fail loudly at boot, degrade gracefully at runtime.**
 | Triage returns an unusable rewrite (empty, or the original query unchanged) | Skip the second search and decline. No loop |
 | Oversized or abusive input | Message length cap, rejected before reaching search or the gateway |
 | Model returns an aggregate outside the five permitted | Decline, and log what it asked for. Same discipline as stripping fabricated `[n]` citations (D10) |
-| Model returns a malformed filter | ServiceNow rejects it; decline with `metric_unavailable`. **No repair attempt** — a second guess at a query is a second chance to be confidently wrong |
+| Model returns a filter that is not an encoded query (prose, spaces around `=`) | Refused by the shape check before any request; decline with `metric_unavailable`. ServiceNow would have ignored it and returned the whole table |
+| Model returns a filter with `GROUPBY` | Declined at parse time. `/stats/` ignores it and would return a total for a breakdown question |
+| Model returns a filter ServiceNow does reject | Decline with `metric_unavailable`. **No repair attempt** — a second guess at a query is a second chance to be confidently wrong |
+| Model wraps its reply in a code fence, adds a preamble, writes `METRIC:` or `COUNT` | Parsed as intended. These are formatting variations, not different intents; the verb line is found wherever it is, fences are stripped, the first JSON object is taken, aggregate case is normalised |
+| Request body is not JSON | HTTP 400, not 500 |
 | Model names a table that is not a plain identifier (`../x`, `incident?y=1`) | Refused before any request is built; decline with `metric_unavailable` and log what it asked for |
 | Model names a table that does not exist or is not readable | ServiceNow returns an error; same decline. The OAuth user's ACLs are the access boundary |
 | Article search exceeds the 10 s timeout | Abort; the turn returns "I can't reach the knowledge base right now" (same client, same timeout as aggregates) |

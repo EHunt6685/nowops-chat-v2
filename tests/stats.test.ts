@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
-  buildStatsPath, buildListUrl, isAggregate, isTableName, makeStats,
+  buildStatsPath, buildListUrl, isAggregate, isTableName, isEncodedQuery, makeStats,
 } from '../src/servicenow/stats.js'
 import { makeSnClient } from '../src/servicenow/client.js'
 import { ServiceNowUnavailableError } from '../src/servicenow/types.js'
@@ -44,6 +44,33 @@ describe('isTableName', () => {
   it('rejects anything that could escape the stats path', () => {
     for (const t of ['../table/incident', 'incident?sysparm_x=1', 'incident/foo', 'Incident', '', undefined]) {
       expect(isTableName(t)).toBe(false)
+    }
+  })
+})
+
+describe('isEncodedQuery', () => {
+  it('accepts every filter shape measured live in spec §8b', () => {
+    for (const f of [
+      '',
+      'active=true',
+      'active=true^priority=1',
+      'active=true^assigned_toISEMPTY',
+      'active=true^assignment_group.name=Network',
+      'has_breached=true',
+      'active=true^has_breached=false^percentage>80',
+      'state=3',
+      'stateIN6,7',
+      'active=true^priority=1^opened_at<javascript:gs.daysAgoStart(30)',
+      'resolved_atONLast month@javascript:gs.beginningOfLastMonth()@javascript:gs.endOfLastMonth()',
+      'active=true^u_past_incidentsISNOTEMPTY^stateIN2^assigned_toISNOTEMPTY^priorityNOT IN1,5',
+      'active=true^ORstate=2',
+    ]) expect(isEncodedQuery(f), f).toBe(true)
+  })
+
+  it('rejects prose, which ServiceNow silently ignores and answers with the whole table', () => {
+    // Measured live: 'this is not a query!!' returned 36,030 — the total, confidently.
+    for (const f of ['this is not a query!!', 'show me open incidents', 'active = true', '^^']) {
+      expect(isEncodedQuery(f), f).toBe(false)
     }
   })
 })
@@ -114,10 +141,19 @@ describe('makeStats.run', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
+  it('rejects a filter that is not an encoded query, without calling ServiceNow', async () => {
+    const fetchImpl = vi.fn()
+    await expect(
+      stats(fetchImpl).run({ table: 'incident', filter: 'this is not a query!!', aggregate: 'count' }),
+    ).rejects.toThrow(/filter/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('raises rather than repairing a filter ServiceNow rejects', async () => {
+    // Well-formed shape, so it reaches the instance; the instance says no.
     await expect(
       stats(snFetch(() => new Response('Invalid query', { status: 400 })))
-        .run({ table: 'incident', filter: 'nonsense!!', aggregate: 'count' }),
+        .run({ table: 'incident', filter: 'no_such_field=1', aggregate: 'count' }),
     ).rejects.toBeInstanceOf(ServiceNowUnavailableError)
   })
 

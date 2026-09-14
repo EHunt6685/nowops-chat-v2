@@ -33,6 +33,20 @@ export function isTableName(v: unknown): v is string {
   return typeof v === 'string' && /^[a-z0-9_]+$/.test(v)
 }
 
+/**
+ * Shape check for an encoded query. ServiceNow does NOT reliably reject prose —
+ * 'this is not a query!!' was silently ignored and returned the whole table (36,030),
+ * as confidently as any real answer. Each ^-separated clause must be a field name
+ * (lowercase identifier, dots allowed) followed immediately by an operator: a
+ * comparison symbol or an uppercase keyword such as IN, ISEMPTY, ON, LIKE.
+ * A wrong field name still passes; only prose is stopped here.
+ */
+export function isEncodedQuery(filter: string): boolean {
+  if (filter === '') return true
+  return filter.split('^').every((c) =>
+    c === 'EQ' || /^ORDERBY(DESC)?[a-z0-9_.]+$/.test(c) || /^(NQ|OR)?[a-z0-9_.]+(=|!=|>=|<=|>|<|[A-Z])/.test(c))
+}
+
 /** count uses sysparm_count; every other aggregate uses sysparm_<agg>_fields. */
 export function buildStatsPath(req: MetricRequest): string {
   const params = new URLSearchParams()
@@ -85,6 +99,9 @@ export function makeStats(sn: SnClient) {
       }
       if (!isTableName(req.table)) {
         throw new Error(`table name '${String(req.table)}' is not a plain identifier`)
+      }
+      if (!isEncodedQuery(req.filter)) {
+        throw new Error(`filter '${req.filter}' is not an encoded query`)
       }
 
       // The client rejects a non-2xx as ServiceNowUnavailableError. Deliberately no
