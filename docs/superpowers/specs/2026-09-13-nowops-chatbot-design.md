@@ -1,15 +1,21 @@
 # NowOps Chatbot V2 — Design Spec
 
-- **Date:** 2026-09-13 (revision 6 — adds the operational-metrics path, D14–D16)
+- **Date:** 2026-09-14 (revision 7 — metric catalogue removed after measurement; D14/D15 reversed)
 - **Status:** Pending approval
 - **Owner:** Sachin Chavan (UST)
 - **Supersedes:** revision 5, which remains buildable in the `nowops-chat` repository
 
 > **What V2 adds.** Revision 5 answers from knowledge articles only. V2 adds a second
-> answer path for the operational KPIs the NowOps dashboards report — open incidents,
-> SLA breaches and adherence, MTTR, backlog and aging, security incidents, CMDB and
-> asset counts — by executing the dashboards' **own stored report definitions** live.
-> Everything in revision 5 is carried forward unchanged unless a decision says otherwise.
+> answer path for operational KPIs — open incidents, SLA breaches, security incidents,
+> assignment and aging counts — by **composing a read-only aggregate query and showing
+> it alongside the number**. Everything in revision 5 is carried forward unchanged
+> unless a decision says otherwise.
+>
+> **Revision 6 is superseded and was never built.** It specified a curated catalogue of
+> `sys_report` definitions the model would select from. Measurement killed it: 15 of 15
+> model-composed queries executed correctly on the first attempt, and the catalogue's
+> only advantage — agreeing with a house definition — turned out to cost the ability to
+> answer anything nobody had pre-catalogued. See D14 and D15.
 
 ---
 
@@ -58,8 +64,8 @@ failures are cheap to diagnose.
 
 - Node/TypeScript Express service, **ServiceNow only**
 - **Live knowledge base search against abhrademo4** over OAuth, per question
-- **A curated catalogue of NowOps metrics**, each one a `sys_report` sys_id, executed
-  live against `/api/now/stats/` at question time (D14, D15)
+- **Operational KPI answers**: Claude composes a read-only aggregate query, the server
+  executes it against `/api/now/stats/`, and the query is always shown (D14)
 - A three-layer relevance gate deciding whether to answer or decline
 - Single Claude call per question, which either answers from articles, selects one
   metric, or declines (D16)
@@ -81,12 +87,14 @@ Jira or any non-ServiceNow connector.
 
 Specifically out of scope on the metrics side, and each for a measured reason:
 
-- **Free-form query construction.** The model never writes a `sysparm_query`. It selects
-  a catalogued report or declines. See D14.
-- **Metrics with no stored definition.** If NowOps has no report for it, the chatbot has
-  no answer for it. Writing new definitions is a NowOps task, not a chatbot task.
-- **Series and trends.** 383 of 963 reports carry `GROUPBY`/`TRENDBY` and return a series
-  rather than a number. V2 answers scalars only; see D15 and section 18.
+- **Writes of any kind.** Read-only `GET` against `/api/now/stats/` only. The model
+  supplies `table`, `filter`, `aggregate` and `field` as data — never a URL, method or
+  path.
+- **Series and trends.** V2 answers a single number per question. *"Open incidents by
+  priority"* as a breakdown needs a formatter and a UI decision; see section 18.
+- **Guaranteeing agreement with a NowOps tile.** Where a KPI has a house definition the
+  composed query may differ. The query is shown so the difference is visible; see
+  section 8b.
 - **Uptime, latency, synthetic checks, SLO breaches.** Not present anywhere in the
   instance — see the KPI inventory, section 2. No integration exists to source them.
 - **Correcting NowOps' broken reports.** Several stored definitions are wrong (section
@@ -137,17 +145,24 @@ Measured for V2, same date, same instance:
 | Incidents carrying a CI | **183 (0.5%)** |
 | Uptime, latency, synthetic-check data | **none — no such table exists** |
 
-Findings that shaped D14–D16:
+Findings that shaped D14 and D16:
 
-- **A tile's label does not define its query.** `Backlog Incidents Count` reads 1,292; the
-  obvious query returns 5,377. The stored definition requires a UST custom field, requires
-  an assignee, and excludes P1 and P5. This is the single measurement behind D14.
+- **Composed queries work.** 15 of 15 executed correctly on the first attempt, covering
+  dotted-field traversal, `javascript:` date functions, relative-date windows and AVG
+  aggregates. This is the measurement that removed the catalogue — see D14 and section 8b.
+- **A tile's label does not define its query.** `Backlog Incidents Count` reads 1,292; a
+  composed query for "the backlog" returns 5,377. The stored definition requires a UST
+  custom field, requires an assignee and excludes P1 and P5. Real, and handled by showing
+  the filter rather than by preventing composition.
 - **Report titles are too short to retrieve against.** Text search over `sys_report`
-  scored 5/8 and failed *"how many open incidents are there"* — see D15.
+  scored 5/8 and failed *"how many open incidents are there"*. Recorded because it rules
+  out the obvious future shortcut, should house-definition lookup ever be revisited.
 - **Report titles are not unique either.** `Vulnerable Items` exists three times across two
   tables; `SLA Adherence% Trend (Resolution) - P4` twice with different filters. The same
-  problem as article numbers (D10), solved the same way: key on sys_id.
-- **Some stored definitions are wrong**, and V2 reproduces them deliberately — section 8b.
+  problem as article numbers (D10) — anything keyed on reports must key on sys_id.
+- **Some stored definitions are wrong** — `Tickets Approaching SLA Breach` never touches
+  `task_sla`, and the four MTTR reports use four different time windows. A point against
+  treating them as ground truth.
 - **CMDB and observability limits are structural.** At 0.5% incident-to-CI linkage there is
   no service-mapped answer to give, and no uptime data exists to give one from. Both are
   recorded in the KPI inventory as NowOps problems, not chatbot problems.
@@ -167,31 +182,27 @@ Browser (static HTML + vanilla JS)
     ▼
 Express server (TypeScript, Node 22)
     ├── servicenow/    OAuth + kb_knowledge search  → ≤5 Articles
-    │                  OAuth + sys_report fetch     → ReportDefinition
-    │                  OAuth + /stats/ execute      → MetricResult
-    ├── metrics/       catalogue (static) + execute + format          [V2]
+    │                  OAuth + /stats/ aggregate    → MetricResult      [V2]
     ├── gate/          3 layers → answer or decline
     ├── llm/           Anthropic SDK → UST LiteLLM gateway
     └── server/        routes + in-memory conversation, process lifetime only
     ▲
     │  OAuth REST, per question
-ServiceNow abhrademo4   kb_knowledge · sys_report · /api/now/stats/*
+ServiceNow abhrademo4   kb_knowledge · /api/now/stats/*
 ```
 
-Five modules with distinct responsibilities, each testable in isolation:
+Four modules with distinct responsibilities, each testable in isolation:
 
 | Module | Responsibility | Depends on |
 |---|---|---|
-| `servicenow/` | OAuth token refresh, article search, report fetch, aggregate execution | env config |
-| `metrics/` | Catalogue of answerable metrics; run one; format the number | `servicenow/` |
+| `servicenow/` | OAuth token refresh, article search, aggregate execution | env config |
 | `gate/` | Tokenise, score coverage, decide answer vs decline | nothing (pure) |
-| `llm/` | Gateway client, prompt assembly, citation verification, metric selection | env config |
-| `server/` | Routes, static files, conversation state | all four |
+| `llm/` | Gateway client, prompt assembly, citation verification, query composition | env config |
+| `server/` | Routes, static files, conversation state, metric formatting | all three |
 
-The catalogue is a **static list of report sys_ids with plain-English descriptions** —
-roughly 40–60 entries, checked into the repository. It holds no ticket data and no
-filters; the filter is read live from `sys_report` at execution time, so when NowOps
-edits a report the chatbot follows on the next question. D7 (no ingestion) is preserved.
+V2 adds no module. It adds one function to `servicenow/` (run an aggregate), one output
+shape to `llm/`, and one branch in `server/`. Nothing is cached, nothing is curated and
+nothing needs to stay in sync — D7 (no ingestion) is preserved by construction.
 
 `Article` is the record type search returns. It is a plain data shape, not an abstraction
 layer — there is no connector interface and no second implementation (D12).
@@ -205,14 +216,14 @@ process. Postgres arrives with the standalone app, following the nowstudio-refer
 2. **Token guard** (gate layer 1). Fewer than 2 meaningful words → decline immediately,
    before any network call.
 3. Search abhrademo4 live, returning up to 5 candidate articles.
-4. Claude is called **once**, and is given three things: the question, the ≤5 articles
-   labelled `[1]`–`[5]`, and the full metric catalogue. It returns exactly one of:
+4. Claude is called **once**, given the question and the ≤5 articles labelled `[1]`–`[5]`.
+   It returns exactly one of:
    - **`answer`** — prose grounded in the articles, citing `[n]` labels;
-   - **`metric`** — the id of one catalogued metric;
+   - **`metric`** — `{ table, filter, aggregate, field?, phrasing }`;
    - **`decline`** — neither path applies.
-5. **If `metric`:** fetch that report's definition live from `sys_report` by sys_id,
-   execute its stored filter against `/api/now/stats/<table>`, and format the result.
-   Jump to step 9.
+5. **If `metric`:** validate the aggregate is one of the five permitted, execute a
+   read-only `GET` against `/api/now/stats/<table>`, and format the result. Jump to
+   step 9.
 6. **If `answer`:** apply the coverage floor (gate layer 2) to the articles it used.
    Clears → step 8.
 7. **Otherwise triage the weak result** (D13). Claude either declares the question out of
@@ -226,11 +237,12 @@ process. Postgres arrives with the standalone app, following the nowstudio-refer
 Two properties are worth stating explicitly, because they are what make the metric path
 safe:
 
-- **Claude never composes a query.** It returns a catalogue id. Every character of every
-  executed query comes from a `sys_report` record written by a NowOps author.
+- **The model supplies data, never a request.** It returns a table name, a filter string
+  and an aggregate keyword. Our code builds the URL, and it can only ever build a
+  read-only `GET` to `/api/now/stats/`.
 - **The number and its filter are always shown together.** A number alone is
-  unfalsifiable; a number beside `active=true^state=2^priorityNOT IN1,5` can be checked
-  in one glance, and the deep link resolves the argument.
+  unfalsifiable; a number beside `active=true^state=2` can be checked in one glance, and
+  the deep link resolves the argument.
 
 Steps 6–7 are the measured +15-point improvement (D13), unchanged from revision 5;
 `RETRY_ENABLED=false` restores the pre-retry behaviour exactly. `METRICS_ENABLED=false`
@@ -255,9 +267,9 @@ likewise reduces V2 to revision 5's behaviour, which is how the two are compared
 | D11 | Relevance gate | **Three layers: token-count guard, coverage floor, then Claude** | A single coverage threshold — measured, and the distributions overlap too much (section 9). No single cutoff both keeps good answers and rejects noise |
 | D13 | Weak search results | **Triage with Claude, then retry the search once with better terms** | Accepting the first result set. Measured: of the 6 questions the baseline misses, **5 are recovered at rank 1** by rewriting the query — lifting recall@1 from 26/35 (74%) to roughly 31/35 (89%). Both worst failures (`"windows security pop up everytime i try to use outlook."` and `"new joiner starts on monday"` both returning *"What is the Windows key?"*) are vocabulary mismatches, which rewriting fixes and no scoring change can. Rejected alternatives: re-ranking the existing 5 results, capped at recall@5 = 83% because it cannot promote an article it was never given; and unconditional retry, which doubles cost on traffic that is mostly noise |
 | D12 | Platform coupling | **Call ServiceNow directly. No connector interface** | *Reversed in rev 4.* Rev 3 introduced a `KnowledgeConnector` seam for future Jira support. Reversed on the owner's decision: this proof targets ServiceNow only, and the seam added an interface, a selector, a fake implementation and a contract test to a project whose whole point is to be small. Adding a second platform later means refactoring two files rather than adding one — an acceptable trade at this size. `Article` remains as a plain record type |
-| D14 | How KPI questions are answered | **Execute NowOps' own stored `sys_report` definitions. The model selects; it never composes a query** | *New in rev 6.* Rejected: letting Claude emit a `sysparm_query`, even a validated one. Measured justification — the `Backlog Incidents Count` tile reads 1,292; the obvious query (`active=true^state=2`) returns **5,377**. The stored definition is `active=true^u_past_incidentsISNOTEMPTY^stateIN2^assigned_toISNOTEMPTY^priorityNOT IN1,5`, requiring a UST custom field, requiring an assignee, and excluding P1 and P5. No model and no engineer infers that from the tile's label. A generated query that is 4× wrong looks exactly as authoritative as a right one. `sys_report` holds **963** such definitions, readable over the same OAuth connection, each carrying `table`, `aggregate`, `field` and `filter` |
-| D15 | How a metric is found | **A curated catalogue of ~40–60 report sys_ids, supplied to the model in the prompt. No retrieval step** | *New in rev 6.* Rejected: Zing text search over `sys_report`, i.e. mirroring the article path. **Measured over 8 representative questions: 5 of 8 at rank 1.** It answers "SLA adherence for P1", "mean time to resolve P2", "incident backlog" and "ticket volume by priority" correctly, and fails the three most ordinary questions in the set — *"how many open incidents are there"* returns **Month-on-Month Closed Incidents Trend**, and *"how many security incidents are open"* fails to return the `Security Incidents` report at all. The cause is structural: report titles are three or four words with no body text, so text search has almost nothing to match, where articles offer whole paragraphs. Selection from a visible list is the right tool when the corpus is small and the labels are terse. Curation also resolves duplicates by sys_id — `Vulnerable Items` exists three times across two tables with different answers — and excludes the 25 `DYNAMIC` reports, which resolve against the *calling* account and would silently return the service user's figures |
-| D16 | Routing between the two paths | **One Claude call sees articles and catalogue together and picks** | *New in rev 6.* Rejected: a separate classifier call (doubles latency and cost on every question, and a wrong route is unrecoverable downstream); and keyword routing on "how many" (brittle — *"what is our SLA adherence"* contains no count word, *"how many steps to reset a password"* is an article question). Preserves D6: still exactly one model call on the common path. The two searches that precede it are independent and run in parallel |
+| D14 | How KPI questions are answered | **Claude composes a read-only aggregate query; the server executes it and always shows it** | *Reversed in rev 7.* Rev 6 forbade query composition and required selecting a stored `sys_report` definition. **Measured: 15 of 15 model-composed queries executed correctly on the first attempt** — including dotted-field traversal (`assignment_group.name=Network`), `javascript:` date functions, relative-date windows and AVG aggregates. Zero syntax errors, zero permission failures, every number defensible; `state=3` returned 1, matching the QBR On-Hold tile exactly. The rev 6 justification was the `Backlog Incidents Count` tile: 1,292 stored versus 5,377 generated. That gap is real but was misread — they are **two different questions**, and "5,377 open and in-progress" is not wrong, merely not NowOps' house definition. Rendering the filter beside the number makes the difference visible in one glance, which is the same safety property the catalogue offered at a fraction of the cost. Decisively, generation answers questions nobody anticipated: *"how many P1s are still unresolved after 30 days"* returned 6, and no catalogue would have held that entry |
+| D15 | *withdrawn* | — | Specified the curated catalogue's construction, curation rules and staleness handling. Deleted in rev 7 along with the catalogue itself (D14). Retained as a numbered placeholder so D16 keeps its identity in earlier commits and discussion. The measurement that produced it stands and is worth keeping: Zing text search over `sys_report` scores **5 of 8**, failing *"how many open incidents are there"* — so had a catalogue been needed, selection rather than retrieval would have been the right way to build it |
+| D16 | Routing between the two paths | **One Claude call sees the articles and decides: answer, query, or decline** | Rejected: a separate classifier call (doubles latency and cost on every question, and a wrong route is unrecoverable downstream); and keyword routing on "how many" (brittle — *"what is our SLA adherence"* contains no count word, *"how many steps to reset a password"* is an article question). Preserves D6: exactly one model call on the common path |
 
 ---
 
@@ -343,7 +355,7 @@ RETRY_ENABLED            default true — set false to disable D13 retry entirel
 
 # Metrics (V2)
 METRICS_ENABLED          default true — set false to reduce V2 to revision 5 exactly
-METRICS_CATALOGUE        default ./config/metrics.json
+METRICS_TIMEOUT_MS       default 10000 — a pathological filter must not hang a chat turn
 ```
 
 Gateway base URL and model IDs are **inputs supplied at implementation time**, not open
@@ -404,80 +416,111 @@ Two instance behaviours confirmed and relevant:
 
 ## 8b. The metrics path
 
-### The catalogue
+### What the model returns
 
-A checked-in JSON file. Each entry names one `sys_report` record and describes, in the
-words a user would actually use, what it answers:
+Claude returns a small structured object, or declines:
 
-```json
+```ts
 {
-  "id": "open-incidents",
-  "reportSysId": "<sys_id of the sys_report record>",
-  "label": "Open Incidents by Priority",
-  "description": "How many incidents are currently open or active.",
-  "aliases": ["open tickets", "active incidents", "how many incidents are open"]
+  table: string       // 'incident', 'task_sla', 'sn_si_incident', ...
+  filter: string      // a ServiceNow encoded query, e.g. 'active=true^priority=1'
+  aggregate: 'count' | 'avg' | 'sum' | 'min' | 'max'
+  field?: string      // required for everything except count
+  phrasing: string    // one sentence naming what is being counted
 }
 ```
 
-The catalogue holds **no filter and no data** — only identity and description. Both the
-filter and the number are read live. This is what keeps D7 (no ingestion) intact and what
-makes the chatbot track NowOps automatically: edit a report in ServiceNow and the next
-question reflects it, with no redeploy.
-
-Catalogue entries are curated, not generated. The selection rules, each measured:
-
-| Rule | Why | Population |
-|---|---|---|
-| Exclude `filterLIKEDYNAMIC` | Resolves against the calling account — a service user's numbers presented as the asker's | 963 → 830 |
-| Exclude `GROUPBY`/`TRENDBY` | Returns a series, not a number; V2 answers scalars | 830 → 456 |
-| Resolve duplicate titles by sys_id | `Vulnerable Items` exists 3× across 2 tables; `SLA Adherence% Trend (Resolution) - P4` exists twice with different filters | — |
-| Prefer definitions the dashboards use | Agreement with NowOps is the point (D14) | ~40–60 curated |
+This is the whole interface. There is no catalogue, no report lookup, no curation step,
+and nothing to keep in sync (D14).
 
 ### Execution
 
 ```
-GET /api/now/table/sys_report/<sys_id>
-      ?sysparm_fields=title,table,filter,aggregate,field
-GET /api/now/stats/<table>?sysparm_count=true&sysparm_query=<filter>
-      (COUNT)
-GET /api/now/stats/<table>?sysparm_avg_fields=<field>&sysparm_query=<filter>
-      (AVG, SUM, MIN, MAX)
+count : GET /api/now/stats/<table>?sysparm_count=true&sysparm_query=<filter>
+other : GET /api/now/stats/<table>?sysparm_<agg>_fields=<field>&sysparm_query=<filter>
 ```
 
-The filter is passed through **verbatim**, URL-encoded but never parsed, rewritten or
-merged with anything. `javascript:` date functions inside it (340 of 963 reports use
-them) are evaluated server-side by ServiceNow, which is correct and requires nothing
-from us.
+Constraints, enforced in our code rather than requested of the model:
 
-If the fetched definition turns out to carry `DYNAMIC` or `GROUPBY` despite curation —
-because someone edited the report after the catalogue was written — execution is
-abandoned and the chatbot declines. The catalogue is a cache of *decisions*, and stale
-decisions must fail closed.
+- **GET only, `/stats/` only.** The model supplies `table`, `filter`, `aggregate` and
+  `field` as data; it never supplies a URL, a method or a path.
+- **`aggregate` must be one of the five listed.** Anything else is a decline.
+- A request timeout, so a pathological filter cannot hang a chat turn.
+
+There is deliberately **no table allowlist**. The OAuth user's ACLs already bound what is
+readable, and an allowlist would block legitimate questions (*"how many users are
+there?"* is a fair question with a correct answer) while providing no protection the
+ACLs do not already give.
+
+Malformed filters are rejected by ServiceNow, not by us. We catch the error and decline
+rather than attempt repair — a second guess at a query is a second chance to be
+confidently wrong.
+
+### Measured basis (2026-09-14, live)
+
+Fifteen questions, queries written before any were run, ambiguous cases included
+deliberately:
+
+| Question | Result | Query |
+|---|---|---|
+| how many open incidents are there | 5,513 | `incident` · `active=true` |
+| how many P1 incidents are open | 14 | `incident` · `active=true^priority=1` |
+| how many incidents are unassigned | 4,184 | `incident` · `active=true^assigned_toISEMPTY` |
+| Network group's open incidents | 866 | `incident` · `active=true^assignment_group.name=Network` |
+| how many incidents breached their SLA | 23,429 | `task_sla` · `has_breached=true` |
+| how many SLAs are at risk right now | 150 | `task_sla` · `active=true^has_breached=false^percentage>80` |
+| how many security incidents are open | 246 | `sn_si_incident` · `active=true` |
+| how many incidents are on hold | 1 | `incident` · `state=3` |
+| P1s unresolved after 30 days | 6 | `incident` · `active=true^priority=1^opened_at<daysAgoStart(30)` |
+| average resolution time for P2 | 00:43:22 | AVG `incident.calendar_duration` |
+
+**15 of 15 executed. No syntax errors, no permission failures.** `state=3` returning 1
+matches the QBR On-Hold tile exactly. Dotted-field traversal, `javascript:` date
+functions and relative-date windows all worked unaided.
+
+Two failure modes are accepted rather than engineered away, because both are visible in
+the rendered filter and neither is worth a subsystem:
+
+- **A plausible-but-wrong filter.** `state=7` for "closed" silently omits resolved
+  incidents. The filter is on screen; the deep link settles it.
+- **A meaningless aggregate.** `AVG(task_sla.percentage)` returned **326,252** — SLA
+  percentages exceed 100 without bound on breached records, so the mean is garbage. It is
+  obvious garbage, and the field name is displayed.
 
 ### Presentation
 
-Every metric answer shows three things. The number alone is unfalsifiable:
+Every metric answer shows the number **and the query that produced it**. A number alone
+is unfalsifiable:
 
-> **1,308** incidents are in the backlog.
+> **5,377** incidents are open and in progress.
 >
-> *Source:* **Backlog Incidents Count** · `incident` ·
-> `active=true^u_past_incidentsISNOTEMPTY^stateIN2^assigned_toISNOTEMPTY^priorityNOT IN1,5`
-> · [open in abhrademo4 →]
+> *Source:* `incident` · `active=true^state=2` · [open in abhrademo4 →]
 
-The deep link resolves to the same filter as a record list, so any disagreement is
-settled by clicking rather than by argument.
+The deep link is `/<table>_list.do?sysparm_query=<filter>`, resolving to the same records
+the number counted, so a disagreement is settled by clicking rather than by argument.
 
-### A caveat that must not be silently absorbed
+**The filter is rendered, not hidden behind a tooltip.** It is long and it is ugly; it is
+also the only thing that makes the number checkable, and concealing it would defeat the
+purpose of D14. Wrap it, do not truncate it.
 
-Several stored definitions are wrong. `Tickets Approaching SLA Breach - P1` is
-`task / MAX / active=true^opened_at<gs.beginningOfLast6Months()^priority=1` — it never
-touches `task_sla`, so it measures stale tickets, not imminent breaches. The four MTTR
-reports use four different time windows (P1 last 2 quarters, P2 this year, P3/P4 last 2
-years) and are therefore not comparable with each other.
+### Where this will disagree with the dashboard
 
-V2 reproduces these faithfully, because agreeing with the dashboard is the design goal
-(D14) and a chatbot quietly disagreeing with NowOps is the failure this avoids. Showing
-the filter is what lets a reader notice the report is wrong. Fixing it is a NowOps task.
+It will, and that is understood rather than prevented. The `Backlog Incidents Count` tile
+reads 1,292 because its stored definition is
+`active=true^u_past_incidentsISNOTEMPTY^stateIN2^assigned_toISNOTEMPTY^priorityNOT IN1,5`
+— a UST custom field, an assignee requirement and an exclusion of P1 and P5. A composed
+query for "the backlog" returns 5,377.
+
+Neither number is wrong; they answer different questions. The rendered filter is what
+turns a silent contradiction into a visible one, and a user who needs the house figure
+can see immediately that they are not looking at it.
+
+If this becomes a real complaint in use, the fix is to look the definition up in
+`sys_report` for the handful of KPIs that have house definitions — and by then there will
+be a concrete failing example to build against, rather than the speculation that produced
+revision 6. Several stored definitions are themselves wrong (`Tickets Approaching SLA
+Breach` never touches `task_sla`; the four MTTR reports use four different time windows),
+so deferring is not obviously the worse trade.
 
 ---
 
@@ -642,7 +685,7 @@ as "what about the second one?" retrieve poorly, that is the signal to revisit D
 | Endpoint | Purpose |
 |---|---|
 | `POST /api/chat` | `{ message, conversationId, model? }` → `{ answer, kind, sources[], metric?, grounded, gateReason? }` |
-| `GET /api/health` | Gateway reachability, model id in use, ServiceNow search reachability, catalogue size |
+| `GET /api/health` | Gateway reachability, model id in use, ServiceNow search reachability |
 
 `kind` is `'article' \| 'metric' \| 'decline'` and tells the UI which source line to draw.
 
@@ -652,13 +695,11 @@ as "what about the second one?" retrieve poorly, that is the signal to revisit D
 
 ```ts
 {
-  id: string            // catalogue id, e.g. 'incident-backlog'
-  label: string         // report title as stored in sys_report
-  reportSysId: string   // identity, per D10's reasoning applied to reports
   table: string         // e.g. 'incident'
-  aggregate: string     // COUNT | AVG | SUM | MIN | MAX
-  filter: string        // the stored filter, verbatim — rendered to the user
-  value: number
+  filter: string        // the executed filter, verbatim — rendered to the user
+  aggregate: string     // count | avg | sum | min | max
+  field?: string        // present for everything except count
+  value: number | string // string for durations, e.g. '00:43:22'
   url: string           // deep link to the same filter as a record list
 }
 ```
@@ -667,8 +708,7 @@ as "what about the second one?" retrieve poorly, that is the signal to revisit D
 `model_declined`, `servicenow_unavailable`, `metric_unavailable`) and `retried: boolean`
 records whether D13 fired, so the UI and logs can distinguish them.
 
-There is no `/api/sync` — nothing is cached to sync (D7). The catalogue is configuration,
-not cached data, and is read from disk at boot.
+There is no `/api/sync` — nothing is cached to sync (D7).
 
 ---
 
@@ -715,10 +755,11 @@ Principle: **fail loudly at boot, degrade gracefully at runtime.**
 | Triage call fails (D13) | Fall back to declining on the first result set. A retry failure must never surface as an error — the user gets the ordinary "not in the knowledge base" |
 | Triage returns an unusable rewrite (empty, or the original query unchanged) | Skip the second search and decline. No loop |
 | Oversized or abusive input | Message length cap, rejected before reaching search or the gateway |
-| Model selects a metric id not in the catalogue | Treat as a decline, log the invented id. Same discipline as stripping fabricated `[n]` citations (D10) |
-| Catalogued report has been deleted in ServiceNow | Decline with `metric_unavailable`; log the catalogue id and sys_id so the entry can be removed |
-| Fetched definition now carries `DYNAMIC` or `GROUPBY` | Abandon execution and decline. Curation decisions can go stale, and stale decisions fail closed (section 8b) |
-| Aggregate call fails or returns a non-numeric body | Decline with `metric_unavailable`. Never render a partial or guessed number |
+| Model returns an aggregate outside the five permitted | Decline, and log what it asked for. Same discipline as stripping fabricated `[n]` citations (D10) |
+| Model returns a malformed filter | ServiceNow rejects it; decline with `metric_unavailable`. **No repair attempt** — a second guess at a query is a second chance to be confidently wrong |
+| Model names a table that does not exist or is not readable | ServiceNow returns an error; same decline. The OAuth user's ACLs are the access boundary |
+| Aggregate returns a non-numeric or empty body | Decline. Never render a partial or guessed number |
+| Query exceeds `METRICS_TIMEOUT_MS` | Abort and decline, so one pathological filter cannot hang a chat turn |
 
 With live search (D2) the availability of abhrademo4 is now on the **request** path rather
 than the startup path. That is the main cost of this design, and the row above is how it is
@@ -733,10 +774,11 @@ article numbers returned by each search, the coverage score of the top candidate
 after any retry, the gate decision and reason, the model used, and
 latency.
 
-Metric turns additionally log: **the catalogue id selected**, the report sys_id, the
-filter as executed, and the value returned. The executed filter is logged verbatim for the
-same reason it is shown to the user — a number in a log that cannot be reproduced is not
-evidence of anything.
+Metric turns additionally log: **the table, filter, aggregate and field as composed**,
+and the value returned. The filter is logged verbatim for the same reason it is shown to
+the user — a number in a log that cannot be reproduced is not evidence of anything. This
+log is also the raw material for judging, after real use, whether composed queries drift
+from house definitions often enough to matter (section 8b).
 
 This single log line distinguishes a search failure from a gate failure from a model
 failure from a wrong metric selection, without guesswork. Secrets never appear in logs
@@ -751,10 +793,10 @@ network.
 
 | Layer | Covers |
 |---|---|
-| Unit | Tokeniser, coverage scoring, token guard, gate decision, citation verification, triage-response parsing, catalogue loading and validation, aggregate URL construction, metric formatting |
+| Unit | Tokeniser, coverage scoring, token guard, gate decision, citation verification, triage-response parsing, aggregate URL construction, aggregate whitelisting, metric formatting, deep-link building |
 | Retrieval eval | `npm run eval` — the 45-question set, search only, **deterministic** |
 | Retry eval | `npm run eval -- --with-retry` — same set through the full D13 path, using Claude |
-| **Metric eval** | `npm run eval:metrics` — question set measuring *selection accuracy*: did the model pick the right catalogue id? |
+| **Metric eval** | `npm run eval:metrics` — question set measuring *query correctness*: did the composed query execute, and did it match the expected filter? |
 | Integration | Routes against stubbed search and a stubbed gateway, so CI needs no live credentials |
 | Live smoke | Manual: `/api/health` plus a handful of real questions |
 
@@ -764,17 +806,19 @@ deterministic, free, and the thing that fails the build if it drops below 26/35 
 `--with-retry` measures the end-to-end improvement (expected ~31/35), costs Claude calls, and
 is reported rather than enforced.
 
-**The metric eval measures selection, not arithmetic.** Once the right report is chosen the
-number is whatever ServiceNow returns, and asserting on it would fail every time a ticket is
-raised. So the assertion is `selectedId === expectedId`, plus a separate invariant that is
-genuinely stable: executing the catalogue entry must return the same value as executing the
-same `sys_report` filter directly. That catches a broken URL builder or a mangled filter
-without pinning a moving number.
+**The metric eval measures the query, not the number.** Asserting on values would fail
+every time a ticket is raised. Three assertions instead, all stable:
 
-The metric eval question set must include **out-of-catalogue** questions — *"how many
-incidents breached SLA last Tuesday"*, *"what is our uptime"* — where the correct behaviour
-is to decline. A catalogue-selection model with nothing to decline against will learn to
-always pick something.
+1. **It executes.** No syntax error, no permission error. This was 15/15 by hand and is
+   the floor a regression must not drop below.
+2. **The filter is semantically right.** Compare against an expected filter, normalising
+   clause order — `active=true^priority=1` and `priority=1^active=true` are the same query.
+3. **`state`-style codes are correct.** The sharpest known failure mode: "closed" as
+   `state=7` silently omits `state=6` resolved. Worth its own cases.
+
+The question set must include questions that **should be declined** — *"what is our
+uptime"* (no such data exists in the instance), *"how many incidents will we get next
+month"* (not a query) — because a model that can always compose *something* will.
 
 ---
 
@@ -801,22 +845,23 @@ always pick something.
 
 V2 adds:
 
-11. *"How many open incidents are there?"* returns a number, the report name, the executed
-    filter, and a working deep link. Clicking it opens a record list whose count equals the
-    number shown. **This is the acceptance test for the whole metrics path** — it is the
-    question that defeated text-search retrieval (D15), and the one an SDM asks first.
-12. *"What is our SLA adherence for P1?"* and *"What is the incident backlog?"* likewise.
-    The backlog figure must match the `Backlog Incidents Count` tile's definition, not the
-    naive `active=true^state=2` reading — the two differ by roughly 4×, and getting the
-    naive one is a silent failure.
-13. *"What is our uptime?"* is declined. No catalogue entry exists and none can, because
-    the data is not in the instance. It must not be answered from an approximate metric.
+11. *"How many open incidents are there?"* returns **5,513**, the filter `active=true`, and
+    a working deep link. Clicking it opens a record list whose count equals the number
+    shown. **This is the acceptance test for the whole metrics path** — the question an SDM
+    asks first.
+12. *"How many P1 incidents are open?"* returns 14, and *"how many incidents are on hold?"*
+    returns 1 — the latter matching the QBR On-Hold tile, which is the cheapest available
+    check that composed queries agree with NowOps where no house definition intervenes.
+13. *"What is our uptime?"* is declined. The data does not exist in the instance, and it
+    must not be answered from an approximate metric that does.
 14. *"How do I reset my SAP password?"* still routes to the article path with
     `kind: 'article'`. Adding metrics must not cannibalise article answering — run the full
     45-question eval with `METRICS_ENABLED=true` and confirm recall is unchanged.
 15. With `METRICS_ENABLED=false`, behaviour is identical to revision 5 in every respect.
-16. `npm run eval:metrics` reports selection accuracy and correctly declines every
-    out-of-catalogue question.
+16. A deliberately malformed filter (forced in a test) produces a decline, never a repair
+    attempt and never a partial number.
+17. `npm run eval:metrics` reports execution rate and filter accuracy, and declines every
+    question that should be declined.
 
 ---
 
@@ -829,8 +874,8 @@ V2 adds:
 | ServiceNow OAuth client id, secret, refresh token | **Done** — written to `.env` by `Export-SnEnvFile` |
 | Gateway API key, base URL, model ids | **Outstanding** — held by the project owner |
 | ~~Allowlisted knowledge base sys_ids~~ | **Not needed** — measured as ineffective and removed (D5) |
-| **Metric catalogue (~40–60 entries)** | **Built during implementation** — generated from `sys_report` by a one-off script, then reviewed. Needs no input from the owner, but *does* need a decision per entry, so it is its own task |
-| **Metric eval question set** | **Built during implementation**, same pattern as the retrieval eval: drawn from the dashboards' own tile names plus the questions an SDM actually asks |
+| ~~Metric catalogue~~ | **Not needed** — measured as unnecessary and removed (D14). 15 of 15 composed queries executed correctly |
+| **Metric eval question set** | **Built during implementation**, same pattern as the retrieval eval. The 15 measured questions in section 8b are its starting point |
 
 Nothing in V2 is blocked on anything the owner does not already have. The gateway key
 remains the only outstanding external dependency, and `LLM_MODE=stub` continues to unblock
@@ -847,10 +892,10 @@ In rough order of likely value:
 2. **Series and trend metrics.** 383 of 963 reports carry `GROUPBY`/`TRENDBY`. Answering
    *"open incidents by priority"* with a breakdown rather than a total needs a formatter
    and a UI decision (table? sparkline?), which is why V2 answers scalars only.
-3. **Parameterised metrics** — *"how many P2 incidents"* against a catalogue entry keyed on
-   priority. Requires validated parameter substitution into a stored filter, which is the
-   first point where the model would influence query text. Worth doing carefully or not at
-   all.
+3. **House-definition lookup** — for the handful of KPIs where NowOps has an official
+   filter (backlog, SLA adherence), read it from `sys_report` instead of composing one.
+   Deferred until real use shows the disagreement matters; by then there will be a
+   concrete example rather than speculation.
 4. Streaming responses.
 5. Articles describing NowOps and MemorialCare — neither exists in the knowledge base
    today, so *"what is NowOps?"* currently cannot be answered. Likely the first question
