@@ -44,7 +44,8 @@ if (Test-Path $EnvPath) {
 }
 
 $out = @('# UST LLM gateway - written by set-gateway-env.ps1 on ' + (Get-Date -Format 'yyyy-MM-dd HH:mm'))
-foreach ($k in $wanted.Keys) { $out += "$k=$($wanted[$k])" }
+# Double-quoted: Node's --env-file treats an unquoted '#' as an inline comment.
+foreach ($k in $wanted.Keys) { $out += "$k=`"$($wanted[$k])`"" }
 if ($kept.Count -gt 0) { $out += ''; $out += $kept }
 
 $out | Out-File -FilePath $EnvPath -Encoding utf8

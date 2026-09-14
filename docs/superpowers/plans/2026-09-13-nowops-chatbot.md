@@ -461,7 +461,7 @@ describe('sanitiseQuery', () => {
 
 /** Route the token endpoint to a token, everything else to `handler`. */
 const snFetch = (handler: (url: string) => Response | Promise<Response>) =>
-  vi.fn(async (u: unknown) =>
+  vi.fn(async (u: unknown, _init?: RequestInit) =>
     String(u).includes('oauth_token.do') ? tokenResponse() : handler(String(u)))
 
 describe('makeSnClient', () => {
@@ -485,7 +485,7 @@ describe('makeSnClient', () => {
   it('sends the bearer token and a timeout signal', async () => {
     const fetchImpl = snFetch(() => ok({}))
     await makeSnClient(cfg, fetchImpl as never).get('/api/now/table/x')
-    const init = fetchImpl.mock.calls.at(-1)?.[1] as RequestInit
+    const init = fetchImpl.mock.calls.at(-1)![1]!
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer tok-1')
     expect(init.signal).toBeInstanceOf(AbortSignal)
   })
@@ -512,10 +512,10 @@ describe('makeSearch', () => {
     let url = ''
     const fetchImpl = snFetch((u) => { url = u; return ok({ result: [] }) })
     await makeSearch(makeSnClient(cfg, fetchImpl as never)).search('printer offline')
-    const q = decodeURIComponent(url)
-    expect(q).toContain('workflow_state=published')
-    expect(q).toContain('123TEXTQUERY321=printer offline')
-    expect(q).not.toContain('kb_knowledge_base')
+    // URLSearchParams encodes a space as '+', which decodeURIComponent leaves alone —
+    // read the parameter back through URL so the comparison is on the decoded value.
+    const q = new URL(url).searchParams.get('sysparm_query')
+    expect(q).toBe('workflow_state=published^123TEXTQUERY321=printer offline')
   })
 
   it('maps records to Articles keyed on sys_id and links by sys_id', async () => {
@@ -755,8 +755,10 @@ Expected: PASS, 13 tests
 - [ ] **Step 7: Verify against the live instance**
 
 ```bash
-npx tsx --env-file=.env -e "import {loadConfig} from './src/config.js';import {makeSnClient} from './src/servicenow/client.js';import {makeSearch} from './src/servicenow/search.js';makeSearch(makeSnClient(loadConfig())).search('Self-checkout lanes 1-4 down at Store #208 after image push').then(r=>console.log(r.map(a=>a.label+' '+a.title)))"
+node --env-file=.env --import tsx --input-type=module -e "import {loadConfig} from './src/config.ts';import {makeSnClient} from './src/servicenow/client.ts';import {makeSearch} from './src/servicenow/search.ts';const r=await makeSearch(makeSnClient(loadConfig())).search('Self-checkout lanes 1-4 down at Store #208 after image push');console.log(r.map(a=>a.label+' '+a.title))"
 ```
+
+(`tsx -e` evaluates as CommonJS and cannot import the ESM sources; Node's own `--input-type=module -e` with the `tsx` loader can.)
 
 Expected: `KB0010141 Self-checkout NCR terminal will not boot after image push` first — that is eval question `inc-01`.
 
@@ -1034,7 +1036,7 @@ Expected: PASS, 15 tests
 - [ ] **Step 5: Verify against the live instance**
 
 ```bash
-npx tsx --env-file=.env -e "import {loadConfig} from './src/config.js';import {makeSnClient} from './src/servicenow/client.js';import {makeStats} from './src/servicenow/stats.js';const s=makeStats(makeSnClient(loadConfig()));Promise.all([s.run({table:'incident',filter:'active=true',aggregate:'count'}),s.run({table:'incident',filter:'active=true^priority=1',aggregate:'count'}),s.run({table:'task_sla',filter:'has_breached=true',aggregate:'count'})]).then(r=>r.forEach(x=>console.log(x.value,'|',x.table,x.filter)))"
+node --env-file=.env --import tsx --input-type=module -e "import {loadConfig} from './src/config.ts';import {makeSnClient} from './src/servicenow/client.ts';import {makeStats} from './src/servicenow/stats.ts';const s=makeStats(makeSnClient(loadConfig()));const r=await Promise.all([s.run({table:'incident',filter:'active=true',aggregate:'count'}),s.run({table:'incident',filter:'active=true^priority=1',aggregate:'count'}),s.run({table:'task_sla',filter:'has_breached=true',aggregate:'count'})]);r.forEach(x=>console.log(x.value,'|',x.table,x.filter))"
 ```
 
 Expected, matching the spec §8b measurements (numbers drift as tickets are raised — the shape is what matters):
@@ -1421,7 +1423,7 @@ Expected: PASS, 18 tests
 - [ ] **Step 5: Verify preflight against the live gateway** — ⏸ **BLOCKED until the Key Vault secret is available**
 
 ```bash
-npx tsx --env-file=.env -e "import {loadConfig} from './src/config.js';import {makeLlm} from './src/llm/client.js';makeLlm(loadConfig()).preflight().then(()=>console.log('preflight ok')).catch(e=>{console.error(e.message);process.exit(1)})"
+node --env-file=.env --import tsx --input-type=module -e "import {loadConfig} from './src/config.ts';import {makeLlm} from './src/llm/client.ts';await makeLlm(loadConfig()).preflight();console.log('preflight ok')"
 ```
 
 Expected: `preflight ok`. A failure names the model id and the masked key — treat a wrong model id as the most likely cause.
@@ -2487,6 +2489,7 @@ git commit -m "feat: article and metric evals with acceptance walkthrough"
 - **PowerShell scalar trap, if you script against this.** A one-element ServiceNow result is a scalar whose `.Count` is `$null`, so `for ($i=0; $i -lt $r.Count; ...)` never runs. Always `@()`-wrap. This once made an eval report 54% when the true figure was 80%.
 - **Expect most real traffic to be declined.** Of 36,030 incidents on abhrademo4, most are monitoring alerts and fragments. A high decline rate is the system working.
 - **`.env` holds live secrets** and is gitignored. Check `git status` before `git add -A`.
+- **Node's `--env-file` treats an unquoted `#` as an inline comment.** The abhrademo4 client secret contains one, so an unquoted value loads truncated and every token refresh fails with HTTP 401 `access_denied` — which looks exactly like an expired refresh token. `Export-SnEnvFile` and `set-gateway-env.ps1` now write values double-quoted. If a 401 appears after hand-editing `.env`, check the quotes before re-authorising.
 
 ---
 
