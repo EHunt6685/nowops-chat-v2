@@ -13,8 +13,7 @@
 param(
     [string] $EnvPath   = (Join-Path $PSScriptRoot '..\.env'),
     [string] $BaseUrl   = 'https://llmproxy.ustdev.com',
-    [string] $Model     = 'claude-opus-4-8-Codon',
-    [string] $ModelChoices = 'claude-opus-4-8-Codon'
+    [string] $Model     = 'claude-opus-4-8-Codon'
 )
 
 $EnvPath = [System.IO.Path]::GetFullPath($EnvPath)
@@ -33,14 +32,13 @@ $wanted = [ordered]@{
     ANTHROPIC_API_KEY    = $key
     ANTHROPIC_BASE_URL   = $BaseUrl
     CLAUDE_MODEL         = $Model
-    CLAUDE_MODEL_CHOICES = $ModelChoices
 }
 
 # Preserve every line we are not responsible for (the SN_* and gate settings).
 $kept = @()
 if (Test-Path $EnvPath) {
     foreach ($line in (Get-Content -Path $EnvPath)) {
-        if ($line -match '^\s*(ANTHROPIC_API_KEY|ANTHROPIC_BASE_URL|CLAUDE_MODEL|CLAUDE_MODEL_CHOICES)\s*=') { continue }
+        if ($line -match '^\s*(ANTHROPIC_API_KEY|ANTHROPIC_BASE_URL|CLAUDE_MODEL)\s*=') { continue }
         $kept += $line
     }
 }

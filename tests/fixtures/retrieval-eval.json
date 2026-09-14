@@ -3,7 +3,7 @@
     "created": "2026-09-13",
     "revised": "2026-09-13",
     "instance": "https://abhrademo4.service-now.com",
-    "purpose": "Calibrate RETRIEVAL_MIN_SCORE and act as a retrieval regression test.",
+    "purpose": "Retrieval regression test: recall@k over live ServiceNow search.",
 
     "sources": {
       "synthetic": "Authored from published article titles, paraphrased into user language. Biased toward article vocabulary; overstates retrieval quality.",

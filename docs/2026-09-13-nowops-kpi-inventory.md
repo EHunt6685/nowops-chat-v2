@@ -331,12 +331,11 @@ kb_knowledge (published)        732      em_event / em_alert     105 / 88
 
 The chatbot specified in
 [`specs/2026-09-13-nowops-chatbot-design.md`](superpowers/specs/2026-09-13-nowops-chatbot-design.md)
-answers **only** from published knowledge articles. None of the KPIs here are
-reachable through it, by design.
-
-Answering them requires a second retrieval mode — intent routing, a constrained
-query layer where the model selects from validated query shapes rather than
-emitting raw `sysparm_query`, numeric answer formatting, deep-links to the
-filtered list for verification, and an eval measuring numeric exactness rather
-than recall@k. Section 3 is the argument for the constraint: a wrong count reads
-exactly as confidently as a right one.
+(revision 7 onward) answers the green KPIs above by having Claude compose a
+read-only aggregate query that the server executes against `/api/now/stats/`,
+always rendering the filter beside the number and deep-linking to the record
+list (spec D14, section 8b). The catalogue-of-stored-definitions approach this
+document originally argued for was specified as revision 6 and then dropped after
+15 of 15 composed queries executed correctly first time; section 3's warning
+stands and is handled by showing the filter rather than by constraining
+composition. Red KPIs are declined: no data exists to answer them from.

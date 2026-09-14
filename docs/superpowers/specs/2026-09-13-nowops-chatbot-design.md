@@ -1,9 +1,9 @@
 # NowOps Chatbot V2 — Design Spec
 
-- **Date:** 2026-09-14 (revision 9 — over-engineering audit: dotenv, four config knobs and the second eval script removed)
-- **Status:** Pending approval
+- **Date:** 2026-09-14 (revision 10 — build-readiness review: one ServiceNow client, table-name guard, metric label, no build step, stale rev 6–8 text removed)
+- **Status:** Approved for implementation
 - **Owner:** Sachin Chavan (UST)
-- **Supersedes:** revision 5, which remains buildable in the `nowops-chat` repository
+- **Supersedes:** revision 5 (article path only). Revisions 6–9 were never built
 
 > **What V2 adds.** Revision 5 answers from knowledge articles only. V2 adds a second
 > answer path for operational KPIs — open incidents, SLA breaches, security incidents,
@@ -25,7 +25,7 @@ Build a lightweight chatbot that answers two kinds of question about the `abhrad
 instance, using Claude via the UST LLM API Gateway:
 
 - **"How do I…"** — answered from the ServiceNow knowledge base.
-- **"How many…"** — answered by executing a NowOps dashboard report definition live.
+- **"How many…"** — answered by composing a read-only aggregate query and running it live.
 
 The chatbot's job is to **prove three things work together** before anything is built on
 top of them:
@@ -71,8 +71,8 @@ failures are cheap to diagnose.
   metric, or declines (D16)
 - Static HTML + vanilla JS chat UI
 - A visible source line under every answer: cited articles linked back to abhrademo4,
-  or — for a metric — the report name, **the filter that produced the number**, and a
-  deep link to the matching record list
+  or — for a metric — the table, the aggregate, **the filter that produced the number**, and
+  a deep link to the matching record list
 - Health endpoint
 - One eval script — `npm run eval` for article recall, `npm run eval -- --metrics` for
   composed-query correctness
@@ -181,11 +181,12 @@ Browser (static HTML + vanilla JS)
     │  POST /api/chat  { message, conversationId, model? }
     ▼
 Express server (TypeScript, Node 22)
-    ├── servicenow/    OAuth + kb_knowledge search  → ≤5 Articles
-    │                  OAuth + /stats/ aggregate    → MetricResult      [V2]
-    ├── gate/          3 layers → answer or decline
-    ├── llm/           Anthropic SDK → UST LiteLLM gateway
-    └── server/        routes + in-memory conversation, process lifetime only
+    ├── servicenow/    one OAuth client (token cache, timeout)
+    │                  kb_knowledge search → ≤5 Articles
+    │                  /stats/ aggregate   → MetricResult                [V2]
+    ├── guard.ts       token-count guard (gate layer 1, pure)
+    ├── llm/           Anthropic SDK → UST LiteLLM gateway (gate layer 2)
+    └── server.ts      routes + in-memory conversation, process lifetime only
     ▲
     │  OAuth REST, per question
 ServiceNow abhrademo4   kb_knowledge · /api/now/stats/*
@@ -195,14 +196,19 @@ Four modules with distinct responsibilities, each testable in isolation:
 
 | Module | Responsibility | Depends on |
 |---|---|---|
-| `servicenow/` | OAuth token refresh, article search, aggregate execution | env config |
-| `gate/` | Tokenise, score coverage, decide answer vs decline | nothing (pure) |
-| `llm/` | Gateway client, prompt assembly, citation verification, query composition | env config |
-| `server/` | Routes, static files, conversation state, metric formatting | all three |
+| `servicenow/` | One authenticated client (token cache, 10 s timeout); article search and aggregate execution built on it | env config |
+| `guard.ts` | Tokenise, count meaningful terms, decline one-word noise | nothing (pure) |
+| `llm/` | Gateway client, prompt assembly, reply parsing, citation verification | env config |
+| `server.ts` | Routes, static files, conversation state, metric formatting | all three |
 
 V2 adds no module. It adds one function to `servicenow/` (run an aggregate), one output
-shape to `llm/`, and one branch in `server/`. Nothing is cached, nothing is curated and
+shape to `llm/`, and one branch in `server.ts`. Nothing is cached, nothing is curated and
 nothing needs to stay in sync — D7 (no ingestion) is preserved by construction.
+
+Search and stats share **one** ServiceNow client, so the process holds one OAuth token
+cache and every request to the instance carries the same timeout. There is no build
+step: the app runs under `tsx` and `tsc --noEmit` type-checks `src/`, `tools/` and
+`tests/` together.
 
 `Article` is the record type search returns. It is a plain data shape, not an abstraction
 layer — there is no connector interface and no second implementation (D12).
@@ -243,9 +249,8 @@ safe:
   the deep link resolves the argument.
 
 Steps 6–7 are the measured +15-point improvement (D13), unchanged from revision 5;
-`RETRY_ENABLED=false` restores the pre-retry behaviour exactly. Comparing V2's article
-answering against revision 5 is done by running the `nowops-chat` repository, not by a
-flag (section 7).
+`RETRY_ENABLED=false` restores the pre-retry behaviour exactly. The article path's
+regression check is `npm run eval` against the recorded revision 5 baseline (section 9).
 
 ---
 
@@ -287,7 +292,7 @@ nowops-chat/
 │   ├── guard.ts           tokenise + token-count guard  (~25 lines, pure)
 │   ├── servicenow/
 │   │   ├── types.ts       Article + ServiceNowUnavailableError
-│   │   ├── auth.ts        refresh-token grant → cached access token
+│   │   ├── client.ts      refresh-token grant, cached token, authenticated get() with timeout
 │   │   ├── search.ts      live kb_knowledge text search
 │   │   └── stats.ts       run one aggregate → value + deep link      [V2]
 │   ├── llm/
@@ -355,14 +360,13 @@ LLM_MODE                 live | stub — stub only while the gateway key is unav
 
 **Everything else is a constant in the file that uses it**, not configuration:
 `MIN_TOKENS = 2` in `guard.ts`, `SEARCH_LIMIT = 5` in `search.ts`, `TIMEOUT_MS = 10_000` in
-`stats.ts`. Nobody retunes these, and a knob nobody turns is a knob that has to be
+`servicenow/client.ts`. Nobody retunes these, and a knob nobody turns is a knob that has to be
 documented, validated, tested and kept consistent. `RETRY_ENABLED` survives because the
 plan has a real path where it gets set to false — if the measured retry gain does not hold,
 that is the switch.
 
-There is no `METRICS_ENABLED`. Comparing V2 against revision 5 means running revision 5,
-which is a complete repository sitting alongside this one — a flag can drift from what it
-claims to reproduce, a separate checkout cannot.
+There is no `METRICS_ENABLED`. The article path is guarded by the deterministic eval and
+its recorded baseline, not by a flag — a flag can drift from what it claims to reproduce.
 
 Gateway base URL and model IDs are **inputs supplied at implementation time**, not open
 design questions.
@@ -432,11 +436,13 @@ Claude returns a small structured object, or declines:
   filter: string      // a ServiceNow encoded query, e.g. 'active=true^priority=1'
   aggregate: 'count' | 'avg' | 'sum' | 'min' | 'max'
   field?: string      // required for everything except count
+  label?: string      // display only — "open P1 incidents", so the UI can say "14 open P1 incidents"
 }
 ```
 
 This is the whole interface. There is no catalogue, no report lookup, no curation step,
-and nothing to keep in sync (D14).
+and nothing to keep in sync (D14). `label` never touches the query; it is the noun
+phrase that follows the number, and a missing label just means the number stands alone.
 
 ### Execution
 
@@ -450,12 +456,16 @@ Constraints, enforced in our code rather than requested of the model:
 - **GET only, `/stats/` only.** The model supplies `table`, `filter`, `aggregate` and
   `field` as data; it never supplies a URL, a method or a path.
 - **`aggregate` must be one of the five listed.** Anything else is a decline.
-- A request timeout, so a pathological filter cannot hang a chat turn.
+- **`table` must match `^[a-z0-9_]+$`.** It is the one model-supplied value that is
+  interpolated into a URL *path*, so a value like `../oauth_token.do` must be refused
+  before any request is built. This is a shape check on a trust boundary, not a list.
+- A request timeout (shared with search), so a pathological filter cannot hang a chat turn.
 
 There is deliberately **no table allowlist**. The OAuth user's ACLs already bound what is
 readable, and an allowlist would block legitimate questions (*"how many users are
 there?"* is a fair question with a correct answer) while providing no protection the
-ACLs do not already give.
+ACLs do not already give. The shape check above is not an allowlist: any real table
+name passes it.
 
 Malformed filters are rejected by ServiceNow, not by us. We catch the error and decline
 rather than attempt repair — a second guess at a query is a second chance to be
@@ -497,9 +507,13 @@ the rendered filter and neither is worth a subsystem:
 Every metric answer shows the number **and the query that produced it**. A number alone
 is unfalsifiable:
 
-> **5,377** incidents are open and in progress.
+> **5,377 open and in-progress incidents**
 >
-> *Source:* `incident` · `active=true^state=2` · [open in abhrademo4 →]
+> *Source:* `incident` · count · `active=true^state=2` · [open in abhrademo4 →]
+
+The sentence is the number formatted with thousands separators followed by the model's
+`label`. Metric turns are also written to the conversation history, with the filter, so
+*"and how many of those are P1?"* has something to build on.
 
 The deep link is `/<table>_list.do?sysparm_query=<filter>`, resolving to the same records
 the number counted, so a disagreement is settled by clicking rather than by argument.
@@ -699,9 +713,11 @@ as "what about the second one?" retrieve poorly, that is the signal to revisit D
 
 `kind` is `'article' \| 'metric' \| 'decline'` and tells the UI which source line to draw.
 
-`sources[]` entries: `{ number, title, sysId, label, url }`.
+`sources[]` entries: `{ id, label, title, url }` — `id` is the sys_id, `label` the display
+KB number.
 
-`metric` is present only when `kind === 'metric'`:
+`metric` is present only when `kind === 'metric'`, and `answer` is then the sentence
+*"5,513 open incidents"*:
 
 ```ts
 {
@@ -709,6 +725,7 @@ as "what about the second one?" retrieve poorly, that is the signal to revisit D
   filter: string        // the executed filter, verbatim — rendered to the user
   aggregate: string     // count | avg | sum | min | max
   field?: string        // present for everything except count
+  label?: string        // the noun phrase after the number, if the model gave one
   value: number | string // string for durations, e.g. '00:43:22'
   url: string           // deep link to the same filter as a record list
 }
@@ -733,7 +750,7 @@ The **source line under each answer is a first-class requirement**, with three s
 | State | Rendering |
 |---|---|
 | Grounded (article) | `Sources: KB0010096 · KB0010112`, each linked by **sys_id**: `.../kb_view.do?sys_kb_id=<sys_id>` |
-| Grounded (metric) | `Source: Backlog Incidents Count · incident · <filter> · open in abhrademo4 →` |
+| Grounded (metric) | `Source: incident · count · open in abhrademo4 →`, with `<filter>` rendered in full beneath it |
 | Declined | `No knowledge base match — not answered` |
 | Citations stripped | Verified citations only, plus a server-side warning log |
 
@@ -767,9 +784,11 @@ Principle: **fail loudly at boot, degrade gracefully at runtime.**
 | Oversized or abusive input | Message length cap, rejected before reaching search or the gateway |
 | Model returns an aggregate outside the five permitted | Decline, and log what it asked for. Same discipline as stripping fabricated `[n]` citations (D10) |
 | Model returns a malformed filter | ServiceNow rejects it; decline with `metric_unavailable`. **No repair attempt** — a second guess at a query is a second chance to be confidently wrong |
+| Model names a table that is not a plain identifier (`../x`, `incident?y=1`) | Refused before any request is built; decline with `metric_unavailable` and log what it asked for |
 | Model names a table that does not exist or is not readable | ServiceNow returns an error; same decline. The OAuth user's ACLs are the access boundary |
+| Article search exceeds the 10 s timeout | Abort; the turn returns "I can't reach the knowledge base right now" (same client, same timeout as aggregates) |
 | Aggregate returns a non-numeric or empty body | Decline. Never render a partial or guessed number |
-| Query exceeds `TIMEOUT_MS` (10s, `stats.ts`) | Abort and decline, so one pathological filter cannot hang a chat turn |
+| Aggregate exceeds `TIMEOUT_MS` (10 s, `servicenow/client.ts`) | Abort and decline, so one pathological filter cannot hang a chat turn |
 
 With live search (D2) the availability of abhrademo4 is now on the **request** path rather
 than the startup path. That is the main cost of this design, and the row above is how it is
@@ -780,9 +799,8 @@ contained.
 ## 14. Observability
 
 Every chat request logs: the query, **the rewritten query when D13 fires**, the candidate
-article numbers returned by each search, the coverage score of the top candidate before and
-after any retry, the gate decision and reason, the model used, and
-latency.
+article numbers returned by each search, the cited labels, the gate decision and reason,
+whether a retry fired, and latency.
 
 Metric turns additionally log: **the table, filter, aggregate and field as composed**,
 and the value returned. The filter is logged verbatim for the same reason it is shown to
@@ -803,7 +821,7 @@ network.
 
 | Layer | Covers |
 |---|---|
-| Unit | Tokeniser, coverage scoring, token guard, gate decision, citation verification, triage-response parsing, aggregate URL construction, aggregate whitelisting, metric formatting, deep-link building |
+| Unit | Tokeniser, token guard, config parsing, secret masking, OAuth token caching, reply parsing (all four forms), citation verification, aggregate URL construction, aggregate and table-name checks, value coercion, deep-link building |
 | Retrieval eval | `npm run eval` — the 45-question set, search only, **deterministic** |
 | Retry eval | `npm run eval -- --with-retry` — same set through the full D13 path, using Claude |
 | **Metric eval** | `npm run eval -- --metrics` — question set measuring *query correctness*: did the composed query execute, and did it match the expected filter? |
@@ -855,8 +873,8 @@ month"* (not a query) — because a model that can always compose *something* wi
 
 V2 adds:
 
-11. *"How many open incidents are there?"* returns **5,513**, the filter `active=true`, and
-    a working deep link. Clicking it opens a record list whose count equals the number
+11. *"How many open incidents are there?"* returns **"5,513 open incidents"** (the number
+    will have drifted), the filter `active=true`, and a working deep link. Clicking it opens a record list whose count equals the number
     shown. **This is the acceptance test for the whole metrics path** — the question an SDM
     asks first.
 12. *"How many P1 incidents are open?"* returns 14, and *"how many incidents are on hold?"*
@@ -867,9 +885,8 @@ V2 adds:
 14. *"How do I reset my SAP password?"* still routes to the article path with
     `kind: 'article'`. Adding metrics must not cannibalise article answering — run the full
     45-question eval and confirm recall matches the revision 5 baseline.
-15. Article behaviour matches revision 5. Verified by **running the `nowops-chat`
-    repository** and comparing, not by a feature flag — a flag can drift from what it
-    claims to reproduce.
+15. A metric reply naming a table such as `../oauth_token.do` (forced in a test) is declined
+    before any request leaves the process.
 16. A deliberately malformed filter (forced in a test) produces a decline, never a repair
     attempt and never a partial number.
 17. `npm run eval -- --metrics` reports execution rate and filter accuracy, and declines

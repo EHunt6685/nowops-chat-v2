@@ -6,9 +6,9 @@
 
 **Architecture:** Nine source files. `servicenow/` searches articles and runs aggregates, `llm/` asks Claude once and interprets its reply, `server.ts` wires it to a static HTML page. No database, no index, no embeddings, no catalogue, no abstraction layers — ServiceNow is the only platform and the code says so directly.
 
-**Tech Stack:** Node 22+ (dev machine runs v24.18.0), TypeScript (ESM, `NodeNext`), Express 5, `@anthropic-ai/sdk`, `zod`; dev-only `tsx`, `vitest`, `typescript`, `@types/*`. `.env` is loaded by Node's own `--env-file`, not by a library.
+**Tech Stack:** Node 22+ (dev machine runs v24.18.0), TypeScript (ESM, `NodeNext`), Express 5, `@anthropic-ai/sdk`, `zod`; dev-only `tsx`, `vitest`, `typescript`, `@types/*`. `.env` is loaded by Node's own `--env-file`, not by a library. **There is no build step**: the app runs under `tsx` in every environment and `tsc --noEmit` is the type check, covering `src/`, `tools/` and `tests/`.
 
-**Spec:** [docs/superpowers/specs/2026-09-13-nowops-chatbot-design.md](../specs/2026-09-13-nowops-chatbot-design.md) (revision 9)
+**Spec:** [docs/superpowers/specs/2026-09-13-nowops-chatbot-design.md](../specs/2026-09-13-nowops-chatbot-design.md) (revision 10)
 
 ## Global Constraints
 
@@ -16,8 +16,8 @@ Every task's requirements implicitly include this section.
 
 - **Node 22 LTS floor.** `.nvmrc` pins `22`; `package.json` sets `"engines": { "node": ">=22" }`.
 - **Runtime dependencies are exactly three:** `express`, `@anthropic-ai/sdk`, `zod`. Dev-only: `typescript`, `tsx`, `vitest`, `@types/node`, `@types/express`. **Adding any other dependency is a plan violation** — raise it rather than installing it. In particular **not `dotenv`**: Node 20.6+ reads `.env` itself via `--env-file`, so every script passes that flag.
-- **Only two things are configurable:** `RETRY_ENABLED` and `LLM_MODE`, plus credentials and `PORT`. Everything else is a `const` in the file that uses it — `MIN_TOKENS` in `guard.ts`, `SEARCH_LIMIT` in `search.ts`, `TIMEOUT_MS` in `stats.ts`. Do not promote a constant to an env var without someone actually needing to change it at runtime.
-- **There is no `METRICS_ENABLED`.** Comparing article behaviour against revision 5 means running the `nowops-chat` repository, which is a complete checkout on the same machine. A flag can drift from what it claims to reproduce.
+- **Only two things are configurable:** `RETRY_ENABLED` and `LLM_MODE`, plus credentials and `PORT`. Everything else is a `const` in the file that uses it — `MIN_TOKENS` in `guard.ts`, `SEARCH_LIMIT` in `search.ts`, `TIMEOUT_MS` in `servicenow/client.ts`. Do not promote a constant to an env var without someone actually needing to change it at runtime.
+- **There is no `METRICS_ENABLED`.** The article path's regression check is `npm run eval` against the recorded 26/35 baseline, not a flag — a flag can drift from what it claims to reproduce.
 - **ServiceNow is the only platform.** No connector interface, no platform selector, no fake connector module, no "pluggable" indirection (D12).
 - **`Article.id` (ServiceNow `sys_id`) is the identity key everywhere** (D10). Article `number` is **not unique** on abhrademo4 — `KB0010004` maps to four different articles. `number` is a display label only. Links use `kb_view.do?sys_kb_id=<sys_id>`.
 - **The model cites bracketed labels `[1]`–`[5]`, never KB numbers** (D10). The server maps labels back to `sys_id`.
@@ -28,7 +28,8 @@ Every task's requirements implicitly include this section.
 - **`aggregate` must be one of `count`, `avg`, `sum`, `min`, `max`.** Anything else is a decline, not a coercion.
 - **A malformed filter is never repaired.** ServiceNow rejects it; we decline. A second guess at a query is a second chance to be confidently wrong.
 - **Every metric answer renders its filter.** Wrap it; never truncate it. The filter is the only thing that makes the number checkable.
-- **There is no table allowlist.** The OAuth user's ACLs are the access boundary. An allowlist would block legitimate questions while adding no protection.
+- **There is no table allowlist.** The OAuth user's ACLs are the access boundary. An allowlist would block legitimate questions while adding no protection. The table name **is** shape-checked (`^[a-z0-9_]+$`) because it is interpolated into a URL path — that is input validation at a trust boundary, not a list of permitted tables.
+- **One ServiceNow client.** `makeSnClient` owns the OAuth token cache, the bearer header, the request timeout and the error mapping. Search and stats both call it; neither builds its own token provider or its own `fetch`.
 - **Never log secrets.** Mask API keys as `sk-abc12…wxyz`.
 - **`.env` is never committed.** `.gitignore` already covers it.
 - **"Cannot reach ServiceNow" and "no match" are different outcomes** (spec §13) — different message, different `gateReason`, different HTTP status.
@@ -77,7 +78,7 @@ Nine source files, three static assets, one tool.
 | `src/log.ts` | One-line JSON logging, masks secrets |
 | `src/guard.ts` | Tokenise + token-count guard (gate layer 1) |
 | `src/servicenow/types.ts` | `Article` record + `ServiceNowUnavailableError` |
-| `src/servicenow/auth.ts` | OAuth refresh-token grant, cached access token |
+| `src/servicenow/client.ts` | OAuth refresh-token grant, cached token, one authenticated `get(path)` with timeout |
 | `src/servicenow/search.ts` | Live `kb_knowledge` text search → `Article[]` |
 | `src/servicenow/stats.ts` | Run one aggregate → value + deep link |
 | `src/llm/client.ts` | Gateway client, preflight, one prompt, reply parsing, citation checks |
@@ -105,9 +106,9 @@ Nine source files, three static assets, one tool.
 npm init -y
 npm pkg set type=module engines.node=">=22"
 npm pkg set scripts.dev="tsx watch --env-file=.env src/server.ts"
-npm pkg set scripts.build="tsc"
-npm pkg set scripts.start="node --env-file=.env dist/server.js"
+npm pkg set scripts.start="tsx --env-file=.env src/server.ts"
 npm pkg set scripts.test="vitest run"
+npm pkg set scripts.typecheck="tsc --noEmit"
 npm pkg set scripts.eval="tsx --env-file=.env tools/eval.ts"
 npm i express @anthropic-ai/sdk zod
 npm i -D typescript tsx vitest @types/node @types/express
@@ -122,20 +123,18 @@ node -e "require('fs').writeFileSync('.nvmrc','22\n')"
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "outDir": "dist",
-    "rootDir": ".",
+    "noEmit": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts", "tools/**/*.ts"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "include": ["src/**/*.ts", "tools/**/*.ts", "tests/**/*.ts"]
 }
 ```
 
-`noUncheckedIndexedAccess` matters here: `articles[0]` is `Article | undefined`, which forces the empty-result case to be handled rather than discovered in a demo.
+`noEmit` because nothing is compiled — `tsx` runs the source. `tests/` is included so a test that calls a function with the wrong arguments fails `npm run typecheck` instead of silently passing under vitest, which strips types without checking them. `noUncheckedIndexedAccess` matters here: `articles[0]` is `Article | undefined`, which forces the empty-result case to be handled rather than discovered in a demo.
 
 - [ ] **Step 3: Write the failing tests**
 
@@ -184,15 +183,6 @@ describe('parseConfig', () => {
 
   it('rejects an unknown LLM_MODE', () => {
     expect(() => parseConfig({ ...valid, LLM_MODE: 'demo' })).toThrow(/LLM_MODE/)
-  })
-
-  it('exposes no tuning knobs beyond retry and mode', () => {
-    // rev 8 removed the coverage floor; rev 9 demoted the rest to constants.
-    // A knob nobody turns still has to be documented, validated and kept consistent.
-    const c = parseConfig(valid) as Record<string, unknown>
-    for (const dead of ['gateMinCoverage', 'gateMinTokens', 'searchLimit', 'metricsEnabled', 'metricsTimeoutMs']) {
-      expect(c).not.toHaveProperty(dead)
-    }
   })
 })
 
@@ -252,21 +242,15 @@ Expected: FAIL — cannot resolve `../src/config.js`, `../src/log.js`, `../src/g
 - [ ] **Step 5: Implement `src/log.ts`**
 
 ```ts
-const SECRET_KEYS = ['ANTHROPIC_API_KEY', 'SN_CLIENT_SECRET', 'SN_REFRESH_TOKEN', 'SN_CLIENT_ID']
-
 /** Masks a secret for logs: sk-abcdefghijklmnop -> sk-ab…mnop */
 export function mask(secret: string): string {
   if (!secret || secret.length < 12) return '…'
   return `${secret.slice(0, 5)}…${secret.slice(-4)}`
 }
 
-/** One-line JSON log. Values under known secret keys are masked. */
+/** One-line JSON log. Callers never pass a secret; anything that must appear goes through mask(). */
 export function log(event: string, fields: Record<string, unknown> = {}): void {
-  const safe: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(fields)) {
-    safe[k] = SECRET_KEYS.includes(k) && typeof v === 'string' ? mask(v) : v
-  }
-  console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...safe }))
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields }))
 }
 ```
 
@@ -377,7 +361,7 @@ export const loadConfig = (): Config => parseConfig(process.env)
 - [ ] **Step 8: Run to verify they pass**
 
 Run: `npx vitest run`
-Expected: PASS, 14 tests
+Expected: PASS, 13 tests
 
 - [ ] **Step 9: Write `.env.example`**
 
@@ -396,12 +380,7 @@ SN_CLIENT_ID=replace-me
 SN_CLIENT_SECRET=replace-me
 SN_REFRESH_TOKEN=replace-me
 
-# No knowledge base filter (D5) — every published article is searched.
-# No coverage threshold (D11, rev 8) — the token guard, then Claude.
-# No tuning knobs (rev 9) — MIN_TOKENS, SEARCH_LIMIT and TIMEOUT_MS are consts
-# in guard.ts, search.ts and stats.ts. Promote one only when someone needs to
-# change it at runtime.
-
+# Set false to treat a SEARCH reply as NO_ANSWER (no second search).
 RETRY_ENABLED=true
 PORT=3000
 
@@ -412,18 +391,12 @@ LLM_MODE=live
 
 - [ ] **Step 10: Reconcile the real `.env`**
 
-The existing `.env` carries keys removed in revs 8 and 9 (`GATE_MIN_COVERAGE`, `CLAUDE_MODEL_CHOICES`, `SN_KB_ALLOWLIST`, `GATE_MIN_TOKENS`, `SEARCH_LIMIT`) and may hold a placeholder gateway key. Unknown keys are harmless to Node's `--env-file`, but leaving them implies they still do something.
-
-```bash
-node -e "const fs=require('fs');const drop=/^\s*(GATE_MIN_COVERAGE|GATE_MIN_TOKENS|SEARCH_LIMIT|METRICS_ENABLED|METRICS_TIMEOUT_MS|CLAUDE_MODEL_CHOICES|SN_KB_ALLOWLIST|CONNECTOR)\s*=/;const keep=fs.readFileSync('.env','utf8').split(/\r?\n/).filter(l=>!drop.test(l));fs.writeFileSync('.env',keep.join('\n'));const e=Object.fromEntries(keep.filter(l=>l.includes('=')).map(l=>[l.split('=')[0].trim(),l.slice(l.indexOf('=')+1)]));console.log('ANTHROPIC_BASE_URL:',e.ANTHROPIC_BASE_URL);console.log('CLAUDE_MODEL:',e.CLAUDE_MODEL);console.log('API key looks like a Key Vault version (32 hex chars):',/^[0-9a-f]{32}$/i.test(e.ANTHROPIC_API_KEY||''))"
-```
-
-If the last line prints `true`, the Key Vault **secret version** was pasted in place of the key. Fix it with `.\tools\set-gateway-env.ps1`, which prompts without echoing.
+The existing `.env` carries three keys removed in revs 8 and 9: `GATE_MIN_TOKENS`, `GATE_MIN_COVERAGE` and `SEARCH_LIMIT`. Unknown keys are harmless to Node's `--env-file`, but leaving them implies they still do something. Delete those three lines by hand; touch nothing else in the file. Also remove the `$ModelChoices` parameter and the `CLAUDE_MODEL_CHOICES` entry from `tools/set-gateway-env.ps1` — that key was dropped with the model picker and nothing reads it.
 
 - [ ] **Step 11: Commit**
 
 ```bash
-git add package.json package-lock.json tsconfig.json .nvmrc .env.example src tests
+git add package.json package-lock.json tsconfig.json .nvmrc .env.example src tests tools/set-gateway-env.ps1
 git commit -m "feat: scaffold, validated config, masking logger and token guard"
 ```
 
@@ -432,19 +405,21 @@ git commit -m "feat: scaffold, validated config, masking logger and token guard"
 ## Task 2: ServiceNow OAuth and article search
 
 **Files:**
-- Create: `src/servicenow/types.ts`, `src/servicenow/auth.ts`, `src/servicenow/search.ts`
+- Create: `src/servicenow/types.ts`, `src/servicenow/client.ts`, `src/servicenow/search.ts`
 - Test: `tests/servicenow.test.ts`
 
 **Interfaces:**
 - Consumes: `Config` (Task 1), `log` (Task 1)
-- Produces: `Article`, `ServiceNowUnavailableError`, `makeTokenProvider(cfg, fetch)` → `{ getToken(): Promise<string> }`, `makeSearch(cfg, fetch)` → `{ search(query, limit): Promise<Article[]>, health() }`, `stripHtml(s)`, `sanitiseQuery(s)`
+- Produces: `Article`, `ServiceNowUnavailableError`, `makeSnClient(cfg, fetch)` → `SnClient = { instanceUrl, get<T>(path): Promise<T> }`, `makeSearch(client)` → `{ search(query): Promise<Article[]>, health() }`, `stripHtml(s)`, `sanitiseQuery(s)`
+
+`makeSnClient` is the only place that knows about OAuth, bearer headers, timeouts or how a ServiceNow error becomes a `ServiceNowUnavailableError`. Search (this task) and stats (Task 3) both take the client, so the process holds **one** token cache and every request has the same timeout.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 import { describe, it, expect, vi } from 'vitest'
 import { makeSearch, stripHtml, sanitiseQuery } from '../src/servicenow/search.js'
-import { makeTokenProvider } from '../src/servicenow/auth.js'
+import { makeSnClient } from '../src/servicenow/client.js'
 import { ServiceNowUnavailableError } from '../src/servicenow/types.js'
 import { parseConfig } from '../src/config.js'
 
@@ -481,53 +456,70 @@ describe('sanitiseQuery', () => {
   })
 })
 
-describe('makeTokenProvider', () => {
+/** Route the token endpoint to a token, everything else to `handler`. */
+const snFetch = (handler: (url: string) => Response | Promise<Response>) =>
+  vi.fn(async (u: unknown) =>
+    String(u).includes('oauth_token.do') ? tokenResponse() : handler(String(u)))
+
+describe('makeSnClient', () => {
   it('caches the token across calls', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(tokenResponse())
-    const p = makeTokenProvider(cfg, fetchImpl as never)
-    expect(await p.getToken()).toBe('tok-1')
-    expect(await p.getToken()).toBe('tok-1')
-    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const fetchImpl = snFetch(() => ok({ result: [] }))
+    const c = makeSnClient(cfg, fetchImpl as never)
+    await c.get('/api/now/table/x')
+    await c.get('/api/now/table/x')
+    const tokenCalls = fetchImpl.mock.calls.filter((a) => String(a[0]).includes('oauth_token.do'))
+    expect(tokenCalls).toHaveLength(1)
   })
 
   it('shares one refresh between concurrent callers', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(tokenResponse())
-    const p = makeTokenProvider(cfg, fetchImpl as never)
-    await Promise.all([p.getToken(), p.getToken(), p.getToken()])
-    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const fetchImpl = snFetch(() => ok({ result: [] }))
+    const c = makeSnClient(cfg, fetchImpl as never)
+    await Promise.all([c.get('/a'), c.get('/b'), c.get('/c')])
+    const tokenCalls = fetchImpl.mock.calls.filter((a) => String(a[0]).includes('oauth_token.do'))
+    expect(tokenCalls).toHaveLength(1)
+  })
+
+  it('sends the bearer token and a timeout signal', async () => {
+    const fetchImpl = snFetch(() => ok({}))
+    await makeSnClient(cfg, fetchImpl as never).get('/api/now/table/x')
+    const init = fetchImpl.mock.calls.at(-1)?.[1] as RequestInit
+    expect((init.headers as Record<string, string>).authorization).toBe('Bearer tok-1')
+    expect(init.signal).toBeInstanceOf(AbortSignal)
   })
 
   it('explains how to fix an expired refresh token', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response('bad grant', { status: 401 }))
-    const p = makeTokenProvider(cfg, fetchImpl as never)
-    await expect(p.getToken()).rejects.toThrow(/Connect-SnOAuth/)
+    await expect(makeSnClient(cfg, fetchImpl as never).get('/x')).rejects.toThrow(/Connect-SnOAuth/)
+  })
+
+  it('raises ServiceNowUnavailableError when the instance is down', async () => {
+    const fetchImpl = snFetch(() => { throw new TypeError('fetch failed') })
+    await expect(makeSnClient(cfg, fetchImpl as never).get('/x'))
+      .rejects.toBeInstanceOf(ServiceNowUnavailableError)
+  })
+
+  it('raises ServiceNowUnavailableError on a non-2xx body, keeping the detail', async () => {
+    const fetchImpl = snFetch(() => new Response('Invalid query', { status: 400 }))
+    await expect(makeSnClient(cfg, fetchImpl as never).get('/x')).rejects.toThrow(/400.*Invalid query/)
   })
 })
 
 describe('makeSearch', () => {
   it('queries kb_knowledge with exactly two clauses', async () => {
     let url = ''
-    const fetchImpl = vi.fn(async (u: string) => {
-      if (String(u).includes('oauth_token.do')) return tokenResponse()
-      url = String(u)
-      return ok({ result: [] })
-    })
-    await makeSearch(cfg, fetchImpl as never).search('printer offline', 5)
+    const fetchImpl = snFetch((u) => { url = u; return ok({ result: [] }) })
+    await makeSearch(makeSnClient(cfg, fetchImpl as never)).search('printer offline')
     const q = decodeURIComponent(url)
     expect(q).toContain('workflow_state=published')
     expect(q).toContain('123TEXTQUERY321=printer offline')
-    // A knowledge base filter was A/B tested and removed (D5). It must not creep back.
     expect(q).not.toContain('kb_knowledge_base')
   })
 
   it('maps records to Articles keyed on sys_id and links by sys_id', async () => {
-    const fetchImpl = vi.fn(async (u: string) => {
-      if (String(u).includes('oauth_token.do')) return tokenResponse()
-      return ok({
-        result: [{ sys_id: 'abc123', number: 'KB0010141', short_description: 'Title', text: '<p>Body</p>' }],
-      })
-    })
-    const [a] = await makeSearch(cfg, fetchImpl as never).search('q', 5)
+    const fetchImpl = snFetch(() => ok({
+      result: [{ sys_id: 'abc123', number: 'KB0010141', short_description: 'Title', text: '<p>Body</p>' }],
+    }))
+    const [a] = await makeSearch(makeSnClient(cfg, fetchImpl as never)).search('q')
     expect(a).toBeDefined()
     expect(a!.id).toBe('abc123')
     expect(a!.label).toBe('KB0010141')
@@ -535,18 +527,9 @@ describe('makeSearch', () => {
     expect(a!.url).toBe('https://sn.example.com/kb_view.do?sys_kb_id=abc123')
   })
 
-  it('raises ServiceNowUnavailableError when the instance is down', async () => {
-    const fetchImpl = vi.fn(async (u: string) => {
-      if (String(u).includes('oauth_token.do')) return tokenResponse()
-      throw new TypeError('fetch failed')
-    })
-    await expect(makeSearch(cfg, fetchImpl as never).search('q', 5))
-      .rejects.toBeInstanceOf(ServiceNowUnavailableError)
-  })
-
   it('reports health without throwing', async () => {
     const fetchImpl = vi.fn(async () => { throw new TypeError('fetch failed') })
-    const h = await makeSearch(cfg, fetchImpl as never).health()
+    const h = await makeSearch(makeSnClient(cfg, fetchImpl as never)).health()
     expect(h.ok).toBe(false)
   })
 })
@@ -584,7 +567,7 @@ export class ServiceNowUnavailableError extends Error {
 }
 ```
 
-- [ ] **Step 4: Implement `src/servicenow/auth.ts`**
+- [ ] **Step 4: Implement `src/servicenow/client.ts`**
 
 ```ts
 import type { Config } from '../config.js'
@@ -593,8 +576,16 @@ import { log } from '../log.js'
 
 /** Refresh a minute early so a token never expires mid-request. */
 const EXPIRY_SAFETY_SECONDS = 60
+/** One slow search or one pathological filter must not hang a chat turn. Not configurable. */
+const TIMEOUT_MS = 10_000
 
-export function makeTokenProvider(cfg: Config, fetchImpl: typeof fetch = fetch) {
+export interface SnClient {
+  instanceUrl: string
+  /** Authenticated GET. Throws ServiceNowUnavailableError for anything but a 2xx JSON body. */
+  get<T>(path: string): Promise<T>
+}
+
+export function makeSnClient(cfg: Config, fetchImpl: typeof fetch = fetch): SnClient {
   let token: string | null = null
   let expiresAt = 0
   let inflight: Promise<string> | null = null
@@ -640,13 +631,35 @@ export function makeTokenProvider(cfg: Config, fetchImpl: typeof fetch = fetch) 
     return token
   }
 
+  function getToken(): Promise<string> {
+    if (token && Date.now() < expiresAt) return Promise.resolve(token)
+    // Concurrent callers share one refresh rather than each firing their own.
+    if (inflight) return inflight
+    inflight = refresh().finally(() => { inflight = null })
+    return inflight
+  }
+
   return {
-    async getToken(): Promise<string> {
-      if (token && Date.now() < expiresAt) return token
-      // Concurrent callers share one refresh rather than each firing their own.
-      if (inflight) return inflight
-      inflight = refresh().finally(() => { inflight = null })
-      return inflight
+    instanceUrl: cfg.sn.instanceUrl,
+
+    async get<T>(path: string): Promise<T> {
+      const bearer = await getToken()
+      let res: Response
+      try {
+        res = await fetchImpl(`${cfg.sn.instanceUrl}${path}`, {
+          headers: { authorization: `Bearer ${bearer}`, accept: 'application/json' },
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        })
+      } catch (e) {
+        throw new ServiceNowUnavailableError(`Cannot reach ${cfg.sn.instanceUrl}.`, e)
+      }
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '')
+        throw new ServiceNowUnavailableError(
+          `ServiceNow request failed (HTTP ${res.status}). ${detail.slice(0, 200)}`,
+        )
+      }
+      return (await res.json()) as T
     },
   }
 }
@@ -655,10 +668,8 @@ export function makeTokenProvider(cfg: Config, fetchImpl: typeof fetch = fetch) 
 - [ ] **Step 5: Implement `src/servicenow/search.ts`**
 
 ```ts
-import type { Config } from '../config.js'
 import type { Article } from './types.js'
-import { ServiceNowUnavailableError } from './types.js'
-import { makeTokenProvider } from './auth.js'
+import type { SnClient } from './client.js'
 
 interface SnRecord {
   sys_id: string
@@ -688,26 +699,9 @@ export function sanitiseQuery(q: string): string {
 /** Five candidates reach the prompt. Measured at 83% recall@5; not configurable. */
 const SEARCH_LIMIT = 5
 
-export function makeSearch(cfg: Config, fetchImpl: typeof fetch = fetch) {
-  const tokens = makeTokenProvider(cfg, fetchImpl)
-
+export function makeSearch(sn: SnClient) {
   async function call(path: string): Promise<SnRecord[]> {
-    const token = await tokens.getToken()
-    let res: Response
-    try {
-      res = await fetchImpl(`${cfg.sn.instanceUrl}${path}`, {
-        headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
-      })
-    } catch (e) {
-      throw new ServiceNowUnavailableError(`Cannot reach ${cfg.sn.instanceUrl}.`, e)
-    }
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '')
-      throw new ServiceNowUnavailableError(
-        `ServiceNow search failed (HTTP ${res.status}). ${detail.slice(0, 200)}`,
-      )
-    }
-    return ((await res.json()) as { result?: SnRecord[] }).result ?? []
+    return (await sn.get<{ result?: SnRecord[] }>(path)).result ?? []
   }
 
   function buildPath(query: string, limit = SEARCH_LIMIT): string {
@@ -734,7 +728,7 @@ export function makeSearch(cfg: Config, fetchImpl: typeof fetch = fetch) {
         title: (r.short_description ?? '').trim(),
         body: stripHtml(r.text ?? ''),
         // Link by sys_id: number is not unique on this instance (D10).
-        url: `${cfg.sn.instanceUrl}/kb_view.do?sys_kb_id=${r.sys_id}`,
+        url: `${sn.instanceUrl}/kb_view.do?sys_kb_id=${r.sys_id}`,
       }))
     },
 
@@ -753,12 +747,12 @@ export function makeSearch(cfg: Config, fetchImpl: typeof fetch = fetch) {
 - [ ] **Step 6: Run to verify it passes**
 
 Run: `npx vitest run tests/servicenow.test.ts`
-Expected: PASS, 10 tests
+Expected: PASS, 13 tests
 
 - [ ] **Step 7: Verify against the live instance**
 
 ```bash
-npx tsx -e "import {loadConfig} from './src/config.js';import {makeSearch} from './src/servicenow/search.js';makeSearch(loadConfig()).search('Self-checkout lanes 1-4 down at Store #208 after image push',5).then(r=>console.log(r.map(a=>a.label+' '+a.title)))"
+npx tsx --env-file=.env -e "import {loadConfig} from './src/config.js';import {makeSnClient} from './src/servicenow/client.js';import {makeSearch} from './src/servicenow/search.js';makeSearch(makeSnClient(loadConfig())).search('Self-checkout lanes 1-4 down at Store #208 after image push').then(r=>console.log(r.map(a=>a.label+' '+a.title)))"
 ```
 
 Expected: `KB0010141 Self-checkout NCR terminal will not boot after image push` first — that is eval question `inc-01`.
@@ -779,16 +773,19 @@ git commit -m "feat: ServiceNow OAuth and live knowledge search"
 - Test: `tests/stats.test.ts`
 
 **Interfaces:**
-- Consumes: `Config`, `makeTokenProvider`, `ServiceNowUnavailableError` (Tasks 1–2)
-- Produces: `AGGREGATES`, `Aggregate`, `MetricRequest`, `MetricResult`, `isAggregate(v)`, `buildStatsPath(req)`, `buildListUrl(instanceUrl, req)`, `makeStats(cfg, fetch)` → `{ run(req): Promise<MetricResult> }`
+- Consumes: `SnClient`, `ServiceNowUnavailableError` (Tasks 1–2)
+- Produces: `AGGREGATES`, `Aggregate`, `MetricRequest`, `MetricResult`, `isAggregate(v)`, `isTableName(v)`, `buildStatsPath(req)`, `buildListUrl(instanceUrl, req)`, `makeStats(client)` → `{ run(req): Promise<MetricResult> }`
 
-This is the whole of D14's execution side. The model supplies four fields as data; everything here builds a read-only `GET`.
+This is the whole of D14's execution side. The model supplies four fields as data (plus an optional display `label`); everything here builds a read-only `GET`. The table name is interpolated into a URL path, so it is shape-checked — the one place model output touches a path.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 import { describe, it, expect, vi } from 'vitest'
-import { buildStatsPath, buildListUrl, isAggregate, makeStats } from '../src/servicenow/stats.js'
+import {
+  buildStatsPath, buildListUrl, isAggregate, isTableName, makeStats,
+} from '../src/servicenow/stats.js'
+import { makeSnClient } from '../src/servicenow/client.js'
 import { ServiceNowUnavailableError } from '../src/servicenow/types.js'
 import { parseConfig } from '../src/config.js'
 
@@ -805,6 +802,10 @@ const cfg = parseConfig({
 const ok = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
 const tokenResponse = () => ok({ access_token: 'tok-1', expires_in: 1800 })
+const snFetch = (handler: (url: string) => Response | Promise<Response>) =>
+  vi.fn(async (u: unknown) =>
+    String(u).includes('oauth_token.do') ? tokenResponse() : handler(String(u)))
+const stats = (fetchImpl: unknown) => makeStats(makeSnClient(cfg, fetchImpl as never))
 
 describe('isAggregate', () => {
   it('accepts the five permitted aggregates', () => {
@@ -814,6 +815,19 @@ describe('isAggregate', () => {
     expect(isAggregate('median')).toBe(false)
     expect(isAggregate('count; DROP')).toBe(false)
     expect(isAggregate(undefined)).toBe(false)
+  })
+})
+
+describe('isTableName', () => {
+  it('accepts plain ServiceNow table names', () => {
+    for (const t of ['incident', 'task_sla', 'sn_si_incident', 'x_ustgl_backlog_be_thing']) {
+      expect(isTableName(t)).toBe(true)
+    }
+  })
+  it('rejects anything that could escape the stats path', () => {
+    for (const t of ['../table/incident', 'incident?sysparm_x=1', 'incident/foo', 'Incident', '', undefined]) {
+      expect(isTableName(t)).toBe(false)
+    }
   })
 })
 
@@ -852,56 +866,47 @@ describe('buildListUrl', () => {
 })
 
 describe('makeStats.run', () => {
-  it('returns the count as a number, with the filter and link intact', async () => {
-    const fetchImpl = vi.fn(async (u: string) => {
-      if (String(u).includes('oauth_token.do')) return tokenResponse()
-      return ok({ result: { stats: { count: '5513' } } })
-    })
-    const r = await makeStats(cfg, fetchImpl as never)
-      .run({ table: 'incident', filter: 'active=true', aggregate: 'count' })
+  it('returns the count as a number, with the filter, label and link intact', async () => {
+    const r = await stats(snFetch(() => ok({ result: { stats: { count: '5513' } } })))
+      .run({ table: 'incident', filter: 'active=true', aggregate: 'count', label: 'open incidents' })
     expect(r.value).toBe(5513)
     expect(r.filter).toBe('active=true')
+    expect(r.label).toBe('open incidents')
     expect(r.url).toContain('incident_list.do')
   })
 
   it('keeps a duration aggregate as a string', async () => {
-    const fetchImpl = vi.fn(async (u: string) => {
-      if (String(u).includes('oauth_token.do')) return tokenResponse()
-      return ok({ result: { stats: { avg: { calendar_duration: '00:43:22' } } } })
-    })
-    const r = await makeStats(cfg, fetchImpl as never).run({
-      table: 'incident', filter: 'priority=2', aggregate: 'avg', field: 'calendar_duration',
-    })
+    const r = await stats(snFetch(() => ok({ result: { stats: { avg: { calendar_duration: '00:43:22' } } } })))
+      .run({ table: 'incident', filter: 'priority=2', aggregate: 'avg', field: 'calendar_duration' })
     expect(r.value).toBe('00:43:22')
   })
 
   it('rejects an aggregate outside the five, without calling ServiceNow', async () => {
     const fetchImpl = vi.fn()
     await expect(
-      makeStats(cfg, fetchImpl as never)
-        .run({ table: 'incident', filter: '', aggregate: 'median' as never }),
+      stats(fetchImpl).run({ table: 'incident', filter: '', aggregate: 'median' as never }),
     ).rejects.toThrow(/aggregate/)
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('raises rather than repairing a filter ServiceNow rejects', async () => {
-    const fetchImpl = vi.fn(async (u: string) => {
-      if (String(u).includes('oauth_token.do')) return tokenResponse()
-      return new Response('Invalid query', { status: 400 })
-    })
+  it('rejects a table name that is not a plain identifier, without calling ServiceNow', async () => {
+    const fetchImpl = vi.fn()
     await expect(
-      makeStats(cfg, fetchImpl as never)
+      stats(fetchImpl).run({ table: '../oauth_token.do', filter: '', aggregate: 'count' }),
+    ).rejects.toThrow(/table/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('raises rather than repairing a filter ServiceNow rejects', async () => {
+    await expect(
+      stats(snFetch(() => new Response('Invalid query', { status: 400 })))
         .run({ table: 'incident', filter: 'nonsense!!', aggregate: 'count' }),
     ).rejects.toBeInstanceOf(ServiceNowUnavailableError)
   })
 
   it('raises when the body carries no usable stats', async () => {
-    const fetchImpl = vi.fn(async (u: string) => {
-      if (String(u).includes('oauth_token.do')) return tokenResponse()
-      return ok({ result: {} })
-    })
     await expect(
-      makeStats(cfg, fetchImpl as never).run({ table: 'incident', filter: '', aggregate: 'count' }),
+      stats(snFetch(() => ok({ result: {} }))).run({ table: 'incident', filter: '', aggregate: 'count' }),
     ).rejects.toThrow(/no value/)
   })
 })
@@ -915,9 +920,7 @@ Expected: FAIL — module not found
 - [ ] **Step 3: Implement `src/servicenow/stats.ts`**
 
 ```ts
-import type { Config } from '../config.js'
-import { ServiceNowUnavailableError } from './types.js'
-import { makeTokenProvider } from './auth.js'
+import type { SnClient } from './client.js'
 
 /** The only aggregates we will execute. Anything else is a decline, never a coercion. */
 export const AGGREGATES = ['count', 'avg', 'sum', 'min', 'max'] as const
@@ -929,6 +932,8 @@ export interface MetricRequest {
   filter: string
   aggregate: Aggregate
   field?: string
+  /** Short noun phrase for the sentence around the number, e.g. "open incidents". Display only. */
+  label?: string
 }
 
 export interface MetricResult extends MetricRequest {
@@ -939,6 +944,15 @@ export interface MetricResult extends MetricRequest {
 
 export function isAggregate(v: unknown): v is Aggregate {
   return typeof v === 'string' && (AGGREGATES as readonly string[]).includes(v)
+}
+
+/**
+ * The table name is the one piece of model output that lands in a URL *path*.
+ * ServiceNow table names are lowercase identifiers; anything else could escape
+ * /api/now/stats/. This is a shape check, not an allowlist — ACLs decide access.
+ */
+export function isTableName(v: unknown): v is string {
+  return typeof v === 'string' && /^[a-z0-9_]+$/.test(v)
 }
 
 /** count uses sysparm_count; every other aggregate uses sysparm_<agg>_fields. */
@@ -958,9 +972,6 @@ export function buildStatsPath(req: MetricRequest): string {
 export function buildListUrl(instanceUrl: string, req: MetricRequest): string {
   return `${instanceUrl}/${req.table}_list.do?sysparm_query=${encodeURIComponent(req.filter)}`
 }
-
-/** One pathological filter must not hang a chat turn. Not configurable. */
-const TIMEOUT_MS = 10_000
 
 interface StatsBody {
   result?: { stats?: { count?: string } & Record<string, unknown> }
@@ -987,42 +998,25 @@ function extract(body: StatsBody, req: MetricRequest): number | string {
   return coerce(raw)
 }
 
-export function makeStats(cfg: Config, fetchImpl: typeof fetch = fetch) {
-  const tokens = makeTokenProvider(cfg, fetchImpl)
-
+export function makeStats(sn: SnClient) {
   return {
     async run(req: MetricRequest): Promise<MetricResult> {
       // Validate before spending a token refresh or a round trip.
       if (!isAggregate(req.aggregate)) {
         throw new Error(`unsupported aggregate '${String(req.aggregate)}'`)
       }
-
-      const path = buildStatsPath(req)
-      const token = await tokens.getToken()
-
-      let res: Response
-      try {
-        res = await fetchImpl(`${cfg.sn.instanceUrl}${path}`, {
-          headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
-          // One pathological filter must not hang a chat turn.
-          signal: AbortSignal.timeout(TIMEOUT_MS),
-        })
-      } catch (e) {
-        throw new ServiceNowUnavailableError(`Aggregate query failed against ${req.table}.`, e)
+      if (!isTableName(req.table)) {
+        throw new Error(`table name '${String(req.table)}' is not a plain identifier`)
       }
 
-      if (!res.ok) {
-        const detail = await res.text().catch(() => '')
-        // Deliberately no repair attempt: a second guess is a second chance to be wrong.
-        throw new ServiceNowUnavailableError(
-          `ServiceNow rejected the aggregate query (HTTP ${res.status}). ${detail.slice(0, 200)}`,
-        )
-      }
+      // The client rejects a non-2xx as ServiceNowUnavailableError. Deliberately no
+      // repair attempt here: a second guess at a query is a second chance to be wrong.
+      const body = await sn.get<StatsBody>(buildStatsPath(req))
 
       return {
         ...req,
-        value: extract((await res.json()) as StatsBody, req),
-        url: buildListUrl(cfg.sn.instanceUrl, req),
+        value: extract(body, req),
+        url: buildListUrl(sn.instanceUrl, req),
       }
     },
   }
@@ -1032,12 +1026,12 @@ export function makeStats(cfg: Config, fetchImpl: typeof fetch = fetch) {
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run tests/stats.test.ts`
-Expected: PASS, 12 tests
+Expected: PASS, 15 tests
 
 - [ ] **Step 5: Verify against the live instance**
 
 ```bash
-npx tsx -e "import {loadConfig} from './src/config.js';import {makeStats} from './src/servicenow/stats.js';const s=makeStats(loadConfig());Promise.all([s.run({table:'incident',filter:'active=true',aggregate:'count'}),s.run({table:'incident',filter:'active=true^priority=1',aggregate:'count'}),s.run({table:'task_sla',filter:'has_breached=true',aggregate:'count'})]).then(r=>r.forEach(x=>console.log(x.value,'|',x.table,x.filter)))"
+npx tsx --env-file=.env -e "import {loadConfig} from './src/config.js';import {makeSnClient} from './src/servicenow/client.js';import {makeStats} from './src/servicenow/stats.js';const s=makeStats(makeSnClient(loadConfig()));Promise.all([s.run({table:'incident',filter:'active=true',aggregate:'count'}),s.run({table:'incident',filter:'active=true^priority=1',aggregate:'count'}),s.run({table:'task_sla',filter:'has_breached=true',aggregate:'count'})]).then(r=>r.forEach(x=>console.log(x.value,'|',x.table,x.filter)))"
 ```
 
 Expected, matching the spec §8b measurements (numbers drift as tickets are raised — the shape is what matters):
@@ -1096,9 +1090,9 @@ describe('parseReply', () => {
     if (r.kind === 'answer') expect(r.text).toBe('Reset it from the portal [1].')
   })
 
-  it('reads a METRIC into a request', () => {
+  it('reads a METRIC into a request, keeping the display label', () => {
     const r = parseReply(
-      'METRIC\n{"table":"incident","filter":"active=true","aggregate":"count"}',
+      'METRIC\n{"table":"incident","filter":"active=true","aggregate":"count","label":"open incidents"}',
       'how many open incidents',
     )
     expect(r.kind).toBe('metric')
@@ -1106,7 +1100,14 @@ describe('parseReply', () => {
       expect(r.request.table).toBe('incident')
       expect(r.request.filter).toBe('active=true')
       expect(r.request.aggregate).toBe('count')
+      expect(r.request.label).toBe('open incidents')
     }
+  })
+
+  it('accepts a METRIC without a label', () => {
+    const r = parseReply('METRIC\n{"table":"incident","filter":"","aggregate":"count"}', 'q')
+    expect(r.kind).toBe('metric')
+    if (r.kind === 'metric') expect(r.request.label).toBeUndefined()
   })
 
   it('declines a METRIC whose aggregate is not permitted', () => {
@@ -1219,7 +1220,7 @@ ANSWER
 <your answer, grounded ONLY in the CONTEXT articles, citing each claim with the bracketed label it came from, like [1] or [2]. Cite only labels present in CONTEXT. Be concise; prefer numbered steps when the article gives steps.>
 
 METRIC
-{"table":"<table>","filter":"<encoded query>","aggregate":"count|avg|sum|min|max","field":"<field, omit for count>"}
+{"table":"<table>","filter":"<encoded query>","aggregate":"count|avg|sum|min|max","field":"<field, omit for count>","label":"<2-5 word noun phrase that reads after the number, e.g. open P1 incidents>"}
 
 SEARCH
 <better keywords, nothing else — use the vocabulary a knowledge base would use. Only when the question is reasonable but the CONTEXT articles clearly do not match it.>
@@ -1300,6 +1301,7 @@ export function parseReply(raw: string, originalQuery: string): Reply {
         filter: typeof o.filter === 'string' ? o.filter.trim() : '',
         aggregate: o.aggregate,
         ...(o.field ? { field: o.field.trim() } : {}),
+        ...(typeof o.label === 'string' && o.label.trim() ? { label: o.label.trim() } : {}),
       },
     }
   }
@@ -1336,7 +1338,7 @@ export function makeStubLlm() {
       if (/how many|count of/i.test(opts.question)) {
         return {
           kind: 'metric',
-          request: { table: 'incident', filter: 'active=true', aggregate: 'count' },
+          request: { table: 'incident', filter: 'active=true', aggregate: 'count', label: 'open incidents' },
         }
       }
 
@@ -1411,12 +1413,12 @@ export function makeLlm(cfg: Config) {
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run tests/llm.test.ts`
-Expected: PASS, 17 tests
+Expected: PASS, 18 tests
 
 - [ ] **Step 5: Verify preflight against the live gateway** — ⏸ **BLOCKED until the Key Vault secret is available**
 
 ```bash
-npx tsx -e "import {loadConfig} from './src/config.js';import {makeLlm} from './src/llm/client.js';makeLlm(loadConfig()).preflight().then(()=>console.log('preflight ok')).catch(e=>{console.error(e.message);process.exit(1)})"
+npx tsx --env-file=.env -e "import {loadConfig} from './src/config.js';import {makeLlm} from './src/llm/client.js';makeLlm(loadConfig()).preflight().then(()=>console.log('preflight ok')).catch(e=>{console.error(e.message);process.exit(1)})"
 ```
 
 Expected: `preflight ok`. A failure names the model id and the masked key — treat a wrong model id as the most likely cause.
@@ -1534,9 +1536,9 @@ describe('POST /api/chat', () => {
     expect((r.body.sources as unknown[]).length).toBe(1)
   })
 
-  it('runs a metric and returns the value, filter and link', async () => {
+  it('runs a metric and returns a sentence, the value, filter and link', async () => {
     const run = vi.fn(async () => ({
-      table: 'incident', filter: 'active=true', aggregate: 'count' as const,
+      table: 'incident', filter: 'active=true', aggregate: 'count' as const, label: 'open incidents',
       value: 5513, url: 'https://sn.example.com/incident_list.do?sysparm_query=active%3Dtrue',
     }))
     const app = makeApp({
@@ -1545,15 +1547,34 @@ describe('POST /api/chat', () => {
       stats: { run },
       llm: fakeLlm(() => ({
         kind: 'metric',
-        request: { table: 'incident', filter: 'active=true', aggregate: 'count' },
+        request: { table: 'incident', filter: 'active=true', aggregate: 'count', label: 'open incidents' },
       })),
     })
     const r = await post(app, { message: 'how many open incidents are there' })
     expect(r.body.kind).toBe('metric')
+    expect(r.body.answer).toBe('5,513 open incidents')
     const m = r.body.metric as Record<string, unknown>
     expect(m.value).toBe(5513)
     expect(m.filter).toBe('active=true')
     expect(String(m.url)).toContain('incident_list.do')
+  })
+
+  it('remembers a metric turn so a follow-up has context', async () => {
+    const decide = vi.fn()
+      .mockResolvedValueOnce({
+        kind: 'metric',
+        request: { table: 'incident', filter: 'active=true', aggregate: 'count', label: 'open incidents' },
+      })
+      .mockResolvedValueOnce({ kind: 'no_answer' })
+    const run = vi.fn(async () => ({
+      table: 'incident', filter: 'active=true', aggregate: 'count' as const, value: 5513, url: 'u',
+    }))
+    const app = makeApp({ cfg, sn: okSn(), stats: { run }, llm: { preflight: async () => {}, decide } })
+    await post(app, { message: 'how many open incidents are there', conversationId: 'c1' })
+    await post(app, { message: 'and how many of those are P1', conversationId: 'c1' })
+    const second = decide.mock.calls[1]?.[0] as { history: { role: string; content: string }[] }
+    expect(second.history).toHaveLength(2)
+    expect(second.history[1]?.content).toContain('active=true')
   })
 
   it('declines when the aggregate query fails, and does not retry it', async () => {
@@ -1672,6 +1693,7 @@ import { dirname, join } from 'node:path'
 import { loadConfig, type Config } from './config.js'
 import type { Article } from './servicenow/types.js'
 import { ServiceNowUnavailableError } from './servicenow/types.js'
+import { makeSnClient } from './servicenow/client.js'
 import { makeSearch } from './servicenow/search.js'
 import { makeStats, type MetricRequest, type MetricResult } from './servicenow/stats.js'
 import { hasEnoughTokens } from './guard.js'
@@ -1701,10 +1723,25 @@ interface Llm {
   decide(o: { question: string; articles: Article[]; history: Turn[] }): Promise<Reply>
 }
 
+/** "5,513 open incidents" — or just the value when the model gave no label. */
+function metricSentence(m: MetricResult): string {
+  const value = typeof m.value === 'number' ? m.value.toLocaleString('en-US') : m.value
+  return m.label ? `${value} ${m.label}` : String(value)
+}
+
 export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
   const { cfg, sn, stats, llm } = deps
+  // ponytail: grows one entry per conversationId for the process lifetime. Fine for a
+  // proof on one laptop; add eviction when this runs as a shared service.
   const conversations = new Map<string, Turn[]>()
   const app = express()
+
+  function remember(conversationId: string, history: Turn[], question: string, answer: string) {
+    conversations.set(
+      conversationId,
+      [...history, { role: 'user', content: question }, { role: 'assistant', content: answer }].slice(-12),
+    )
+  }
 
   app.use(express.json({ limit: '64kb' }))
 
@@ -1803,8 +1840,12 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
           retried, ms: Date.now() - started,
         })
 
+        const answer = metricSentence(result)
+        // The filter goes into history too, so "and how many of those are P1?" can build on it.
+        remember(conversationId, history, message, `${answer} (${result.table} · ${result.filter || 'no filter'})`)
+
         return res.json({
-          answer: `${result.value}`,
+          answer,
           kind: 'metric',
           sources: [],
           metric: result,
@@ -1819,13 +1860,7 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
       const { sources, fabricated } = verifyCitations(parseCitations(reply.text), articles)
       if (fabricated.length) log('chat.fabricated_citation', { q: message, labels: fabricated })
 
-      conversations.set(
-        conversationId,
-        [...history,
-          { role: 'user' as const, content: message },
-          { role: 'assistant' as const, content: reply.text },
-        ].slice(-12),
-      )
+      remember(conversationId, history, message, reply.text)
 
       log('chat', {
         q: message, rewritten, candidates: articles.map((a) => a.label), gate: 'answered',
@@ -1865,8 +1900,9 @@ async function main() {
   const llm = makeLlm(cfg)
   await llm.preflight() // fails the boot on a bad model id or key (no-op in stub mode)
 
-  const sn = makeSearch(cfg)
-  const stats = makeStats(cfg)
+  const client = makeSnClient(cfg) // one token cache, one timeout, shared by search and stats
+  const sn = makeSearch(client)
+  const stats = makeStats(client)
   const health = await sn.health()
   if (!health.ok) throw new Error(`ServiceNow is not reachable: ${health.detail}`)
   log('servicenow.ok', { detail: health.detail })
@@ -1889,7 +1925,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run tests/server.test.ts`
-Expected: PASS, 11 tests
+Expected: PASS, 12 tests
 
 - [ ] **Step 5: Commit**
 
@@ -2096,7 +2132,7 @@ npm run dev
 Open `http://localhost:3000` and check four states:
 
 1. `Self-checkout lanes 1-4 down at Store #208 after image push` → an answer with a linked source; the link opens KB0010141 in abhrademo4. **In stub mode the prose is canned, but the article, the citation and the link are all real** — which is what this step verifies
-2. `how many open incidents are there` → **a large number in big type**, with `incident · count` and the filter `active=true` beneath it, and a link that opens exactly those records. In stub mode the query is a fixture, but the number and the link are live
+2. `how many open incidents are there` → **"5,513 open incidents" in big type** (the number will have drifted), with `incident · count` and the filter `active=true` beneath it, and a link that opens exactly those records. In stub mode the query is a fixture, but the number and the link are live
 3. `Hi Team,` → "No knowledge base match — not answered"
 4. `what is the capital of France` → the same decline
 
@@ -2113,7 +2149,7 @@ git commit -m "feat: chat UI rendering article sources and metric filters"
 
 **Files:**
 - Create: `tools/eval.ts`, `tests/fixtures/metric-eval.json`
-- Modify: nothing
+- Modify: `tests/fixtures/retrieval-eval.json` — its `_meta.purpose` still says "Calibrate RETRIEVAL_MIN_SCORE"; change it to "Retrieval regression test: recall@k over live ServiceNow search." Nothing else in the fixture changes
 
 **Interfaces:**
 - Consumes: everything
@@ -2127,6 +2163,7 @@ parsing and summary formatting; two files would duplicate roughly forty lines to
 ```ts
 import { readFileSync } from 'node:fs'
 import { loadConfig } from '../src/config.js'
+import { makeSnClient } from '../src/servicenow/client.js'
 import { makeSearch } from '../src/servicenow/search.js'
 import { makeStats } from '../src/servicenow/stats.js'
 import { hasEnoughTokens } from '../src/guard.js'
@@ -2144,7 +2181,8 @@ interface EvalQ {
 const BASELINE_AT1 = 26
 
 const cfg = loadConfig()
-const sn = makeSearch(cfg)
+const client = makeSnClient(cfg)
+const sn = makeSearch(client)
 const data = JSON.parse(readFileSync('tests/fixtures/retrieval-eval.json', 'utf8')) as {
   inScope: EvalQ[]
   outOfScope: EvalQ[]
@@ -2185,7 +2223,7 @@ const clauses = (f: string) =>
 
 /** --metrics: does the model compose a query that runs, against the right table? */
 async function runMetrics(): Promise<void> {
-  const stats = makeStats(cfg)
+  const stats = makeStats(client)
   const data = JSON.parse(readFileSync('tests/fixtures/metric-eval.json', 'utf8')) as {
     shouldAnswer: {
       id: string; question: string; table: string
@@ -2404,8 +2442,8 @@ npm run eval -- --metrics       # ⏸ BLOCKED until the gateway key is available
 
 - [ ] **Step 4: Run the full suite and a type check**
 
-Run: `npx vitest run && npx tsc --noEmit`
-Expected: all tests PASS, no type errors.
+Run: `npm test && npm run typecheck`
+Expected: all tests PASS, no type errors — the type check covers `tests/` too, so a test calling a function with the wrong shape fails here.
 
 - [ ] **Step 5: Walk the acceptance criteria (spec §16)**
 
@@ -2416,18 +2454,18 @@ Expected: all tests PASS, no type errors.
 - [ ] 5. ⏸ *needs the key* — `what is the capital of France` gives `model_declined` with no second search
 - [ ] 6. ⏸ *needs the key* — `new joiner starts on monday` is **answered correctly**, `retried: true`, rewritten query in the logs
 - [ ] 7. ⏸ *needs the key* — no question ever logs two retries
-- [ ] 8. **`how many open incidents are there` returns a number, the filter `active=true`, and a link whose record count equals the number.** This is the acceptance test for the metrics path
+- [ ] 8. **`how many open incidents are there` returns "N open incidents", the filter `active=true`, and a link whose record count equals N.** This is the acceptance test for the metrics path
 - [ ] 9. `how many incidents are on hold` returns 1, matching the QBR On-Hold tile
 - [ ] 10. ⏸ *needs the key* — `what is our uptime` is declined, not answered from an approximate metric
-- [ ] 11. Article behaviour matches revision 5 — verified by running the `nowops-chat` repo and comparing, not by a flag
-- [ ] 12. `npm run eval` recall is unchanged from the revision 5 baseline (26/35 @1, 29/35 @5)
-- [ ] 13. Temporarily set `SN_INSTANCE_URL=https://invalid.example.com` and confirm "cannot reach the knowledge base", **not** "no match". Restore afterwards
-- [ ] 14. No secrets in captured logs — search them for `sk-` and for the client id
+- [ ] 11. `npm run eval` recall is unchanged from the revision 5 baseline (26/35 @1, 29/35 @5). This is the article-regression check; there is no other repository to compare against
+- [ ] 12. Temporarily set `SN_INSTANCE_URL=https://invalid.example.com` and confirm "cannot reach the knowledge base", **not** "no match". Restore afterwards
+- [ ] 13. No secrets in captured logs — search them for `sk-` and for the client id
+- [ ] 14. A metric reply naming a table such as `../oauth_token.do` (forced in a test) is declined before any request leaves the process
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tools tests/fixtures/metric-eval.json
+git add tools tests/fixtures
 git commit -m "feat: article and metric evals with acceptance walkthrough"
 ```
 
@@ -2439,7 +2477,7 @@ git commit -m "feat: article and metric evals with acceptance walkthrough"
 - **Gateway model ids are renamed by LiteLLM** — yours is `claude-opus-4-8-Codon`. A wrong id fails at *runtime with a plausible answer*, not at startup, which is why preflight exists. Never hardcode a public Anthropic id as a fallback.
 - **The API key is the Key Vault secret's VALUE**, not its name and not its version. A 32-character hex string is a version identifier.
 - **`123TEXTQUERY321` needs sanitising.** A `^` or `=` in the user's question breaks `sysparm_query` and produces confusing results rather than an error.
-- **The metric filter is NOT sanitised** — it is a `sysparm_query` by design and `^` is its clause separator. It goes through `URLSearchParams`, never string concatenation, and never through `sanitiseQuery`.
+- **The metric filter is NOT sanitised** — it is a `sysparm_query` by design and `^` is its clause separator. It goes through `URLSearchParams`, never string concatenation, and never through `sanitiseQuery`. **The table name IS shape-checked**, because it is the one model-supplied value that lands in a URL path.
 - **"Closed" is two states.** `state=6` is Resolved and `state=7` is Closed. A query using only one silently undercounts, and the number looks perfectly reasonable. This is the single likeliest wrong answer the system will produce.
 - **ServiceNow returns aggregates as strings**, and durations as `HH:MM:SS`. `Number('00:43:22')` is `NaN` — hence the `coerce` helper.
 - **The token guard runs before searching.** Do not "simplify" by searching first — greeting-shaped noise should never reach the instance or the model.
