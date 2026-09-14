@@ -1,6 +1,6 @@
 # NowOps Chatbot V2 — Design Spec
 
-- **Date:** 2026-09-14 (revision 8 — coverage floor and model picker removed; triage merged into the single call)
+- **Date:** 2026-09-14 (revision 9 — over-engineering audit: dotenv, four config knobs and the second eval script removed)
 - **Status:** Pending approval
 - **Owner:** Sachin Chavan (UST)
 - **Supersedes:** revision 5, which remains buildable in the `nowops-chat` repository
@@ -74,8 +74,8 @@ failures are cheap to diagnose.
   or — for a metric — the report name, **the filter that produced the number**, and a
   deep link to the matching record list
 - Health endpoint
-- Two eval scripts (`npm run eval`, `npm run eval:metrics`) reporting retrieval recall
-  and metric-selection accuracy respectively
+- One eval script — `npm run eval` for article recall, `npm run eval -- --metrics` for
+  composed-query correctness
 
 ### Out of scope
 
@@ -243,8 +243,9 @@ safe:
   the deep link resolves the argument.
 
 Steps 6–7 are the measured +15-point improvement (D13), unchanged from revision 5;
-`RETRY_ENABLED=false` restores the pre-retry behaviour exactly. `METRICS_ENABLED=false`
-likewise reduces V2 to revision 5's behaviour, which is how the two are compared.
+`RETRY_ENABLED=false` restores the pre-retry behaviour exactly. Comparing V2's article
+answering against revision 5 is done by running the `nowops-chat` repository, not by a
+flag (section 7).
 
 ---
 
@@ -293,8 +294,7 @@ nowops-chat/
 │   │   └── client.ts      gateway client; one prompt; parse reply; citation checks
 │   └── server.ts          Express, /api/chat, /api/health, boot
 ├── tools/
-│   ├── eval.ts            npm run eval — recall@k over the 45 questions
-│   └── eval-metrics.ts    npm run eval:metrics — composed-query correctness  [V2]
+│   └── eval.ts            npm run eval — recall@k; --metrics for composed queries
 ├── public/
 │   ├── index.html
 │   ├── app.js
@@ -323,7 +323,7 @@ a record type, not an interface anything implements.
 default with no activation step. `.nvmrc` pins the Node version; `package-lock.json` pins
 dependencies exactly.
 
-Dependencies stay thin: `express`, `@anthropic-ai/sdk`, `dotenv`, `zod`; dev-only
+Dependencies stay thin — **three** runtime: `express`, `@anthropic-ai/sdk`, `zod`; dev-only
 `typescript`, `tsx`, `vitest`.
 
 ---
@@ -343,15 +343,26 @@ SN_CLIENT_SECRET
 SN_REFRESH_TOKEN         exported from the existing connection via Export-SnEnvFile
 (no knowledge base filter — see D5)
 
-# Relevance gate
-GATE_MIN_TOKENS          default 2
-SEARCH_LIMIT             default 5
+# Behaviour
 RETRY_ENABLED            default true — set false to treat SEARCH as NO_ANSWER
 
-# Metrics (V2)
-METRICS_ENABLED          default true — set false to reduce V2 to revision 5 exactly
-METRICS_TIMEOUT_MS       default 10000 — a pathological filter must not hang a chat turn
+# Optional
+PORT                     default 3000
+LLM_MODE                 live | stub — stub only while the gateway key is unavailable
 ```
+
+`.env` is loaded by Node itself (`--env-file`), not by a library.
+
+**Everything else is a constant in the file that uses it**, not configuration:
+`MIN_TOKENS = 2` in `guard.ts`, `SEARCH_LIMIT = 5` in `search.ts`, `TIMEOUT_MS = 10_000` in
+`stats.ts`. Nobody retunes these, and a knob nobody turns is a knob that has to be
+documented, validated, tested and kept consistent. `RETRY_ENABLED` survives because the
+plan has a real path where it gets set to false — if the measured retry gain does not hold,
+that is the switch.
+
+There is no `METRICS_ENABLED`. Comparing V2 against revision 5 means running revision 5,
+which is a complete repository sitting alongside this one — a flag can drift from what it
+claims to reproduce, a separate checkout cannot.
 
 Gateway base URL and model IDs are **inputs supplied at implementation time**, not open
 design questions.
@@ -421,7 +432,6 @@ Claude returns a small structured object, or declines:
   filter: string      // a ServiceNow encoded query, e.g. 'active=true^priority=1'
   aggregate: 'count' | 'avg' | 'sum' | 'min' | 'max'
   field?: string      // required for everything except count
-  phrasing: string    // one sentence naming what is being counted
 }
 ```
 
@@ -572,7 +582,7 @@ remains and it appears in the article. Short queries saturate the metric.
 
 ### The two-layer gate (D11)
 
-1. **Token-count guard** — fewer than `GATE_MIN_TOKENS` (2) meaningful terms → decline
+1. **Token-count guard** — fewer than `MIN_TOKENS` (2) meaningful terms → decline
    immediately, without searching and without a model call. Eliminates `"Hi Team,"` and
    `"nan"` for free. (`"Bky OLO"` is two tokens, exactly at the floor, and falls through
    to layer 2.)
@@ -759,7 +769,7 @@ Principle: **fail loudly at boot, degrade gracefully at runtime.**
 | Model returns a malformed filter | ServiceNow rejects it; decline with `metric_unavailable`. **No repair attempt** — a second guess at a query is a second chance to be confidently wrong |
 | Model names a table that does not exist or is not readable | ServiceNow returns an error; same decline. The OAuth user's ACLs are the access boundary |
 | Aggregate returns a non-numeric or empty body | Decline. Never render a partial or guessed number |
-| Query exceeds `METRICS_TIMEOUT_MS` | Abort and decline, so one pathological filter cannot hang a chat turn |
+| Query exceeds `TIMEOUT_MS` (10s, `stats.ts`) | Abort and decline, so one pathological filter cannot hang a chat turn |
 
 With live search (D2) the availability of abhrademo4 is now on the **request** path rather
 than the startup path. That is the main cost of this design, and the row above is how it is
@@ -796,7 +806,7 @@ network.
 | Unit | Tokeniser, coverage scoring, token guard, gate decision, citation verification, triage-response parsing, aggregate URL construction, aggregate whitelisting, metric formatting, deep-link building |
 | Retrieval eval | `npm run eval` — the 45-question set, search only, **deterministic** |
 | Retry eval | `npm run eval -- --with-retry` — same set through the full D13 path, using Claude |
-| **Metric eval** | `npm run eval:metrics` — question set measuring *query correctness*: did the composed query execute, and did it match the expected filter? |
+| **Metric eval** | `npm run eval -- --metrics` — question set measuring *query correctness*: did the composed query execute, and did it match the expected filter? |
 | Integration | Routes against stubbed search and a stubbed gateway, so CI needs no live credentials |
 | Live smoke | Manual: `/api/health` plus a handful of real questions |
 
@@ -856,12 +866,14 @@ V2 adds:
     must not be answered from an approximate metric that does.
 14. *"How do I reset my SAP password?"* still routes to the article path with
     `kind: 'article'`. Adding metrics must not cannibalise article answering — run the full
-    45-question eval with `METRICS_ENABLED=true` and confirm recall is unchanged.
-15. With `METRICS_ENABLED=false`, behaviour is identical to revision 5 in every respect.
+    45-question eval and confirm recall matches the revision 5 baseline.
+15. Article behaviour matches revision 5. Verified by **running the `nowops-chat`
+    repository** and comparing, not by a feature flag — a flag can drift from what it
+    claims to reproduce.
 16. A deliberately malformed filter (forced in a test) produces a decline, never a repair
     attempt and never a partial number.
-17. `npm run eval:metrics` reports execution rate and filter accuracy, and declines every
-    question that should be declined.
+17. `npm run eval -- --metrics` reports execution rate and filter accuracy, and declines
+    every question that should be declined.
 
 ---
 

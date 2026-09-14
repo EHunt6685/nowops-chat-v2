@@ -6,16 +6,18 @@
 
 **Architecture:** Nine source files. `servicenow/` searches articles and runs aggregates, `llm/` asks Claude once and interprets its reply, `server.ts` wires it to a static HTML page. No database, no index, no embeddings, no catalogue, no abstraction layers — ServiceNow is the only platform and the code says so directly.
 
-**Tech Stack:** Node 22+ (dev machine runs v24.18.0), TypeScript (ESM, `NodeNext`), Express 5, `@anthropic-ai/sdk`, `zod`, `dotenv`; dev-only `tsx`, `vitest`, `typescript`, `@types/*`.
+**Tech Stack:** Node 22+ (dev machine runs v24.18.0), TypeScript (ESM, `NodeNext`), Express 5, `@anthropic-ai/sdk`, `zod`; dev-only `tsx`, `vitest`, `typescript`, `@types/*`. `.env` is loaded by Node's own `--env-file`, not by a library.
 
-**Spec:** [docs/superpowers/specs/2026-09-13-nowops-chatbot-design.md](../specs/2026-09-13-nowops-chatbot-design.md) (revision 8)
+**Spec:** [docs/superpowers/specs/2026-09-13-nowops-chatbot-design.md](../specs/2026-09-13-nowops-chatbot-design.md) (revision 9)
 
 ## Global Constraints
 
 Every task's requirements implicitly include this section.
 
 - **Node 22 LTS floor.** `.nvmrc` pins `22`; `package.json` sets `"engines": { "node": ">=22" }`.
-- **Runtime dependencies are exactly four:** `express`, `@anthropic-ai/sdk`, `dotenv`, `zod`. Dev-only: `typescript`, `tsx`, `vitest`, `@types/node`, `@types/express`. **Adding any other dependency is a plan violation** — raise it rather than installing it.
+- **Runtime dependencies are exactly three:** `express`, `@anthropic-ai/sdk`, `zod`. Dev-only: `typescript`, `tsx`, `vitest`, `@types/node`, `@types/express`. **Adding any other dependency is a plan violation** — raise it rather than installing it. In particular **not `dotenv`**: Node 20.6+ reads `.env` itself via `--env-file`, so every script passes that flag.
+- **Only two things are configurable:** `RETRY_ENABLED` and `LLM_MODE`, plus credentials and `PORT`. Everything else is a `const` in the file that uses it — `MIN_TOKENS` in `guard.ts`, `SEARCH_LIMIT` in `search.ts`, `TIMEOUT_MS` in `stats.ts`. Do not promote a constant to an env var without someone actually needing to change it at runtime.
+- **There is no `METRICS_ENABLED`.** Comparing article behaviour against revision 5 means running the `nowops-chat` repository, which is a complete checkout on the same machine. A flag can drift from what it claims to reproduce.
 - **ServiceNow is the only platform.** No connector interface, no platform selector, no fake connector module, no "pluggable" indirection (D12).
 - **`Article.id` (ServiceNow `sys_id`) is the identity key everywhere** (D10). Article `number` is **not unique** on abhrademo4 — `KB0010004` maps to four different articles. `number` is a display label only. Links use `kb_view.do?sys_kb_id=<sys_id>`.
 - **The model cites bracketed labels `[1]`–`[5]`, never KB numbers** (D10). The server maps labels back to `sys_id`.
@@ -46,7 +48,7 @@ The UST gateway key lives in Azure Key Vault (`ustdev-az-is-ai-app-kv`, secret `
 | Task 4 | All unit tests pass. Only the live preflight waits |
 | Task 5 | All tests pass — they use a fake Claude |
 | Task 6 | Runs under `LLM_MODE=stub`, **including the metric path** |
-| Task 7 | `npm run eval` works. `--with-retry` and `eval:metrics` wait |
+| Task 7 | `npm run eval` works. `--with-retry` and `--metrics` wait |
 
 Set these in `.env` to build now:
 
@@ -61,13 +63,13 @@ CLAUDE_MODEL=claude-opus-4-8-Codon
 
 **Stub mode is deliberately conspicuous**: a console warning at boot, a `llm.STUB_MODE` log line on every answer, an amber health pill in the UI, and answers prefixed `[STUB — no live model]`. The stub returns a fixed `METRIC` reply for questions containing "how many", so the aggregate path can be exercised end-to-end with real numbers before the key arrives. That is a fixture, not intelligence.
 
-When the key arrives: run `.\tools\set-gateway-env.ps1`, set `LLM_MODE=live`, then do Task 4 step 5, Task 7 step 3 and Task 7 step 4. Nothing else changes.
+When the key arrives: run `.\tools\set-gateway-env.ps1`, set `LLM_MODE=live`, then do Task 4 step 5 and Task 7 step 3. Nothing else changes.
 
 ---
 
 ## File Structure
 
-Nine source files, three static assets, two tools.
+Nine source files, three static assets, one tool.
 
 | File | Responsibility |
 |---|---|
@@ -81,8 +83,7 @@ Nine source files, three static assets, two tools.
 | `src/llm/client.ts` | Gateway client, preflight, one prompt, reply parsing, citation checks |
 | `src/server.ts` | Express app, `/api/chat`, `/api/health`, boot |
 | `public/index.html`, `app.js`, `styles.css` | Chat UI with the source line |
-| `tools/eval.ts` | `npm run eval` — recall@k over the 45 article questions |
-| `tools/eval-metrics.ts` | `npm run eval:metrics` — composed-query correctness |
+| `tools/eval.ts` | `npm run eval` — recall@k; `--with-retry` and `--metrics` modes |
 
 `guard.ts` is one file of ~30 pure lines. The LLM client is one file: the prompt, the call and the reply parsing belong to the same job. `server.ts` holds the routes and the boot sequence because there is one route worth the name.
 
@@ -103,13 +104,12 @@ Nine source files, three static assets, two tools.
 ```bash
 npm init -y
 npm pkg set type=module engines.node=">=22"
-npm pkg set scripts.dev="tsx watch src/server.ts"
+npm pkg set scripts.dev="tsx watch --env-file=.env src/server.ts"
 npm pkg set scripts.build="tsc"
-npm pkg set scripts.start="node dist/server.js"
+npm pkg set scripts.start="node --env-file=.env dist/server.js"
 npm pkg set scripts.test="vitest run"
-npm pkg set scripts.eval="tsx tools/eval.ts"
-npm pkg set scripts["eval:metrics"]="tsx tools/eval-metrics.ts"
-npm i express @anthropic-ai/sdk dotenv zod
+npm pkg set scripts.eval="tsx --env-file=.env tools/eval.ts"
+npm i express @anthropic-ai/sdk zod
 npm i -D typescript tsx vitest @types/node @types/express
 node -e "require('fs').writeFileSync('.nvmrc','22\n')"
 ```
@@ -160,11 +160,7 @@ describe('parseConfig', () => {
   it('applies documented defaults', () => {
     const c = parseConfig(valid)
     expect(c.port).toBe(3000)
-    expect(c.gateMinTokens).toBe(2)
-    expect(c.searchLimit).toBe(5)
     expect(c.retryEnabled).toBe(true)
-    expect(c.metricsEnabled).toBe(true)
-    expect(c.metricsTimeoutMs).toBe(10000)
     expect(c.llmMode).toBe('live')
   })
 
@@ -182,16 +178,21 @@ describe('parseConfig', () => {
     expect(() => parseConfig({})).toThrow(/ANTHROPIC_API_KEY.*SN_REFRESH_TOKEN|SN_REFRESH_TOKEN/s)
   })
 
-  it('rejects a non-numeric SEARCH_LIMIT', () => {
-    expect(() => parseConfig({ ...valid, SEARCH_LIMIT: 'five' })).toThrow(/SEARCH_LIMIT/)
+  it('rejects a non-numeric PORT', () => {
+    expect(() => parseConfig({ ...valid, PORT: 'eighty' })).toThrow(/PORT/)
   })
 
   it('rejects an unknown LLM_MODE', () => {
     expect(() => parseConfig({ ...valid, LLM_MODE: 'demo' })).toThrow(/LLM_MODE/)
   })
 
-  it('has no coverage threshold — removed in rev 8', () => {
-    expect(parseConfig(valid)).not.toHaveProperty('gateMinCoverage')
+  it('exposes no tuning knobs beyond retry and mode', () => {
+    // rev 8 removed the coverage floor; rev 9 demoted the rest to constants.
+    // A knob nobody turns still has to be documented, validated and kept consistent.
+    const c = parseConfig(valid) as Record<string, unknown>
+    for (const dead of ['gateMinCoverage', 'gateMinTokens', 'searchLimit', 'metricsEnabled', 'metricsTimeoutMs']) {
+      expect(c).not.toHaveProperty(dead)
+    }
   })
 })
 
@@ -227,18 +228,18 @@ describe('tokenise', () => {
 
 describe('hasEnoughTokens', () => {
   it('rejects greeting noise before any network call', () => {
-    expect(hasEnoughTokens('Hi Team,', 2)).toBe(false)
-    expect(hasEnoughTokens('nan', 2)).toBe(false)
+    expect(hasEnoughTokens('Hi Team,')).toBe(false)
+    expect(hasEnoughTokens('nan')).toBe(false)
   })
 
   it('lets a two-token fragment through to Claude', () => {
     // 'Bky OLO' is two 3-character tokens, exactly at the floor. Layer 2 handles it —
     // the guard exists only for one-term noise.
-    expect(hasEnoughTokens('Bky OLO', 2)).toBe(true)
+    expect(hasEnoughTokens('Bky OLO')).toBe(true)
   })
 
   it('accepts a real question', () => {
-    expect(hasEnoughTokens('how many open incidents are there', 2)).toBe(true)
+    expect(hasEnoughTokens('how many open incidents are there')).toBe(true)
   })
 })
 ```
@@ -292,28 +293,29 @@ export function tokenise(s: string): string[] {
     .filter((t) => t.length > 2 && !STOPWORDS.has(t))
 }
 
+/** Two real words. Not configurable: nobody has ever wanted a different number. */
+const MIN_TOKENS = 2
+
 /**
  * Gate layer 1 (D11). Runs before any network call, so greeting-shaped noise
  * never reaches the instance or the model. This is the only free rejection
  * left — everything else costs one Claude call.
  */
-export function hasEnoughTokens(s: string, min: number): boolean {
-  return tokenise(s).length >= min
+export function hasEnoughTokens(s: string): boolean {
+  return tokenise(s).length >= MIN_TOKENS
 }
 ```
 
 - [ ] **Step 7: Implement `src/config.ts`**
 
+`.env` is read by Node itself — every script passes `--env-file=.env`, so there is no
+loader library and nothing to call before the schema runs.
+
 ```ts
 import { z } from 'zod'
-import dotenv from 'dotenv'
-
-dotenv.config()
-
-const int = (name: string) => z.string().regex(/^\d+$/, `${name} must be a whole number`)
 
 const Schema = z.object({
-  PORT: int('PORT').default('3000'),
+  PORT: z.string().regex(/^\d+$/, 'PORT must be a whole number').default('3000'),
 
   ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY is required'),
   ANTHROPIC_BASE_URL: z.string().url('ANTHROPIC_BASE_URL must be a URL'),
@@ -324,12 +326,9 @@ const Schema = z.object({
   SN_CLIENT_SECRET: z.string().min(1, 'SN_CLIENT_SECRET is required'),
   SN_REFRESH_TOKEN: z.string().min(1, 'SN_REFRESH_TOKEN is required'),
 
-  GATE_MIN_TOKENS: int('GATE_MIN_TOKENS').default('2'),
-  SEARCH_LIMIT: int('SEARCH_LIMIT').default('5'),
+  // The only two behavioural switches. Everything else is a const in the file
+  // that uses it — see MIN_TOKENS, SEARCH_LIMIT, TIMEOUT_MS.
   RETRY_ENABLED: z.enum(['true', 'false']).default('true'),
-  METRICS_ENABLED: z.enum(['true', 'false']).default('true'),
-  METRICS_TIMEOUT_MS: int('METRICS_TIMEOUT_MS').default('10000'),
-  // 'stub' lets the whole app run before the gateway key is available.
   LLM_MODE: z.enum(['live', 'stub']).default('live'),
 })
 
@@ -338,11 +337,7 @@ export interface Config {
   anthropicApiKey: string
   anthropicBaseUrl: string
   claudeModel: string
-  gateMinTokens: number
-  searchLimit: number
   retryEnabled: boolean
-  metricsEnabled: boolean
-  metricsTimeoutMs: number
   llmMode: 'live' | 'stub'
   sn: {
     instanceUrl: string
@@ -365,11 +360,7 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     // A trailing slash here produces '//v1/messages' against some gateways.
     anthropicBaseUrl: e.ANTHROPIC_BASE_URL.replace(/\/$/, ''),
     claudeModel: e.CLAUDE_MODEL,
-    gateMinTokens: Number(e.GATE_MIN_TOKENS),
-    searchLimit: Number(e.SEARCH_LIMIT),
     retryEnabled: e.RETRY_ENABLED === 'true',
-    metricsEnabled: e.METRICS_ENABLED === 'true',
-    metricsTimeoutMs: Number(e.METRICS_TIMEOUT_MS),
     llmMode: e.LLM_MODE,
     sn: {
       instanceUrl: e.SN_INSTANCE_URL.replace(/\/$/, ''),
@@ -407,12 +398,11 @@ SN_REFRESH_TOKEN=replace-me
 
 # No knowledge base filter (D5) — every published article is searched.
 # No coverage threshold (D11, rev 8) — the token guard, then Claude.
+# No tuning knobs (rev 9) — MIN_TOKENS, SEARCH_LIMIT and TIMEOUT_MS are consts
+# in guard.ts, search.ts and stats.ts. Promote one only when someone needs to
+# change it at runtime.
 
-GATE_MIN_TOKENS=2
-SEARCH_LIMIT=5
 RETRY_ENABLED=true
-METRICS_ENABLED=true
-METRICS_TIMEOUT_MS=10000
 PORT=3000
 
 # live | stub. Use stub ONLY while waiting for the gateway key — answers are
@@ -422,10 +412,10 @@ LLM_MODE=live
 
 - [ ] **Step 10: Reconcile the real `.env`**
 
-The existing `.env` may carry keys removed in rev 8 (`GATE_MIN_COVERAGE`, `CLAUDE_MODEL_CHOICES`, `SN_KB_ALLOWLIST`) and may hold a placeholder gateway key.
+The existing `.env` carries keys removed in revs 8 and 9 (`GATE_MIN_COVERAGE`, `CLAUDE_MODEL_CHOICES`, `SN_KB_ALLOWLIST`, `GATE_MIN_TOKENS`, `SEARCH_LIMIT`) and may hold a placeholder gateway key. Unknown keys are harmless to Node's `--env-file`, but leaving them implies they still do something.
 
 ```bash
-node -e "const fs=require('fs');const drop=/^\s*(GATE_MIN_COVERAGE|CLAUDE_MODEL_CHOICES|SN_KB_ALLOWLIST|CONNECTOR)\s*=/;const keep=fs.readFileSync('.env','utf8').split(/\r?\n/).filter(l=>!drop.test(l));fs.writeFileSync('.env',keep.join('\n'));const e=Object.fromEntries(keep.filter(l=>l.includes('=')).map(l=>[l.split('=')[0].trim(),l.slice(l.indexOf('=')+1)]));console.log('ANTHROPIC_BASE_URL:',e.ANTHROPIC_BASE_URL);console.log('CLAUDE_MODEL:',e.CLAUDE_MODEL);console.log('API key looks like a Key Vault version (32 hex chars):',/^[0-9a-f]{32}$/i.test(e.ANTHROPIC_API_KEY||''))"
+node -e "const fs=require('fs');const drop=/^\s*(GATE_MIN_COVERAGE|GATE_MIN_TOKENS|SEARCH_LIMIT|METRICS_ENABLED|METRICS_TIMEOUT_MS|CLAUDE_MODEL_CHOICES|SN_KB_ALLOWLIST|CONNECTOR)\s*=/;const keep=fs.readFileSync('.env','utf8').split(/\r?\n/).filter(l=>!drop.test(l));fs.writeFileSync('.env',keep.join('\n'));const e=Object.fromEntries(keep.filter(l=>l.includes('=')).map(l=>[l.split('=')[0].trim(),l.slice(l.indexOf('=')+1)]));console.log('ANTHROPIC_BASE_URL:',e.ANTHROPIC_BASE_URL);console.log('CLAUDE_MODEL:',e.CLAUDE_MODEL);console.log('API key looks like a Key Vault version (32 hex chars):',/^[0-9a-f]{32}$/i.test(e.ANTHROPIC_API_KEY||''))"
 ```
 
 If the last line prints `true`, the Key Vault **secret version** was pasted in place of the key. Fix it with `.\tools\set-gateway-env.ps1`, which prompts without echoing.
@@ -695,6 +685,9 @@ export function sanitiseQuery(q: string): string {
   return q.replace(/[\^=&]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
 }
 
+/** Five candidates reach the prompt. Measured at 83% recall@5; not configurable. */
+const SEARCH_LIMIT = 5
+
 export function makeSearch(cfg: Config, fetchImpl: typeof fetch = fetch) {
   const tokens = makeTokenProvider(cfg, fetchImpl)
 
@@ -717,7 +710,7 @@ export function makeSearch(cfg: Config, fetchImpl: typeof fetch = fetch) {
     return ((await res.json()) as { result?: SnRecord[] }).result ?? []
   }
 
-  function buildPath(query: string, limit: number): string {
+  function buildPath(query: string, limit = SEARCH_LIMIT): string {
     // Two clauses only. A knowledge base filter was A/B tested and removed (D5).
     const sysparmQuery = [
       'workflow_state=published',
@@ -733,8 +726,8 @@ export function makeSearch(cfg: Config, fetchImpl: typeof fetch = fetch) {
   }
 
   return {
-    async search(query: string, limit: number): Promise<Article[]> {
-      const records = await call(buildPath(query, limit))
+    async search(query: string): Promise<Article[]> {
+      const records = await call(buildPath(query))
       return records.map((r) => ({
         id: r.sys_id,
         label: r.number,
@@ -966,6 +959,9 @@ export function buildListUrl(instanceUrl: string, req: MetricRequest): string {
   return `${instanceUrl}/${req.table}_list.do?sysparm_query=${encodeURIComponent(req.filter)}`
 }
 
+/** One pathological filter must not hang a chat turn. Not configurable. */
+const TIMEOUT_MS = 10_000
+
 interface StatsBody {
   result?: { stats?: { count?: string } & Record<string, unknown> }
 }
@@ -1009,7 +1005,7 @@ export function makeStats(cfg: Config, fetchImpl: typeof fetch = fetch) {
         res = await fetchImpl(`${cfg.sn.instanceUrl}${path}`, {
           headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
           // One pathological filter must not hang a chat turn.
-          signal: AbortSignal.timeout(cfg.metricsTimeoutMs),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
         })
       } catch (e) {
         throw new ServiceNowUnavailableError(`Aggregate query failed against ${req.table}.`, e)
@@ -1639,20 +1635,21 @@ describe('POST /api/chat', () => {
     expect(r.body.gateReason).toBe('servicenow_unavailable')
   })
 
-  it('declines a metric question when METRICS_ENABLED is false', async () => {
+  it('never repairs a filter — one attempt, then decline', async () => {
     const run = vi.fn()
+      .mockRejectedValueOnce(new ServiceNowUnavailableError('bad filter'))
     const app = makeApp({
-      cfg: { ...cfg, metricsEnabled: false },
+      cfg,
       sn: okSn(),
       stats: { run },
       llm: fakeLlm(() => ({
         kind: 'metric',
-        request: { table: 'incident', filter: 'active=true', aggregate: 'count' },
+        request: { table: 'incident', filter: 'active=tru', aggregate: 'count' },
       })),
     })
     const r = await post(app, { message: 'how many open incidents are there' })
-    expect(r.body.grounded).toBe(false)
-    expect(run).not.toHaveBeenCalled()
+    expect(r.body.gateReason).toBe('metric_unavailable')
+    expect(run).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -1691,7 +1688,7 @@ const DECLINE_TEXT = 'I do not have that in the knowledge base.'
 const UNAVAILABLE_TEXT = 'I cannot reach the knowledge base right now. Please try again shortly.'
 
 interface Sn {
-  search(query: string, limit: number): Promise<Article[]>
+  search(query: string): Promise<Article[]>
   health(): Promise<{ ok: boolean; detail?: string }>
 }
 
@@ -1718,7 +1715,6 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
       // Stub mode must be visible in the UI, not merely in a log file.
       model: cfg.llmMode === 'stub' ? 'STUB — no live model' : cfg.claudeModel,
       llmMode: cfg.llmMode,
-      metricsEnabled: cfg.metricsEnabled,
       servicenow,
     })
   })
@@ -1743,11 +1739,11 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
 
       // Gate layer 1 — runs before any network call, so greeting noise never
       // reaches the instance or the model. The only free rejection there is.
-      if (!hasEnoughTokens(message, cfg.gateMinTokens)) return decline('too_few_tokens')
+      if (!hasEnoughTokens(message)) return decline('too_few_tokens')
 
       let articles: Article[]
       try {
-        articles = await sn.search(message, cfg.searchLimit)
+        articles = await sn.search(message)
       } catch (e) {
         if (!(e instanceof ServiceNowUnavailableError)) throw e
         log('chat.servicenow_unavailable', { q: message, detail: e.message })
@@ -1771,7 +1767,7 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
         retried = true
         rewritten = reply.query
         try {
-          const second = await sn.search(rewritten, cfg.searchLimit)
+          const second = await sn.search(rewritten)
           // Union, deduped by sys_id. Rewritten results lead because they are the
           // better guess; nothing is truncated, or the first search — which usually
           // fills the limit on its own — would discard everything the rewrite found.
@@ -1789,8 +1785,6 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
       }
 
       if (reply.kind === 'metric') {
-        if (!cfg.metricsEnabled) return decline('model_declined', retried)
-
         let result: MetricResult
         try {
           result = await stats.run(reply.request)
@@ -1878,7 +1872,7 @@ async function main() {
   log('servicenow.ok', { detail: health.detail })
 
   makeApp({ cfg, sn, stats, llm }).listen(cfg.port, () => {
-    log('listening', { port: cfg.port, model: cfg.claudeModel, metrics: cfg.metricsEnabled })
+    log('listening', { port: cfg.port, model: cfg.claudeModel })
   })
 }
 
@@ -2118,12 +2112,15 @@ git commit -m "feat: chat UI rendering article sources and metric filters"
 ## Task 7: Evals and acceptance run
 
 **Files:**
-- Create: `tools/eval.ts`, `tools/eval-metrics.ts`, `tests/fixtures/metric-eval.json`
+- Create: `tools/eval.ts`, `tests/fixtures/metric-eval.json`
 - Modify: nothing
 
 **Interfaces:**
 - Consumes: everything
-- Produces: `npm run eval`, `npm run eval:metrics`
+- Produces: `npm run eval`, `npm run eval -- --with-retry`, `npm run eval -- --metrics`
+
+One script, three modes. They share config loading, the ServiceNow client, argument
+parsing and summary formatting; two files would duplicate roughly forty lines to no end.
 
 - [ ] **Step 1: Implement `tools/eval.ts`**
 
@@ -2131,6 +2128,7 @@ git commit -m "feat: chat UI rendering article sources and metric filters"
 import { readFileSync } from 'node:fs'
 import { loadConfig } from '../src/config.js'
 import { makeSearch } from '../src/servicenow/search.js'
+import { makeStats } from '../src/servicenow/stats.js'
 import { hasEnoughTokens } from '../src/guard.js'
 import { makeLlm } from '../src/llm/client.js'
 
@@ -2153,25 +2151,27 @@ const data = JSON.parse(readFileSync('tests/fixtures/retrieval-eval.json', 'utf8
 }
 
 /**
- * Default mode is search-only: deterministic, free, and the regression guard.
- * --with-retry exercises the full D13 path, which costs Claude calls and varies
- * between runs — so it is reported, never enforced.
+ * Three modes, one script:
+ *   (default)      search only — deterministic, free, and the regression guard
+ *   --with-retry   the full D13 path; costs Claude calls and varies run to run
+ *   --metrics      composed-query correctness against tests/fixtures/metric-eval.json
  */
+const METRICS = process.argv.includes('--metrics')
 const WITH_RETRY = process.argv.includes('--with-retry')
-const llm = WITH_RETRY ? makeLlm(cfg) : null
+const llm = METRICS || WITH_RETRY ? makeLlm(cfg) : null
 
 const accept = (q: EvalQ) => q.acceptableSysIds ?? (q.expectedSysId ? [q.expectedSysId] : [])
 
 /** Mirrors the server's retry branch so the eval measures what users actually get. */
 async function lookup(question: string) {
-  let articles = await sn.search(question, cfg.searchLimit)
+  let articles = await sn.search(question)
   let retried = false
 
   if (llm) {
     const reply = await llm.decide({ question, articles, history: [] })
     if (reply.kind === 'search') {
       retried = true
-      const second = await sn.search(reply.query, cfg.searchLimit)
+      const second = await sn.search(reply.query)
       const seen = new Set(second.map((a) => a.id))
       articles = [...second, ...articles.filter((a) => !seen.has(a.id))]
     }
@@ -2179,7 +2179,89 @@ async function lookup(question: string) {
   return { articles, retried }
 }
 
+/** Clause order carries no meaning: active=true^priority=1 equals priority=1^active=true. */
+const clauses = (f: string) =>
+  f.split('^').map((c) => c.trim()).filter(Boolean).sort().join('^')
+
+/** --metrics: does the model compose a query that runs, against the right table? */
+async function runMetrics(): Promise<void> {
+  const stats = makeStats(cfg)
+  const data = JSON.parse(readFileSync('tests/fixtures/metric-eval.json', 'utf8')) as {
+    shouldAnswer: {
+      id: string; question: string; table: string
+      aggregate: string; field?: string; expectedFilter: string
+    }[]
+    shouldDecline: { id: string; question: string; why: string }[]
+  }
+
+  let executed = 0
+  let exactFilter = 0
+  let rightTable = 0
+
+  console.log('=== SHOULD ANSWER ===')
+  for (const q of data.shouldAnswer) {
+    // Real conditions: metric questions still retrieve articles first, and those
+    // articles are usually irrelevant. The model must not be distracted by them.
+    const articles = await sn.search(q.question)
+    const reply = await llm!.decide({ question: q.question, articles, history: [] })
+
+    if (reply.kind !== 'metric') {
+      console.log(`${q.id}  NOT A METRIC (${reply.kind})`)
+      continue
+    }
+
+    const r = reply.request
+    const tableOk = r.table === q.table
+    const filterOk = clauses(r.filter) === clauses(q.expectedFilter)
+    if (tableOk) rightTable++
+    if (tableOk && filterOk) exactFilter++
+
+    let value: string | number | 'ERROR' = 'ERROR'
+    try {
+      value = (await stats.run(r)).value
+      executed++
+    } catch (e) {
+      console.log(`         execution failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+
+    console.log(
+      `${q.id}  ${tableOk ? 'table ok' : `table BAD(${r.table})`} ` +
+        `${filterOk ? 'filter ok' : 'filter ~'}  = ${value}`,
+    )
+    if (!filterOk) {
+      console.log(`         expected: ${q.expectedFilter}`)
+      console.log(`         actual  : ${r.filter}`)
+    }
+  }
+
+  console.log('\n=== SHOULD DECLINE ===')
+  let declined = 0
+  for (const q of data.shouldDecline) {
+    const articles = await sn.search(q.question)
+    const reply = await llm!.decide({ question: q.question, articles, history: [] })
+    const ok = reply.kind !== 'metric'
+    if (ok) declined++
+    console.log(`${q.id}  ${ok ? 'declined' : 'INVENTED A QUERY <- investigate'}  (${q.why})`)
+  }
+
+  const n = data.shouldAnswer.length
+  console.log('\n=== SUMMARY ===')
+  console.log(`Executed cleanly  : ${executed}/${n}   <- the floor; 15/15 measured by hand`)
+  console.log(`Right table       : ${rightTable}/${n}`)
+  console.log(`Exact filter      : ${exactFilter}/${n}`)
+  console.log(`Correctly declined: ${declined}/${data.shouldDecline.length}`)
+  console.log('\nA "filter ~" is not automatically wrong — read it. Different clauses can be')
+  console.log('equally defensible. What matters is that it executes and says what it counted.')
+
+  if (executed < n) {
+    console.error(`\nREGRESSION: ${n - executed} composed queries failed to execute`)
+    process.exit(1)
+  }
+}
+
 async function main() {
+  if (METRICS) return runMetrics()
+
   const ranks: { id: string; rank: number; source: string }[] = []
 
   console.log(`=== IN-SCOPE ${WITH_RETRY ? '(with D13 retry)' : '(search only)'} ===`)
@@ -2203,7 +2285,7 @@ async function main() {
   let guarded = 0
   let declined = 0
   for (const q of data.outOfScope) {
-    if (!hasEnoughTokens(q.question, cfg.gateMinTokens)) {
+    if (!hasEnoughTokens(q.question)) {
       guarded++
       console.log(`${q.id.padEnd(12)} guarded (no model call)`)
       continue
@@ -2214,7 +2296,7 @@ async function main() {
     }
     const reply = await llm.decide({
       question: q.question,
-      articles: await sn.search(q.question, cfg.searchLimit),
+      articles: await sn.search(q.question),
       history: [],
     })
     const good = reply.kind === 'no_answer'
@@ -2306,128 +2388,26 @@ declined. `expectedFilter` is compared clause-by-clause, so order does not matte
 }
 ```
 
-- [ ] **Step 3: Implement `tools/eval-metrics.ts`** — ⏸ **needs the gateway key to run**
-
-```ts
-import { readFileSync } from 'node:fs'
-import { loadConfig } from '../src/config.js'
-import { makeSearch } from '../src/servicenow/search.js'
-import { makeStats } from '../src/servicenow/stats.js'
-import { makeLlm } from '../src/llm/client.js'
-
-interface AnswerQ {
-  id: string
-  question: string
-  table: string
-  aggregate: string
-  field?: string
-  expectedFilter: string
-}
-interface DeclineQ { id: string; question: string; why: string }
-
-const cfg = loadConfig()
-const llm = makeLlm(cfg)
-const sn = makeSearch(cfg)
-const stats = makeStats(cfg)
-
-const data = JSON.parse(readFileSync('tests/fixtures/metric-eval.json', 'utf8')) as {
-  shouldAnswer: AnswerQ[]
-  shouldDecline: DeclineQ[]
-}
-
-/** Clause order carries no meaning: active=true^priority=1 equals priority=1^active=true. */
-const clauses = (f: string) =>
-  f.split('^').map((c) => c.trim()).filter(Boolean).sort().join('^')
-
-async function main() {
-  let executed = 0
-  let exactFilter = 0
-  let rightTable = 0
-
-  console.log('=== SHOULD ANSWER ===')
-  for (const q of data.shouldAnswer) {
-    // Real conditions: metric questions still retrieve articles first, and those
-    // articles are usually irrelevant. The model must not be distracted by them.
-    const articles = await sn.search(q.question, cfg.searchLimit)
-    const reply = await llm.decide({ question: q.question, articles, history: [] })
-
-    if (reply.kind !== 'metric') {
-      console.log(`${q.id}  NOT A METRIC (${reply.kind})`)
-      continue
-    }
-
-    const r = reply.request
-    const tableOk = r.table === q.table
-    const filterOk = clauses(r.filter) === clauses(q.expectedFilter)
-    if (tableOk) rightTable++
-    if (tableOk && filterOk) exactFilter++
-
-    let value: string | number | 'ERROR' = 'ERROR'
-    try {
-      value = (await stats.run(r)).value
-      executed++
-    } catch (e) {
-      console.log(`         execution failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
-
-    console.log(
-      `${q.id}  ${tableOk ? 'table✓' : `table✗(${r.table})`} ` +
-        `${filterOk ? 'filter✓' : 'filter~'}  = ${value}`,
-    )
-    if (!filterOk) {
-      console.log(`         expected: ${q.expectedFilter}`)
-      console.log(`         actual  : ${r.filter}`)
-    }
-  }
-
-  console.log('\n=== SHOULD DECLINE ===')
-  let declined = 0
-  for (const q of data.shouldDecline) {
-    const articles = await sn.search(q.question, cfg.searchLimit)
-    const reply = await llm.decide({ question: q.question, articles, history: [] })
-    const ok = reply.kind !== 'metric'
-    if (ok) declined++
-    console.log(`${q.id}  ${ok ? 'declined' : 'INVENTED A QUERY <- investigate'}  (${q.why})`)
-  }
-
-  const n = data.shouldAnswer.length
-  console.log('\n=== SUMMARY ===')
-  console.log(`Executed cleanly : ${executed}/${n}   <- the floor; 15/15 was measured by hand`)
-  console.log(`Right table      : ${rightTable}/${n}`)
-  console.log(`Exact filter     : ${exactFilter}/${n}`)
-  console.log(`Correctly declined: ${declined}/${data.shouldDecline.length}`)
-  console.log('\nA filter~ is not automatically wrong — read it. Different clauses can be')
-  console.log('equally defensible. What matters is that it executes and says what it counted.')
-
-  if (executed < n) {
-    console.error(`\nREGRESSION: ${n - executed} composed queries failed to execute`)
-    process.exit(1)
-  }
-}
-
-main()
-```
-
-- [ ] **Step 4: Run both evals**
+- [ ] **Step 3: Run all three modes**
 
 ```bash
 npm run eval                    # works now — search only, no gateway needed
 npm run eval -- --with-retry    # ⏸ BLOCKED until the gateway key is available
-npm run eval:metrics            # ⏸ BLOCKED until the gateway key is available
+npm run eval -- --metrics       # ⏸ BLOCKED until the gateway key is available
 ```
 
 **`npm run eval` (search only):** recall@1 at or above **26/35 (74%)** and recall@5 at or above **29/35 (83%)** — the spec §9 baseline. A lower number exits non-zero; investigate rather than lowering the baseline.
 
 **`--with-retry`:** expect roughly **31/35 (89%)**. Costs Claude calls and varies between runs. **If retry does not beat the baseline meaningfully, say so and stop.** Setting `RETRY_ENABLED=false` and keeping the simpler system is a legitimate outcome, not a failure.
 
-**`eval:metrics`:** every question must execute. 15/15 was measured by hand on 2026-09-14, so anything less is a regression in the prompt, not a surprise about the data. Filter mismatches need reading rather than counting — `stateIN6,7` versus `state=7` for "closed" is a real bug, while a differing date window may be equally defensible.
+**`--metrics`:** every question must execute. 15/15 was measured by hand on 2026-09-14, so anything less is a regression in the prompt, not a surprise about the data. Filter mismatches need reading rather than counting — `stateIN6,7` versus `state=7` for "closed" is a real bug, while a differing date window may be equally defensible.
 
-- [ ] **Step 5: Run the full suite and a type check**
+- [ ] **Step 4: Run the full suite and a type check**
 
 Run: `npx vitest run && npx tsc --noEmit`
 Expected: all tests PASS, no type errors.
 
-- [ ] **Step 6: Walk the acceptance criteria (spec §16)**
+- [ ] **Step 5: Walk the acceptance criteria (spec §16)**
 
 - [ ] 1. `npm run dev` boots; gateway preflight passes; the ServiceNow probe succeeds
 - [ ] 2. `/api/health` shows ok, the model id, and ServiceNow reachable
@@ -2439,12 +2419,12 @@ Expected: all tests PASS, no type errors.
 - [ ] 8. **`how many open incidents are there` returns a number, the filter `active=true`, and a link whose record count equals the number.** This is the acceptance test for the metrics path
 - [ ] 9. `how many incidents are on hold` returns 1, matching the QBR On-Hold tile
 - [ ] 10. ⏸ *needs the key* — `what is our uptime` is declined, not answered from an approximate metric
-- [ ] 11. Set `METRICS_ENABLED=false` and confirm behaviour is identical to revision 5
-- [ ] 12. Run `npm run eval` with `METRICS_ENABLED=true` and confirm article recall is unchanged
+- [ ] 11. Article behaviour matches revision 5 — verified by running the `nowops-chat` repo and comparing, not by a flag
+- [ ] 12. `npm run eval` recall is unchanged from the revision 5 baseline (26/35 @1, 29/35 @5)
 - [ ] 13. Temporarily set `SN_INSTANCE_URL=https://invalid.example.com` and confirm "cannot reach the knowledge base", **not** "no match". Restore afterwards
 - [ ] 14. No secrets in captured logs — search them for `sk-` and for the client id
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add tools tests/fixtures/metric-eval.json
