@@ -1,46 +1,52 @@
-# NowOps Chatbot Implementation Plan
+# NowOps Chatbot V2 — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A small Express/TypeScript chatbot that answers questions from the abhrademo4 ServiceNow knowledge base using Claude via the UST LLM gateway, showing which articles each answer came from.
+**Goal:** A small Express/TypeScript chatbot that answers two kinds of question about the abhrademo4 ServiceNow instance — "how do I…" from the knowledge base, and "how many…" by running a live aggregate query — always showing the articles or the query behind the answer.
 
-**Architecture:** Seven source files. `servicenow/` searches the instance live, `gate/` decides whether we actually know the answer, `llm/` asks Claude and verifies its citations, `server/` wires it to a static HTML page. No database, no index, no embeddings, no abstraction layers — ServiceNow is the only platform and the code says so directly.
+**Architecture:** Nine source files. `servicenow/` searches articles and runs aggregates, `llm/` asks Claude once and interprets its reply, `server.ts` wires it to a static HTML page. No database, no index, no embeddings, no catalogue, no abstraction layers — ServiceNow is the only platform and the code says so directly.
 
 **Tech Stack:** Node 22+ (dev machine runs v24.18.0), TypeScript (ESM, `NodeNext`), Express 5, `@anthropic-ai/sdk`, `zod`, `dotenv`; dev-only `tsx`, `vitest`, `typescript`, `@types/*`.
 
-**Spec:** [docs/superpowers/specs/2026-09-13-nowops-chatbot-design.md](../specs/2026-09-13-nowops-chatbot-design.md) (revision 4)
+**Spec:** [docs/superpowers/specs/2026-09-13-nowops-chatbot-design.md](../specs/2026-09-13-nowops-chatbot-design.md) (revision 8)
 
 ## Global Constraints
 
 Every task's requirements implicitly include this section.
 
-- **Node 22 LTS floor.** `.nvmrc` pins `22`; `package.json` sets `"engines": { "node": ">=22" }`. The dev machine runs v24.18.0.
+- **Node 22 LTS floor.** `.nvmrc` pins `22`; `package.json` sets `"engines": { "node": ">=22" }`.
 - **Runtime dependencies are exactly four:** `express`, `@anthropic-ai/sdk`, `dotenv`, `zod`. Dev-only: `typescript`, `tsx`, `vitest`, `@types/node`, `@types/express`. **Adding any other dependency is a plan violation** — raise it rather than installing it.
-- **ServiceNow is the only platform.** Do not add a connector interface, a platform selector, a fake connector module, or any "pluggable" indirection. If a second platform is ever needed, this code gets refactored then (D12).
-- **`Article.id` (ServiceNow `sys_id`) is the identity key everywhere** (D10). Article `number` is **not unique** on abhrademo4 — `KB0010004` maps to four different articles, `KB0010141` to two. `number` is a display label only. Links use `kb_view.do?sys_kb_id=<sys_id>`, never `sysparm_article=<number>`.
-- **The model cites bracketed labels `[1]`–`[5]`, never KB numbers** (D10, spec §10). The server maps labels back to `sys_id`.
-- **There is no knowledge base filter** (D5). Search every published article. A curated allowlist was A/B tested over all 45 eval questions and changed exactly one result — a rank 2 → rank 1 promotion, invisible to users since the top 5 all reach the prompt. Do not reintroduce one without a failing example to justify it.
-- **No `GET /v1/models` discovery against the gateway** (spec §7 rule 1). The model id is explicit configuration.
+- **ServiceNow is the only platform.** No connector interface, no platform selector, no fake connector module, no "pluggable" indirection (D12).
+- **`Article.id` (ServiceNow `sys_id`) is the identity key everywhere** (D10). Article `number` is **not unique** on abhrademo4 — `KB0010004` maps to four different articles. `number` is a display label only. Links use `kb_view.do?sys_kb_id=<sys_id>`.
+- **The model cites bracketed labels `[1]`–`[5]`, never KB numbers** (D10). The server maps labels back to `sys_id`.
+- **There is no knowledge base filter** (D5). Search every published article. A curated allowlist was A/B tested over all 45 eval questions and changed exactly one result. Do not reintroduce one without a failing example.
+- **One Claude call per question** (D6, D16), two only when the first returns `SEARCH`. There is no separate triage call and no classifier call.
+- **There is no coverage threshold** (D11, removed in rev 8). Two gate layers only: the token guard, then Claude. Do not reintroduce a coverage score — the sweep in spec §9 shows no cutoff works.
+- **The model never builds a request.** For metrics it returns `table`, `filter`, `aggregate` and optionally `field` as *data*. Our code builds the URL, and it can only build a read-only `GET` to `/api/now/stats/` (D14).
+- **`aggregate` must be one of `count`, `avg`, `sum`, `min`, `max`.** Anything else is a decline, not a coercion.
+- **A malformed filter is never repaired.** ServiceNow rejects it; we decline. A second guess at a query is a second chance to be confidently wrong.
+- **Every metric answer renders its filter.** Wrap it; never truncate it. The filter is the only thing that makes the number checkable.
+- **There is no table allowlist.** The OAuth user's ACLs are the access boundary. An allowlist would block legitimate questions while adding no protection.
 - **Never log secrets.** Mask API keys as `sk-abc12…wxyz`.
 - **`.env` is never committed.** `.gitignore` already covers it.
-- **"Cannot reach ServiceNow" and "no knowledge base match" are different outcomes** (spec §13) — different message, different `gateReason`, different HTTP status.
-- **Retry fires at most once per question** (D13). No loops, no second rewrite. A failing or unusable triage response degrades to an ordinary decline, never to an error.
+- **"Cannot reach ServiceNow" and "no match" are different outcomes** (spec §13) — different message, different `gateReason`, different HTTP status.
+- **Retry fires at most once per question** (D13). The second call may return `ANSWER` or `NO_ANSWER`, never another `SEARCH`.
 
 ### Starting state
 
-The repo currently holds only: `.env` (live ServiceNow credentials), `.gitignore`, `docs/`, `tests/fixtures/retrieval-eval.json`, and `tools/set-gateway-env.ps1`. There is no `src/`, no `package.json`, no `node_modules`. Task 1 starts from nothing.
+The repo holds only: `.env` (live ServiceNow credentials), `.gitignore`, `docs/`, `tests/fixtures/retrieval-eval.json`, and `tools/set-gateway-env.ps1`. There is no `src/`, no `package.json`, no `node_modules`. Task 1 starts from nothing.
 
 ### Building without the gateway key
 
-The UST gateway key lives in Azure Key Vault (`ustdev-az-is-ai-app-kv`, secret `codon-kvs`) and access has not been granted yet. **Every task can still be built and verified**, because only live Claude calls are blocked:
+The UST gateway key lives in Azure Key Vault (`ustdev-az-is-ai-app-kv`, secret `codon-kvs`) and access has not been granted. **Every task can still be built and verified**, because only live Claude calls are blocked:
 
 | | Without the key |
 |---|---|
 | Tasks 1, 2, 3 | Fully complete, including live ServiceNow verification |
-| Task 4 | All 14 unit tests pass. Only the live preflight (step 5) waits |
-| Task 5 | All 12 tests pass — they use a fake Claude |
-| Task 6 | Runs under `LLM_MODE=stub` |
-| Task 7 | `npm run eval` works. `--with-retry` waits |
+| Task 4 | All unit tests pass. Only the live preflight waits |
+| Task 5 | All tests pass — they use a fake Claude |
+| Task 6 | Runs under `LLM_MODE=stub`, **including the metric path** |
+| Task 7 | `npm run eval` works. `--with-retry` and `eval:metrics` wait |
 
 Set these in `.env` to build now:
 
@@ -53,55 +59,59 @@ CLAUDE_MODEL=claude-opus-4-8-Codon
 
 `ANTHROPIC_API_KEY` must be non-empty because config validation requires it, but nothing reads it in stub mode.
 
-**Stub mode is deliberately conspicuous**: a console warning at boot, a `llm.STUB_MODE` log line on every answer, an amber health pill in the UI, and answers prefixed `[STUB — no live model]`. It exists so you can click through the real UI and see real articles and real source links — not so anyone can demo it.
+**Stub mode is deliberately conspicuous**: a console warning at boot, a `llm.STUB_MODE` log line on every answer, an amber health pill in the UI, and answers prefixed `[STUB — no live model]`. The stub returns a fixed `METRIC` reply for questions containing "how many", so the aggregate path can be exercised end-to-end with real numbers before the key arrives. That is a fixture, not intelligence.
 
-When the key arrives: run `.\tools\set-gateway-env.ps1`, set `LLM_MODE=live`, then do Task 4 step 5 and Task 7 step 2's retry run. Nothing else changes.
+When the key arrives: run `.\tools\set-gateway-env.ps1`, set `LLM_MODE=live`, then do Task 4 step 5, Task 7 step 3 and Task 7 step 4. Nothing else changes.
 
 ---
 
 ## File Structure
 
-Seven source files, three static assets, one tool.
+Nine source files, three static assets, two tools.
 
 | File | Responsibility |
 |---|---|
 | `src/config.ts` | Load + validate env with zod; fail fast |
 | `src/log.ts` | One-line JSON logging, masks secrets |
+| `src/guard.ts` | Tokenise + token-count guard (gate layer 1) |
 | `src/servicenow/types.ts` | `Article` record + `ServiceNowUnavailableError` |
 | `src/servicenow/auth.ts` | OAuth refresh-token grant, cached access token |
 | `src/servicenow/search.ts` | Live `kb_knowledge` text search → `Article[]` |
-| `src/gate/decide.ts` | Tokenise, score coverage, decide answer vs decline |
-| `src/llm/client.ts` | Gateway client, preflight, prompt, citation verification |
+| `src/servicenow/stats.ts` | Run one aggregate → value + deep link |
+| `src/llm/client.ts` | Gateway client, preflight, one prompt, reply parsing, citation checks |
 | `src/server.ts` | Express app, `/api/chat`, `/api/health`, boot |
 | `public/index.html`, `app.js`, `styles.css` | Chat UI with the source line |
-| `tools/eval.ts` | `npm run eval` — recall@k plus a threshold sweep |
+| `tools/eval.ts` | `npm run eval` — recall@k over the 45 article questions |
+| `tools/eval-metrics.ts` | `npm run eval:metrics` — composed-query correctness |
 
-The gate is one file rather than two: tokenising and deciding are ~50 lines together.
-The LLM client is one file: the prompt, the call and the citation check belong to the same
-job. `server.ts` holds the routes and the boot sequence because there is one route worth
-the name.
+`guard.ts` is one file of ~30 pure lines. The LLM client is one file: the prompt, the call and the reply parsing belong to the same job. `server.ts` holds the routes and the boot sequence because there is one route worth the name.
 
 ---
 
-## Task 1: Scaffold, config and logging
+## Task 1: Scaffold, config, logging and the token guard
 
 **Files:**
-- Create: `package.json`, `tsconfig.json`, `.nvmrc`, `.env.example`, `src/config.ts`, `src/log.ts`
-- Test: `tests/config.test.ts`
+- Create: `package.json`, `tsconfig.json`, `.nvmrc`, `.env.example`, `src/config.ts`, `src/log.ts`, `src/guard.ts`
+- Test: `tests/config.test.ts`, `tests/guard.test.ts`
 
 **Interfaces:**
 - Consumes: nothing
-- Produces: `parseConfig(env): Config`, `loadConfig(): Config`. `Config` fields: `port: number`, `anthropicApiKey: string`, `anthropicBaseUrl: string`, `claudeModel: string`, `gateMinTokens: number`, `gateMinCoverage: number`, `searchLimit: number`, `retryEnabled: boolean`, `llmMode: 'live' | 'stub'`, `sn: { instanceUrl, clientId, clientSecret, refreshToken }`. Also `mask(secret: string): string` and `log(event: string, fields?: Record<string, unknown>): void`.
+- Produces: `loadConfig(): Config`, `parseConfig(env): Config`, `Config` interface; `log(event, fields)`, `mask(secret)`; `tokenise(s): string[]`, `hasEnoughTokens(s, min): boolean`
 
 - [ ] **Step 1: Initialise the project**
 
 ```bash
-cd C:/dev/nowops-chat
 npm init -y
-npm install express @anthropic-ai/sdk dotenv zod
-npm install -D typescript tsx vitest @types/node @types/express
-node -e "const p=require('./package.json');p.type='module';p.engines={node:'>=22'};p.scripts={dev:'tsx watch src/server.ts',build:'tsc',test:'vitest run',eval:'tsx tools/eval.ts'};require('fs').writeFileSync('package.json',JSON.stringify(p,null,2))"
-echo 22 > .nvmrc
+npm pkg set type=module engines.node=">=22"
+npm pkg set scripts.dev="tsx watch src/server.ts"
+npm pkg set scripts.build="tsc"
+npm pkg set scripts.start="node dist/server.js"
+npm pkg set scripts.test="vitest run"
+npm pkg set scripts.eval="tsx tools/eval.ts"
+npm pkg set scripts["eval:metrics"]="tsx tools/eval-metrics.ts"
+npm i express @anthropic-ai/sdk dotenv zod
+npm i -D typescript tsx vitest @types/node @types/express
+node -e "require('fs').writeFileSync('.nvmrc','22\n')"
 ```
 
 - [ ] **Step 2: Create `tsconfig.json`**
@@ -109,22 +119,25 @@ echo 22 > .nvmrc
 ```json
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "dist",
     "rootDir": ".",
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "types": ["node"]
+    "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts", "tools/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "tools/**/*.ts"],
+  "exclude": ["node_modules", "dist", "tests"]
 }
 ```
 
-- [ ] **Step 3: Write the failing test**
+`noUncheckedIndexedAccess` matters here: `articles[0]` is `Article | undefined`, which forces the empty-result case to be handled rather than discovered in a demo.
+
+- [ ] **Step 3: Write the failing tests**
 
 `tests/config.test.ts`:
 
@@ -134,8 +147,8 @@ import { parseConfig } from '../src/config.js'
 import { mask } from '../src/log.js'
 
 const valid = {
-  ANTHROPIC_API_KEY: 'sk-test-abcdefghijklmnop',
-  ANTHROPIC_BASE_URL: 'https://llmproxy.ustdev.com',
+  ANTHROPIC_API_KEY: 'sk-test-key-1234567890',
+  ANTHROPIC_BASE_URL: 'https://llmproxy.example.com',
   CLAUDE_MODEL: 'claude-opus-4-8-Codon',
   SN_INSTANCE_URL: 'https://abhrademo4.service-now.com',
   SN_CLIENT_ID: 'cid',
@@ -144,71 +157,103 @@ const valid = {
 }
 
 describe('parseConfig', () => {
-  it('parses a valid environment', () => {
-    const c = parseConfig(valid)
-    expect(c.claudeModel).toBe('claude-opus-4-8-Codon')
-    expect(c.sn.instanceUrl).toBe('https://abhrademo4.service-now.com')
-  })
-
   it('applies documented defaults', () => {
     const c = parseConfig(valid)
+    expect(c.port).toBe(3000)
     expect(c.gateMinTokens).toBe(2)
-    expect(c.gateMinCoverage).toBe(0.3)
     expect(c.searchLimit).toBe(5)
     expect(c.retryEnabled).toBe(true)
+    expect(c.metricsEnabled).toBe(true)
+    expect(c.metricsTimeoutMs).toBe(10000)
+    expect(c.llmMode).toBe('live')
   })
 
-  it('allows retry to be switched off for A/B comparison', () => {
-    expect(parseConfig({ ...valid, RETRY_ENABLED: 'false' }).retryEnabled).toBe(false)
-  })
-
-  it('defaults to live mode, so stub must always be deliberate', () => {
-    expect(parseConfig(valid).llmMode).toBe('live')
-    expect(parseConfig({ ...valid, LLM_MODE: 'stub' }).llmMode).toBe('stub')
-  })
-
-  it('strips a trailing slash from the gateway URL', () => {
-    const c = parseConfig({ ...valid, ANTHROPIC_BASE_URL: 'https://llmproxy.ustdev.com/' })
-    expect(c.anthropicBaseUrl).toBe('https://llmproxy.ustdev.com')
-  })
-
-  it('throws naming the missing variable', () => {
-    const { CLAUDE_MODEL, ...missing } = valid
-    expect(() => parseConfig(missing)).toThrow(/CLAUDE_MODEL/)
-  })
-
-  it('strips a trailing slash from the instance URL', () => {
-    const c = parseConfig({ ...valid, SN_INSTANCE_URL: 'https://abhrademo4.service-now.com/' })
+  it('strips a trailing slash from both base URLs', () => {
+    const c = parseConfig({
+      ...valid,
+      ANTHROPIC_BASE_URL: 'https://llmproxy.example.com/',
+      SN_INSTANCE_URL: 'https://abhrademo4.service-now.com/',
+    })
+    expect(c.anthropicBaseUrl).toBe('https://llmproxy.example.com')
     expect(c.sn.instanceUrl).toBe('https://abhrademo4.service-now.com')
   })
 
-  it('rejects a non-numeric threshold instead of yielding NaN', () => {
-    expect(() => parseConfig({ ...valid, GATE_MIN_COVERAGE: 'high' })).toThrow(/GATE_MIN_COVERAGE/)
+  it('names every missing variable in one error', () => {
+    expect(() => parseConfig({})).toThrow(/ANTHROPIC_API_KEY.*SN_REFRESH_TOKEN|SN_REFRESH_TOKEN/s)
+  })
+
+  it('rejects a non-numeric SEARCH_LIMIT', () => {
+    expect(() => parseConfig({ ...valid, SEARCH_LIMIT: 'five' })).toThrow(/SEARCH_LIMIT/)
+  })
+
+  it('rejects an unknown LLM_MODE', () => {
+    expect(() => parseConfig({ ...valid, LLM_MODE: 'demo' })).toThrow(/LLM_MODE/)
+  })
+
+  it('has no coverage threshold — removed in rev 8', () => {
+    expect(parseConfig(valid)).not.toHaveProperty('gateMinCoverage')
   })
 })
 
 describe('mask', () => {
-  it('shows only the first and last few characters', () => {
-    expect(mask('sk-abc123456789wxyz')).toBe('sk-ab…wxyz')
+  it('shows only the ends of a long secret', () => {
+    expect(mask('sk-abcdefghijklmnop')).toBe('sk-ab…mnop')
   })
-
-  it('fully masks short secrets rather than leaking them', () => {
+  it('reveals nothing about a short one', () => {
     expect(mask('short')).toBe('…')
   })
 })
 ```
 
-- [ ] **Step 4: Run to verify it fails**
+`tests/guard.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { tokenise, hasEnoughTokens } from '../src/guard.js'
+
+describe('tokenise', () => {
+  it('drops stopwords and 1-2 character tokens', () => {
+    expect(tokenise('How do I reset my SAP password')).toEqual(['reset', 'sap', 'password'])
+  })
+
+  it('keeps characters that appear in error codes', () => {
+    expect(tokenise('ORA-01017 invalid $HOME path')).toEqual(['ora-01017', 'invalid', '$home', 'path'])
+  })
+
+  it('returns nothing for empty input', () => {
+    expect(tokenise('')).toEqual([])
+  })
+})
+
+describe('hasEnoughTokens', () => {
+  it('rejects greeting noise before any network call', () => {
+    expect(hasEnoughTokens('Hi Team,', 2)).toBe(false)
+    expect(hasEnoughTokens('nan', 2)).toBe(false)
+  })
+
+  it('lets a two-token fragment through to Claude', () => {
+    // 'Bky OLO' is two 3-character tokens, exactly at the floor. Layer 2 handles it —
+    // the guard exists only for one-term noise.
+    expect(hasEnoughTokens('Bky OLO', 2)).toBe(true)
+  })
+
+  it('accepts a real question', () => {
+    expect(hasEnoughTokens('how many open incidents are there', 2)).toBe(true)
+  })
+})
+```
+
+- [ ] **Step 4: Run to verify they fail**
 
 Run: `npx vitest run`
-Expected: FAIL — `Cannot find module '../src/config.js'`
+Expected: FAIL — cannot resolve `../src/config.js`, `../src/log.js`, `../src/guard.js`
 
 - [ ] **Step 5: Implement `src/log.ts`**
 
 ```ts
 const SECRET_KEYS = ['ANTHROPIC_API_KEY', 'SN_CLIENT_SECRET', 'SN_REFRESH_TOKEN', 'SN_CLIENT_ID']
 
-/** Masks a secret for logs: sk-abc123456789wxyz -> sk-ab…wxyz */
+/** Masks a secret for logs: sk-abcdefghijklmnop -> sk-ab…mnop */
 export function mask(secret: string): string {
   if (!secret || secret.length < 12) return '…'
   return `${secret.slice(0, 5)}…${secret.slice(-4)}`
@@ -224,7 +269,40 @@ export function log(event: string, fields: Record<string, unknown> = {}): void {
 }
 ```
 
-- [ ] **Step 6: Implement `src/config.ts`**
+- [ ] **Step 6: Implement `src/guard.ts`**
+
+```ts
+const STOPWORDS = new Set([
+  'the','a','an','is','are','was','were','to','of','in','on','for','and','or','it','this',
+  'that','with','my','we','our','not','no','be','been','has','have','do','does','did','can',
+  'cannot','am','at','as','by','from','get','got','will','would','should','when','what','why',
+  'how','after','into','out','up','down','me','you','your','their','there','they','many',
+])
+
+/**
+ * Lowercase, strip punctuation, drop stopwords and 1-2 character tokens.
+ * `$`, `.`, `-` and `_` survive so error codes stay intact.
+ */
+export function tokenise(s: string): string[] {
+  if (!s) return []
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9$._\- ]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length > 2 && !STOPWORDS.has(t))
+}
+
+/**
+ * Gate layer 1 (D11). Runs before any network call, so greeting-shaped noise
+ * never reaches the instance or the model. This is the only free rejection
+ * left — everything else costs one Claude call.
+ */
+export function hasEnoughTokens(s: string, min: number): boolean {
+  return tokenise(s).length >= min
+}
+```
+
+- [ ] **Step 7: Implement `src/config.ts`**
 
 ```ts
 import { z } from 'zod'
@@ -233,7 +311,6 @@ import dotenv from 'dotenv'
 dotenv.config()
 
 const int = (name: string) => z.string().regex(/^\d+$/, `${name} must be a whole number`)
-const dec = (name: string) => z.string().regex(/^\d+(\.\d+)?$/, `${name} must be a number`)
 
 const Schema = z.object({
   PORT: int('PORT').default('3000'),
@@ -248,9 +325,10 @@ const Schema = z.object({
   SN_REFRESH_TOKEN: z.string().min(1, 'SN_REFRESH_TOKEN is required'),
 
   GATE_MIN_TOKENS: int('GATE_MIN_TOKENS').default('2'),
-  GATE_MIN_COVERAGE: dec('GATE_MIN_COVERAGE').default('0.3'),
   SEARCH_LIMIT: int('SEARCH_LIMIT').default('5'),
   RETRY_ENABLED: z.enum(['true', 'false']).default('true'),
+  METRICS_ENABLED: z.enum(['true', 'false']).default('true'),
+  METRICS_TIMEOUT_MS: int('METRICS_TIMEOUT_MS').default('10000'),
   // 'stub' lets the whole app run before the gateway key is available.
   LLM_MODE: z.enum(['live', 'stub']).default('live'),
 })
@@ -261,9 +339,10 @@ export interface Config {
   anthropicBaseUrl: string
   claudeModel: string
   gateMinTokens: number
-  gateMinCoverage: number
   searchLimit: number
   retryEnabled: boolean
+  metricsEnabled: boolean
+  metricsTimeoutMs: number
   llmMode: 'live' | 'stub'
   sn: {
     instanceUrl: string
@@ -287,9 +366,10 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     anthropicBaseUrl: e.ANTHROPIC_BASE_URL.replace(/\/$/, ''),
     claudeModel: e.CLAUDE_MODEL,
     gateMinTokens: Number(e.GATE_MIN_TOKENS),
-    gateMinCoverage: Number(e.GATE_MIN_COVERAGE),
     searchLimit: Number(e.SEARCH_LIMIT),
     retryEnabled: e.RETRY_ENABLED === 'true',
+    metricsEnabled: e.METRICS_ENABLED === 'true',
+    metricsTimeoutMs: Number(e.METRICS_TIMEOUT_MS),
     llmMode: e.LLM_MODE,
     sn: {
       instanceUrl: e.SN_INSTANCE_URL.replace(/\/$/, ''),
@@ -303,14 +383,14 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
 export const loadConfig = (): Config => parseConfig(process.env)
 ```
 
-- [ ] **Step 7: Run to verify it passes**
+- [ ] **Step 8: Run to verify they pass**
 
 Run: `npx vitest run`
-Expected: PASS, 10 tests
+Expected: PASS, 14 tests
 
-- [ ] **Step 8: Write `.env.example`**
+- [ ] **Step 9: Write `.env.example`**
 
-The real `.env` already holds live ServiceNow credentials. This committed file documents the shape with placeholders only.
+The real `.env` holds live ServiceNow credentials. This committed file documents the shape with placeholders only.
 
 ```
 # LLM gateway (UST LiteLLM). The API key is the VALUE of Key Vault secret
@@ -326,11 +406,13 @@ SN_CLIENT_SECRET=replace-me
 SN_REFRESH_TOKEN=replace-me
 
 # No knowledge base filter (D5) — every published article is searched.
+# No coverage threshold (D11, rev 8) — the token guard, then Claude.
 
 GATE_MIN_TOKENS=2
-GATE_MIN_COVERAGE=0.3
 SEARCH_LIMIT=5
 RETRY_ENABLED=true
+METRICS_ENABLED=true
+METRICS_TIMEOUT_MS=10000
 PORT=3000
 
 # live | stub. Use stub ONLY while waiting for the gateway key — answers are
@@ -338,26 +420,26 @@ PORT=3000
 LLM_MODE=live
 ```
 
-- [ ] **Step 9: Reconcile the real `.env`**
+- [ ] **Step 10: Reconcile the real `.env`**
 
-The existing `.env` has a `CONNECTOR` line left from the removed seam, and may still hold a placeholder gateway URL and a wrong API key. Check and fix:
+The existing `.env` may carry keys removed in rev 8 (`GATE_MIN_COVERAGE`, `CLAUDE_MODEL_CHOICES`, `SN_KB_ALLOWLIST`) and may hold a placeholder gateway key.
 
 ```bash
-node -e "const fs=require('fs');const keep=fs.readFileSync('.env','utf8').split(/\r?\n/).filter(l=>!/^\s*CONNECTOR\s*=/.test(l));fs.writeFileSync('.env',keep.join('\n'));const e=Object.fromEntries(keep.filter(l=>l.includes('=')).map(l=>[l.split('=')[0].trim(),l.slice(l.indexOf('=')+1)]));console.log('ANTHROPIC_BASE_URL:',e.ANTHROPIC_BASE_URL);console.log('CLAUDE_MODEL:',e.CLAUDE_MODEL);console.log('API key looks like a Key Vault version (32 hex chars):',/^[0-9a-f]{32}$/i.test(e.ANTHROPIC_API_KEY||''))"
+node -e "const fs=require('fs');const drop=/^\s*(GATE_MIN_COVERAGE|CLAUDE_MODEL_CHOICES|SN_KB_ALLOWLIST|CONNECTOR)\s*=/;const keep=fs.readFileSync('.env','utf8').split(/\r?\n/).filter(l=>!drop.test(l));fs.writeFileSync('.env',keep.join('\n'));const e=Object.fromEntries(keep.filter(l=>l.includes('=')).map(l=>[l.split('=')[0].trim(),l.slice(l.indexOf('=')+1)]));console.log('ANTHROPIC_BASE_URL:',e.ANTHROPIC_BASE_URL);console.log('CLAUDE_MODEL:',e.CLAUDE_MODEL);console.log('API key looks like a Key Vault version (32 hex chars):',/^[0-9a-f]{32}$/i.test(e.ANTHROPIC_API_KEY||''))"
 ```
 
 If the last line prints `true`, the Key Vault **secret version** was pasted in place of the key. Fix it with `.\tools\set-gateway-env.ps1`, which prompts without echoing.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add package.json package-lock.json tsconfig.json .nvmrc .env.example src tests
-git commit -m "feat: scaffold, validated config and masking logger"
+git commit -m "feat: scaffold, validated config, masking logger and token guard"
 ```
 
 ---
 
-## Task 2: ServiceNow OAuth and search
+## Task 2: ServiceNow OAuth and article search
 
 **Files:**
 - Create: `src/servicenow/types.ts`, `src/servicenow/auth.ts`, `src/servicenow/search.ts`
@@ -365,57 +447,37 @@ git commit -m "feat: scaffold, validated config and masking logger"
 
 **Interfaces:**
 - Consumes: `Config` (Task 1), `log` (Task 1)
-- Produces: `interface Article { id: string; label?: string; title: string; body: string; url: string }`; `class ServiceNowUnavailableError extends Error`; `makeTokenProvider(cfg, fetchImpl?): { getToken(): Promise<string> }`; `makeSearch(cfg, fetchImpl?): { search(query: string, limit: number): Promise<Article[]>; health(): Promise<{ ok: boolean; detail?: string }> }`; `stripHtml(html: string): string`; `sanitiseQuery(q: string): string`
-
-Query shape (spec §8): `workflow_state=published^123TEXTQUERY321=<sanitised>` — two clauses, no knowledge base filter (D5).
+- Produces: `Article`, `ServiceNowUnavailableError`, `makeTokenProvider(cfg, fetch)` → `{ getToken(): Promise<string> }`, `makeSearch(cfg, fetch)` → `{ search(query, limit): Promise<Article[]>, health() }`, `stripHtml(s)`, `sanitiseQuery(s)`
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/servicenow.test.ts`:
-
 ```ts
 import { describe, it, expect, vi } from 'vitest'
-import { makeTokenProvider } from '../src/servicenow/auth.js'
 import { makeSearch, stripHtml, sanitiseQuery } from '../src/servicenow/search.js'
+import { makeTokenProvider } from '../src/servicenow/auth.js'
 import { ServiceNowUnavailableError } from '../src/servicenow/types.js'
 import { parseConfig } from '../src/config.js'
 
 const cfg = parseConfig({
-  ANTHROPIC_API_KEY: 'sk-test-abcdefghijkl',
-  ANTHROPIC_BASE_URL: 'https://llmproxy.ustdev.com',
+  ANTHROPIC_API_KEY: 'sk-test-key-1234567890',
+  ANTHROPIC_BASE_URL: 'https://llmproxy.example.com',
   CLAUDE_MODEL: 'm',
-  SN_INSTANCE_URL: 'https://abhrademo4.service-now.com',
+  SN_INSTANCE_URL: 'https://sn.example.com',
   SN_CLIENT_ID: 'cid',
   SN_CLIENT_SECRET: 'csecret',
   SN_REFRESH_TOKEN: 'rtoken',
 })
 
-const tokenOk = { ok: true, status: 200, json: async () => ({ access_token: 'AT', expires_in: 1800 }) } as Response
+const ok = (body: unknown) =>
+  new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
 
-const record = {
-  sys_id: '5808376b3bed0710913c44e643e45a80',
-  number: 'KB0010141',
-  short_description: 'Self-checkout NCR terminal will not boot after image push',
-  text: '<p>Reimage the <b>terminal</b>&nbsp;and reboot.</p>',
-}
-
-function stub(payload: unknown, status = 200) {
-  return vi.fn(async (url: string) => {
-    if (String(url).includes('oauth_token.do')) return tokenOk
-    return {
-      ok: status === 200, status,
-      json: async () => payload,
-      text: async () => JSON.stringify(payload),
-    } as Response
-  })
-}
+const tokenResponse = () => ok({ access_token: 'tok-1', expires_in: 1800 })
 
 describe('stripHtml', () => {
-  it('produces readable text without running words together', () => {
-    expect(stripHtml('<p>one</p><p>two</p>')).toBe('one two')
+  it('turns tags into spaces so words do not run together', () => {
+    expect(stripHtml('<p>Reset</p><p>password</p>')).toBe('Reset password')
   })
-
-  it('decodes entities', () => {
+  it('decodes the entities ServiceNow actually emits', () => {
     expect(stripHtml('a&nbsp;b &amp; c')).toBe('a b & c')
   })
 })
@@ -424,76 +486,78 @@ describe('sanitiseQuery', () => {
   it('removes characters that break sysparm_query', () => {
     expect(sanitiseQuery('a^b=c&d')).toBe('a b c d')
   })
+  it('caps length', () => {
+    expect(sanitiseQuery('x'.repeat(500)).length).toBe(200)
+  })
 })
 
 describe('makeTokenProvider', () => {
-  it('exchanges the refresh token for an access token', async () => {
-    const f = stub({ result: [] })
-    expect(await makeTokenProvider(cfg, f as unknown as typeof fetch).getToken()).toBe('AT')
-    expect(String((f.mock.calls[0] as unknown as [string, RequestInit])[1].body)).toContain('grant_type=refresh_token')
+  it('caches the token across calls', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(tokenResponse())
+    const p = makeTokenProvider(cfg, fetchImpl as never)
+    expect(await p.getToken()).toBe('tok-1')
+    expect(await p.getToken()).toBe('tok-1')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
-  it('caches the token rather than refreshing per request', async () => {
-    const f = stub({ result: [] })
-    const p = makeTokenProvider(cfg, f as unknown as typeof fetch)
-    await p.getToken()
-    await p.getToken()
-    expect(f).toHaveBeenCalledTimes(1)
+  it('shares one refresh between concurrent callers', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(tokenResponse())
+    const p = makeTokenProvider(cfg, fetchImpl as never)
+    await Promise.all([p.getToken(), p.getToken(), p.getToken()])
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
-  it('does not fire two refreshes for two concurrent callers', async () => {
-    const f = stub({ result: [] })
-    const p = makeTokenProvider(cfg, f as unknown as typeof fetch)
-    await Promise.all([p.getToken(), p.getToken()])
-    expect(f).toHaveBeenCalledTimes(1)
-  })
-
-  it('names the fix when the refresh token is rejected', async () => {
-    const f = vi.fn(async () => ({ ok: false, status: 401, text: async () => 'invalid_grant' }) as Response)
-    const p = makeTokenProvider(cfg, f as unknown as typeof fetch)
+  it('explains how to fix an expired refresh token', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('bad grant', { status: 401 }))
+    const p = makeTokenProvider(cfg, fetchImpl as never)
     await expect(p.getToken()).rejects.toThrow(/Connect-SnOAuth/)
   })
 })
 
 describe('makeSearch', () => {
-  it('maps records to Articles keyed by sys_id, not number', async () => {
-    const f = stub({ result: [record] })
-    const [a] = await makeSearch(cfg, f as unknown as typeof fetch).search('self-checkout down', 5)
-
-    expect(a.id).toBe('5808376b3bed0710913c44e643e45a80')
-    expect(a.label).toBe('KB0010141')
-    expect(a.body).toBe('Reimage the terminal and reboot.')
-    expect(a.url).toBe(
-      'https://abhrademo4.service-now.com/kb_view.do?sys_kb_id=5808376b3bed0710913c44e643e45a80',
-    )
+  it('queries kb_knowledge with exactly two clauses', async () => {
+    let url = ''
+    const fetchImpl = vi.fn(async (u: string) => {
+      if (String(u).includes('oauth_token.do')) return tokenResponse()
+      url = String(u)
+      return ok({ result: [] })
+    })
+    await makeSearch(cfg, fetchImpl as never).search('printer offline', 5)
+    const q = decodeURIComponent(url)
+    expect(q).toContain('workflow_state=published')
+    expect(q).toContain('123TEXTQUERY321=printer offline')
+    // A knowledge base filter was A/B tested and removed (D5). It must not creep back.
+    expect(q).not.toContain('kb_knowledge_base')
   })
 
-  it('scopes to published articles and applies no knowledge base filter', async () => {
-    const f = stub({ result: [] })
-    await makeSearch(cfg, f as unknown as typeof fetch).search('printer', 5)
-
-    const url = decodeURIComponent(String(f.mock.calls[1][0]))
-    expect(url).toContain('workflow_state=published')
-    expect(url).toContain('123TEXTQUERY321=printer')
-    // D5: a knowledge base filter was measured as ineffective and removed.
-    expect(url).not.toContain('kb_knowledge_base')
+  it('maps records to Articles keyed on sys_id and links by sys_id', async () => {
+    const fetchImpl = vi.fn(async (u: string) => {
+      if (String(u).includes('oauth_token.do')) return tokenResponse()
+      return ok({
+        result: [{ sys_id: 'abc123', number: 'KB0010141', short_description: 'Title', text: '<p>Body</p>' }],
+      })
+    })
+    const [a] = await makeSearch(cfg, fetchImpl as never).search('q', 5)
+    expect(a).toBeDefined()
+    expect(a!.id).toBe('abc123')
+    expect(a!.label).toBe('KB0010141')
+    expect(a!.body).toBe('Body')
+    expect(a!.url).toBe('https://sn.example.com/kb_view.do?sys_kb_id=abc123')
   })
 
-  it('returns an empty array when the instance finds nothing', async () => {
-    const f = stub({ result: [] })
-    expect(await makeSearch(cfg, f as unknown as typeof fetch).search('zzz', 5)).toEqual([])
+  it('raises ServiceNowUnavailableError when the instance is down', async () => {
+    const fetchImpl = vi.fn(async (u: string) => {
+      if (String(u).includes('oauth_token.do')) return tokenResponse()
+      throw new TypeError('fetch failed')
+    })
+    await expect(makeSearch(cfg, fetchImpl as never).search('q', 5))
+      .rejects.toBeInstanceOf(ServiceNowUnavailableError)
   })
 
-  it('raises ServiceNowUnavailableError on an HTTP failure', async () => {
-    const f = stub({ error: 'boom' }, 500)
-    await expect(
-      makeSearch(cfg, f as unknown as typeof fetch).search('x', 5),
-    ).rejects.toThrow(ServiceNowUnavailableError)
-  })
-
-  it('reports unhealthy rather than throwing when the instance is down', async () => {
-    const f = stub({ error: 'boom' }, 500)
-    expect((await makeSearch(cfg, f as unknown as typeof fetch).health()).ok).toBe(false)
+  it('reports health without throwing', async () => {
+    const fetchImpl = vi.fn(async () => { throw new TypeError('fetch failed') })
+    const h = await makeSearch(cfg, fetchImpl as never).health()
+    expect(h.ok).toBe(false)
   })
 })
 ```
@@ -696,7 +760,7 @@ export function makeSearch(cfg: Config, fetchImpl: typeof fetch = fetch) {
 - [ ] **Step 6: Run to verify it passes**
 
 Run: `npx vitest run tests/servicenow.test.ts`
-Expected: PASS, 12 tests
+Expected: PASS, 10 tests
 
 - [ ] **Step 7: Verify against the live instance**
 
@@ -715,299 +779,404 @@ git commit -m "feat: ServiceNow OAuth and live knowledge search"
 
 ---
 
-## Task 3: The relevance gate
+## Task 3: Aggregate queries
 
 **Files:**
-- Create: `src/gate/decide.ts`
-- Test: `tests/gate.test.ts`
+- Create: `src/servicenow/stats.ts`
+- Test: `tests/stats.test.ts`
 
 **Interfaces:**
-- Consumes: `Article` (Task 2)
-- Produces: `tokenise(s: string): string[]`; `coverage(query: string, doc: string): number`; `type GateReason = 'too_few_tokens' | 'low_coverage' | 'model_declined' | 'servicenow_unavailable' | null`; `interface GateResult { answer: boolean; reason: GateReason; topCoverage: number }`; `decide(query, articles, opts: { minTokens: number; minCoverage: number }): GateResult`
+- Consumes: `Config`, `makeTokenProvider`, `ServiceNowUnavailableError` (Tasks 1–2)
+- Produces: `AGGREGATES`, `Aggregate`, `MetricRequest`, `MetricResult`, `isAggregate(v)`, `buildStatsPath(req)`, `buildListUrl(instanceUrl, req)`, `makeStats(cfg, fetch)` → `{ run(req): Promise<MetricResult> }`
 
-Search returns something for almost any input, so this — not search — is what makes "I don't know" possible. Layers 1 and 2 of D11 live here; layer 3 is the model declining, handled in Task 5.
+This is the whole of D14's execution side. The model supplies four fields as data; everything here builds a read-only `GET`.
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/gate.test.ts`:
-
 ```ts
-import { describe, it, expect } from 'vitest'
-import { tokenise, coverage, decide } from '../src/gate/decide.js'
-import type { Article } from '../src/servicenow/types.js'
+import { describe, it, expect, vi } from 'vitest'
+import { buildStatsPath, buildListUrl, isAggregate, makeStats } from '../src/servicenow/stats.js'
+import { ServiceNowUnavailableError } from '../src/servicenow/types.js'
+import { parseConfig } from '../src/config.js'
 
-const opts = { minTokens: 2, minCoverage: 0.3 }
-const art = (title: string, body = ''): Article => ({ id: 'x', title, body, url: 'u' })
+const cfg = parseConfig({
+  ANTHROPIC_API_KEY: 'sk-test-key-1234567890',
+  ANTHROPIC_BASE_URL: 'https://llmproxy.example.com',
+  CLAUDE_MODEL: 'm',
+  SN_INSTANCE_URL: 'https://sn.example.com',
+  SN_CLIENT_ID: 'cid',
+  SN_CLIENT_SECRET: 'csecret',
+  SN_REFRESH_TOKEN: 'rtoken',
+})
 
-describe('tokenise', () => {
-  it('lowercases and splits on punctuation', () => {
-    expect(tokenise('Printer, JAM!')).toEqual(['printer', 'jam'])
+const ok = (body: unknown) =>
+  new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
+const tokenResponse = () => ok({ access_token: 'tok-1', expires_in: 1800 })
+
+describe('isAggregate', () => {
+  it('accepts the five permitted aggregates', () => {
+    for (const a of ['count', 'avg', 'sum', 'min', 'max']) expect(isAggregate(a)).toBe(true)
   })
-
-  it('drops stopwords and very short tokens', () => {
-    expect(tokenise('the printer is on my desk')).toEqual(['printer', 'desk'])
-  })
-
-  it('keeps error codes and identifiers intact', () => {
-    expect(tokenise('AP_MAX_AMOUNT and $.entities')).toEqual(['ap_max_amount', '$.entities'])
+  it('rejects anything else, including SQL-ish input', () => {
+    expect(isAggregate('median')).toBe(false)
+    expect(isAggregate('count; DROP')).toBe(false)
+    expect(isAggregate(undefined)).toBe(false)
   })
 })
 
-describe('coverage', () => {
-  it('is 1 when every query term appears', () => {
-    expect(coverage('printer jam', 'the printer has a jam')).toBe(1)
+describe('buildStatsPath', () => {
+  it('uses sysparm_count for count', () => {
+    const p = buildStatsPath({ table: 'incident', filter: 'active=true', aggregate: 'count' })
+    expect(p).toBe('/api/now/stats/incident?sysparm_count=true&sysparm_query=active%3Dtrue')
   })
 
-  it('is 0.5 when half appear', () => {
-    expect(coverage('printer jam', 'the printer is fine')).toBe(0.5)
+  it('uses sysparm_<agg>_fields for the others', () => {
+    const p = buildStatsPath({
+      table: 'incident', filter: 'priority=2', aggregate: 'avg', field: 'calendar_duration',
+    })
+    expect(p).toContain('sysparm_avg_fields=calendar_duration')
+    expect(p).toContain('sysparm_query=priority%3D2')
   })
 
-  it('is 0 when the query has no meaningful terms', () => {
-    expect(coverage('the is a', 'anything')).toBe(0)
+  it('refuses a non-count aggregate with no field', () => {
+    expect(() => buildStatsPath({ table: 'incident', filter: '', aggregate: 'avg' }))
+      .toThrow(/requires a field/)
   })
 
-  it('counts each distinct term once', () => {
-    expect(coverage('printer printer jam', 'printer jam')).toBe(1)
-  })
-})
-
-describe('gate layer 1 — token guard', () => {
-  it('declines greeting-only input', () => {
-    expect(decide('Hi Team,', [], opts).reason).toBe('too_few_tokens')
-  })
-
-  it('declines null-value tickets', () => {
-    expect(decide('nan', [], opts).reason).toBe('too_few_tokens')
-  })
-
-  it('lets a two-token fragment through to the later layers', () => {
-    // 'Bky OLO' is two 3-char tokens, exactly at the floor. The coverage floor and
-    // triage handle it — the token guard is only for one-term noise.
-    expect(decide('Bky OLO', [], opts).reason).toBe('low_coverage')
+  it('omits sysparm_query entirely when the filter is empty', () => {
+    expect(buildStatsPath({ table: 'sn_vul_vulnerable_item', filter: '', aggregate: 'count' }))
+      .toBe('/api/now/stats/sn_vul_vulnerable_item?sysparm_count=true')
   })
 })
 
-describe('gate layer 2 — coverage floor', () => {
-  it('declines when no article is relevant enough', () => {
-    const r = decide('what is the capital of France', [art('Feedback Mechanisms in Knowledge')], opts)
-    expect(r.answer).toBe(false)
-    expect(r.reason).toBe('low_coverage')
+describe('buildListUrl', () => {
+  it('deep links to the same records the number counted', () => {
+    const u = buildListUrl('https://sn.example.com', {
+      table: 'incident', filter: 'active=true^state=2', aggregate: 'count',
+    })
+    expect(u).toBe('https://sn.example.com/incident_list.do?sysparm_query=active%3Dtrue%5Estate%3D2')
+  })
+})
+
+describe('makeStats.run', () => {
+  it('returns the count as a number, with the filter and link intact', async () => {
+    const fetchImpl = vi.fn(async (u: string) => {
+      if (String(u).includes('oauth_token.do')) return tokenResponse()
+      return ok({ result: { stats: { count: '5513' } } })
+    })
+    const r = await makeStats(cfg, fetchImpl as never)
+      .run({ table: 'incident', filter: 'active=true', aggregate: 'count' })
+    expect(r.value).toBe(5513)
+    expect(r.filter).toBe('active=true')
+    expect(r.url).toContain('incident_list.do')
   })
 
-  it('declines when the instance returned nothing', () => {
-    expect(decide('printer jam in warehouse', [], opts).reason).toBe('low_coverage')
+  it('keeps a duration aggregate as a string', async () => {
+    const fetchImpl = vi.fn(async (u: string) => {
+      if (String(u).includes('oauth_token.do')) return tokenResponse()
+      return ok({ result: { stats: { avg: { calendar_duration: '00:43:22' } } } })
+    })
+    const r = await makeStats(cfg, fetchImpl as never).run({
+      table: 'incident', filter: 'priority=2', aggregate: 'avg', field: 'calendar_duration',
+    })
+    expect(r.value).toBe('00:43:22')
   })
 
-  it('answers when the top article covers the query', () => {
-    const r = decide('printer jam warehouse', [art('Printer jam', 'clear the warehouse printer')], opts)
-    expect(r.answer).toBe(true)
-    expect(r.reason).toBe(null)
-    expect(r.topCoverage).toBe(1)
+  it('rejects an aggregate outside the five, without calling ServiceNow', async () => {
+    const fetchImpl = vi.fn()
+    await expect(
+      makeStats(cfg, fetchImpl as never)
+        .run({ table: 'incident', filter: '', aggregate: 'median' as never }),
+    ).rejects.toThrow(/aggregate/)
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('scores against the best article, not merely the first', () => {
-    const r = decide('vpn connect failure', [art('Unrelated'), art('VPN connect failure guide')], opts)
-    expect(r.answer).toBe(true)
+  it('raises rather than repairing a filter ServiceNow rejects', async () => {
+    const fetchImpl = vi.fn(async (u: string) => {
+      if (String(u).includes('oauth_token.do')) return tokenResponse()
+      return new Response('Invalid query', { status: 400 })
+    })
+    await expect(
+      makeStats(cfg, fetchImpl as never)
+        .run({ table: 'incident', filter: 'nonsense!!', aggregate: 'count' }),
+    ).rejects.toBeInstanceOf(ServiceNowUnavailableError)
+  })
+
+  it('raises when the body carries no usable stats', async () => {
+    const fetchImpl = vi.fn(async (u: string) => {
+      if (String(u).includes('oauth_token.do')) return tokenResponse()
+      return ok({ result: {} })
+    })
+    await expect(
+      makeStats(cfg, fetchImpl as never).run({ table: 'incident', filter: '', aggregate: 'count' }),
+    ).rejects.toThrow(/no value/)
   })
 })
 ```
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `npx vitest run tests/gate.test.ts`
+Run: `npx vitest run tests/stats.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement `src/gate/decide.ts`**
+- [ ] **Step 3: Implement `src/servicenow/stats.ts`**
 
 ```ts
-import type { Article } from '../servicenow/types.js'
+import type { Config } from '../config.js'
+import { ServiceNowUnavailableError } from './types.js'
+import { makeTokenProvider } from './auth.js'
 
-const STOPWORDS = new Set([
-  'the','a','an','is','are','was','were','to','of','in','on','for','and','or','it','this',
-  'that','with','my','we','our','not','no','be','been','has','have','do','does','did','can',
-  'cannot','am','at','as','by','from','get','got','will','would','should','when','what','why',
-  'how','after','into','out','up','down','me','you','your','their','there','they',
-])
+/** The only aggregates we will execute. Anything else is a decline, never a coercion. */
+export const AGGREGATES = ['count', 'avg', 'sum', 'min', 'max'] as const
+export type Aggregate = (typeof AGGREGATES)[number]
 
-/**
- * Lowercase, strip punctuation, drop stopwords and 1-2 character tokens.
- * `$`, `.`, `-` and `_` survive so error codes stay intact.
- */
-export function tokenise(s: string): string[] {
-  if (!s) return []
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9$._\- ]/g, ' ')
-    .split(/\s+/)
-    .filter((t) => t.length > 2 && !STOPWORDS.has(t))
+/** What the model supplies — as data. It never supplies a URL, a method or a path. */
+export interface MetricRequest {
+  table: string
+  filter: string
+  aggregate: Aggregate
+  field?: string
 }
 
-/** Fraction of the query's distinct meaningful terms that appear in the document. */
-export function coverage(query: string, doc: string): number {
-  const terms = [...new Set(tokenise(query))]
-  if (terms.length === 0) return 0
-  const haystack = doc.toLowerCase()
-  const hits = terms.filter((t) => haystack.includes(t)).length
-  return Math.round((hits / terms.length) * 100) / 100
+export interface MetricResult extends MetricRequest {
+  /** Numeric where ServiceNow returns a number; a string for durations like '00:43:22'. */
+  value: number | string
+  url: string
 }
 
-export type GateReason =
-  | 'too_few_tokens'
-  | 'low_coverage'
-  | 'out_of_scope'
-  | 'model_declined'
-  | 'servicenow_unavailable'
-  | null
-
-export interface GateResult {
-  answer: boolean
-  reason: GateReason
-  topCoverage: number
+export function isAggregate(v: unknown): v is Aggregate {
+  return typeof v === 'string' && (AGGREGATES as readonly string[]).includes(v)
 }
 
-/**
- * Layers 1 and 2 of the three-layer gate (D11).
- *
- * A single coverage threshold was measured and rejected: the in-scope and
- * out-of-scope distributions overlap. "Hi Team," scores 1.00 because after
- * stopword removal only one term remains and it appears in the article — hence
- * the token guard runs first and short-circuits before coverage is consulted.
- */
-export function decide(
-  query: string,
-  articles: Article[],
-  opts: { minTokens: number; minCoverage: number },
-): GateResult {
-  if (tokenise(query).length < opts.minTokens) {
-    return { answer: false, reason: 'too_few_tokens', topCoverage: 0 }
+/** count uses sysparm_count; every other aggregate uses sysparm_<agg>_fields. */
+export function buildStatsPath(req: MetricRequest): string {
+  const params = new URLSearchParams()
+  if (req.aggregate === 'count') {
+    params.set('sysparm_count', 'true')
+  } else {
+    if (!req.field) throw new Error(`aggregate '${req.aggregate}' requires a field`)
+    params.set(`sysparm_${req.aggregate}_fields`, req.field)
+  }
+  if (req.filter) params.set('sysparm_query', req.filter)
+  return `/api/now/stats/${req.table}?${params.toString()}`
+}
+
+/** The link that settles any argument about the number. */
+export function buildListUrl(instanceUrl: string, req: MetricRequest): string {
+  return `${instanceUrl}/${req.table}_list.do?sysparm_query=${encodeURIComponent(req.filter)}`
+}
+
+interface StatsBody {
+  result?: { stats?: { count?: string } & Record<string, unknown> }
+}
+
+/** ServiceNow returns everything as strings. Numbers become numbers; durations stay text. */
+function coerce(raw: string): number | string {
+  const n = Number(raw)
+  return raw.trim() !== '' && Number.isFinite(n) ? n : raw
+}
+
+function extract(body: StatsBody, req: MetricRequest): number | string {
+  const stats = body.result?.stats
+  if (!stats) throw new Error('ServiceNow returned no value for this query')
+
+  if (req.aggregate === 'count') {
+    if (stats.count === undefined) throw new Error('ServiceNow returned no value for this query')
+    return coerce(stats.count)
   }
 
-  const top = articles.reduce(
-    (best, a) => Math.max(best, coverage(query, `${a.title} ${a.body}`)),
-    0,
-  )
+  const group = stats[req.aggregate] as Record<string, string> | undefined
+  const raw = req.field ? group?.[req.field] : undefined
+  if (raw === undefined) throw new Error('ServiceNow returned no value for this query')
+  return coerce(raw)
+}
 
-  if (top < opts.minCoverage) {
-    return { answer: false, reason: 'low_coverage', topCoverage: top }
+export function makeStats(cfg: Config, fetchImpl: typeof fetch = fetch) {
+  const tokens = makeTokenProvider(cfg, fetchImpl)
+
+  return {
+    async run(req: MetricRequest): Promise<MetricResult> {
+      // Validate before spending a token refresh or a round trip.
+      if (!isAggregate(req.aggregate)) {
+        throw new Error(`unsupported aggregate '${String(req.aggregate)}'`)
+      }
+
+      const path = buildStatsPath(req)
+      const token = await tokens.getToken()
+
+      let res: Response
+      try {
+        res = await fetchImpl(`${cfg.sn.instanceUrl}${path}`, {
+          headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+          // One pathological filter must not hang a chat turn.
+          signal: AbortSignal.timeout(cfg.metricsTimeoutMs),
+        })
+      } catch (e) {
+        throw new ServiceNowUnavailableError(`Aggregate query failed against ${req.table}.`, e)
+      }
+
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '')
+        // Deliberately no repair attempt: a second guess is a second chance to be wrong.
+        throw new ServiceNowUnavailableError(
+          `ServiceNow rejected the aggregate query (HTTP ${res.status}). ${detail.slice(0, 200)}`,
+        )
+      }
+
+      return {
+        ...req,
+        value: extract((await res.json()) as StatsBody, req),
+        url: buildListUrl(cfg.sn.instanceUrl, req),
+      }
+    },
   }
-  return { answer: true, reason: null, topCoverage: top }
 }
 ```
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npx vitest run tests/gate.test.ts`
-Expected: PASS, 14 tests
+Run: `npx vitest run tests/stats.test.ts`
+Expected: PASS, 12 tests
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Verify against the live instance**
 
 ```bash
-git add src/gate tests/gate.test.ts
-git commit -m "feat: relevance gate with token guard and coverage floor"
+npx tsx -e "import {loadConfig} from './src/config.js';import {makeStats} from './src/servicenow/stats.js';const s=makeStats(loadConfig());Promise.all([s.run({table:'incident',filter:'active=true',aggregate:'count'}),s.run({table:'incident',filter:'active=true^priority=1',aggregate:'count'}),s.run({table:'task_sla',filter:'has_breached=true',aggregate:'count'})]).then(r=>r.forEach(x=>console.log(x.value,'|',x.table,x.filter)))"
+```
+
+Expected, matching the spec §8b measurements (numbers drift as tickets are raised — the shape is what matters):
+
+```
+5513 | incident active=true
+14   | incident active=true^priority=1
+23429| task_sla has_breached=true
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/servicenow/stats.ts tests/stats.test.ts
+git commit -m "feat: read-only aggregate queries with deep links"
 ```
 
 ---
 
-## Task 4: Claude client, prompt and citation verification
+## Task 4: Claude client, one prompt, reply parsing
 
 **Files:**
 - Create: `src/llm/client.ts`
 - Test: `tests/llm.test.ts`
 
 **Interfaces:**
-- Consumes: `Config` (Task 1), `Article` (Task 2)
-- Produces: `SYSTEM_PROMPT`; `TRIAGE_PROMPT`; `buildContextBlock(articles: Article[]): string`; `parseCitations(answer: string): number[]`; `verifyCitations(cited: number[], supplied: Article[]): { sources: Article[]; fabricated: number[] }`; `stripCitationMarkup(answer: string): string`; `parseTriage(raw: string, originalQuery: string): string | null`; `interface Turn { role: 'user' | 'assistant'; content: string }`; `makeLlm(cfg): { preflight(): Promise<void>; answer(o): Promise<string>; triage(o: { question: string; articles: Article[] }): Promise<string | null> }`
+- Consumes: `Config`, `Article`, `MetricRequest`, `isAggregate`, `log`, `mask`
+- Produces: `Turn`, `Reply`, `SYSTEM_PROMPT`, `buildContextBlock(articles)`, `parseReply(raw, originalQuery)`, `parseCitations(text)`, `verifyCitations(cited, supplied)`, `stripCitationMarkup(text)`, `makeLlm(cfg)` → `{ preflight(), decide({question, articles, history}) }`
 
-`triage` returns a better search query, or `null` meaning "decline — do not retry".
+One prompt, four possible replies (D16). There is no triage prompt and no second method.
 
 - [ ] **Step 1: Write the failing test**
-
-`tests/llm.test.ts`:
 
 ```ts
 import { describe, it, expect } from 'vitest'
 import {
-  buildContextBlock, parseCitations, verifyCitations, stripCitationMarkup, parseTriage,
+  buildContextBlock, parseReply, parseCitations, verifyCitations, stripCitationMarkup,
 } from '../src/llm/client.js'
 import type { Article } from '../src/servicenow/types.js'
 
-const arts: Article[] = [
-  { id: 'sysA', label: 'KB0010141', title: 'Epson printer', body: 'reseat the roll', url: 'uA' },
-  { id: 'sysB', label: 'KB0010140', title: 'Zebra printer', body: 'check the label size', url: 'uB' },
-]
+const A = (id: string, title: string): Article =>
+  ({ id, title, body: 'body', url: `https://sn/${id}`, label: `KB${id}` })
 
 describe('buildContextBlock', () => {
-  it('labels articles [1]..[n]', () => {
-    const b = buildContextBlock(arts)
-    expect(b).toContain('[1]')
-    expect(b).toContain('[2]')
-    expect(b).toContain('Epson printer')
-  })
-
-  it('never puts sys_ids in the prompt — labels are the citation key', () => {
-    expect(buildContextBlock(arts)).not.toContain('sysA')
+  it('labels articles [1]..[n] in order', () => {
+    const b = buildContextBlock([A('a', 'First'), A('b', 'Second')])
+    expect(b).toContain('[1] First')
+    expect(b).toContain('[2] Second')
   })
 })
 
-describe('parseCitations', () => {
-  it('extracts bracketed labels', () => {
-    expect(parseCitations('Reseat the roll [1] then retry [2].')).toEqual([1, 2])
+describe('parseReply', () => {
+  it('reads an ANSWER and keeps its citations', () => {
+    const r = parseReply('ANSWER\nReset it from the portal [1].', 'q')
+    expect(r.kind).toBe('answer')
+    if (r.kind === 'answer') expect(r.text).toBe('Reset it from the portal [1].')
   })
 
-  it('de-duplicates repeated citations', () => {
-    expect(parseCitations('[1] and again [1]')).toEqual([1])
+  it('reads a METRIC into a request', () => {
+    const r = parseReply(
+      'METRIC\n{"table":"incident","filter":"active=true","aggregate":"count"}',
+      'how many open incidents',
+    )
+    expect(r.kind).toBe('metric')
+    if (r.kind === 'metric') {
+      expect(r.request.table).toBe('incident')
+      expect(r.request.filter).toBe('active=true')
+      expect(r.request.aggregate).toBe('count')
+    }
   })
 
-  it('finds nothing when the model declines', () => {
-    expect(parseCitations('NO_ANSWER_IN_KB')).toEqual([])
+  it('declines a METRIC whose aggregate is not permitted', () => {
+    const r = parseReply('METRIC\n{"table":"incident","filter":"","aggregate":"median"}', 'q')
+    expect(r.kind).toBe('no_answer')
+  })
+
+  it('declines a METRIC that is not valid JSON', () => {
+    expect(parseReply('METRIC\n{table: incident}', 'q').kind).toBe('no_answer')
+  })
+
+  it('declines a METRIC with no table', () => {
+    expect(parseReply('METRIC\n{"filter":"active=true","aggregate":"count"}', 'q').kind)
+      .toBe('no_answer')
+  })
+
+  it('reads a SEARCH as new keywords', () => {
+    const r = parseReply('SEARCH\noutlook repeated password prompt credentials', 'windows popup')
+    expect(r.kind).toBe('search')
+    if (r.kind === 'search') expect(r.query).toBe('outlook repeated password prompt credentials')
+  })
+
+  it('declines a SEARCH that just repeats the question', () => {
+    // Re-running the identical search burns a call for identical results.
+    expect(parseReply('SEARCH\nwindows popup', 'windows popup').kind).toBe('no_answer')
+  })
+
+  it('declines an empty SEARCH', () => {
+    expect(parseReply('SEARCH\n   ', 'q').kind).toBe('no_answer')
+  })
+
+  it('reads NO_ANSWER', () => {
+    expect(parseReply('NO_ANSWER', 'q').kind).toBe('no_answer')
+  })
+
+  it('treats an unrecognised reply as NO_ANSWER rather than guessing', () => {
+    expect(parseReply('Sure! Here is what I think...', 'q').kind).toBe('no_answer')
+  })
+
+  it('tolerates leading blank lines and stray whitespace', () => {
+    expect(parseReply('\n\n  ANSWER  \nText [1]', 'q').kind).toBe('answer')
   })
 })
 
 describe('verifyCitations', () => {
-  it('maps labels back to the supplied articles', () => {
-    const { sources, fabricated } = verifyCitations([1], arts)
-    expect(sources.map((s) => s.id)).toEqual(['sysA'])
+  const supplied = [A('a', 'First'), A('b', 'Second')]
+
+  it('maps cited labels back to articles', () => {
+    const { sources, fabricated } = verifyCitations([1, 2], supplied)
+    expect(sources.map((s) => s.id)).toEqual(['a', 'b'])
     expect(fabricated).toEqual([])
   })
 
-  it('strips citations outside the supplied set', () => {
-    const { sources, fabricated } = verifyCitations([1, 7], arts)
-    expect(sources.map((s) => s.id)).toEqual(['sysA'])
+  it('reports a label that was never supplied', () => {
+    const { sources, fabricated } = verifyCitations([1, 7], supplied)
+    expect(sources.map((s) => s.id)).toEqual(['a'])
     expect(fabricated).toEqual([7])
   })
-
-  it('returns no sources when nothing was cited', () => {
-    expect(verifyCitations([], arts).sources).toEqual([])
-  })
 })
 
-describe('stripCitationMarkup', () => {
-  it('removes labels from the user-facing answer', () => {
-    expect(stripCitationMarkup('Reseat the roll [1] then retry [2].')).toBe('Reseat the roll then retry.')
+describe('parseCitations and stripCitationMarkup', () => {
+  it('finds each distinct label once', () => {
+    expect(parseCitations('a [1] b [2] c [1]')).toEqual([1, 2])
   })
-})
-
-describe('parseTriage', () => {
-  it('returns the rewritten query', () => {
-    expect(parseTriage('outlook repeated password prompt SSO', 'windows popup outlook'))
-      .toBe('outlook repeated password prompt SSO')
-  })
-
-  it('returns null when the question is out of scope', () => {
-    expect(parseTriage('OUT_OF_SCOPE', 'what is the capital of France')).toBe(null)
-  })
-
-  it('returns null for an empty response rather than searching for nothing', () => {
-    expect(parseTriage('   ', 'anything')).toBe(null)
-  })
-
-  it('returns null when the rewrite is the original query, which would repeat the search', () => {
-    expect(parseTriage('Unable to login VPN', 'unable to login vpn')).toBe(null)
-  })
-
-  it('strips quotes and stray prose the model may wrap around the query', () => {
-    expect(parseTriage('"zebra label printer network"', 'warehouse printer'))
-      .toBe('zebra label printer network')
+  it('removes the markers once sources render separately', () => {
+    expect(stripCitationMarkup('Do this [1]. Then that [2].')).toBe('Do this. Then that.')
   })
 })
 ```
@@ -1023,6 +1192,7 @@ Expected: FAIL — module not found
 import Anthropic from '@anthropic-ai/sdk'
 import type { Config } from '../config.js'
 import type { Article } from '../servicenow/types.js'
+import { isAggregate, type MetricRequest } from '../servicenow/stats.js'
 import { log, mask } from '../log.js'
 
 export interface Turn {
@@ -1030,17 +1200,49 @@ export interface Turn {
   content: string
 }
 
-export const SYSTEM_PROMPT = `You answer questions using ONLY the knowledge base articles supplied in the CONTEXT block.
+export type Reply =
+  | { kind: 'answer'; text: string }
+  | { kind: 'metric'; request: MetricRequest }
+  | { kind: 'search'; query: string }
+  | { kind: 'no_answer' }
 
-Rules:
-- Use only the supplied articles. Never use outside knowledge, even if you are confident.
-- Cite every claim with the bracketed label of the article it came from, like [1] or [2].
-- Cite ONLY labels that appear in the CONTEXT block.
-- If the articles do not contain the answer, reply exactly: NO_ANSWER_IN_KB
-- Be concise and practical. Prefer numbered steps when the article gives steps.`
+/**
+ * One prompt, four replies (D16). Rev 8 merged the old triage prompt into this —
+ * with D13 in place the coverage floor only chose which prompt to send, so the
+ * two prompts became one for the same number of model calls.
+ */
+export const SYSTEM_PROMPT = `You are an assistant for a ServiceNow instance. You handle two kinds of question.
+
+KNOWLEDGE QUESTIONS ("how do I...", "what is the process for...") are answered from the CONTEXT block of knowledge base articles.
+
+COUNTING QUESTIONS ("how many...", "what is our...", anything asking for a number about tickets, SLAs, changes, problems, assets or security incidents) are answered by writing a ServiceNow aggregate query, which the server runs.
+
+Reply with EXACTLY ONE of the four forms below. The first line is the form name, alone. Output nothing else — no preamble, no explanation.
+
+ANSWER
+<your answer, grounded ONLY in the CONTEXT articles, citing each claim with the bracketed label it came from, like [1] or [2]. Cite only labels present in CONTEXT. Be concise; prefer numbered steps when the article gives steps.>
+
+METRIC
+{"table":"<table>","filter":"<encoded query>","aggregate":"count|avg|sum|min|max","field":"<field, omit for count>"}
+
+SEARCH
+<better keywords, nothing else — use the vocabulary a knowledge base would use. Only when the question is reasonable but the CONTEXT articles clearly do not match it.>
+
+NO_ANSWER
+
+Rules for METRIC:
+- "filter" is a ServiceNow encoded query: clauses joined by ^, e.g. active=true^priority=1
+- Open/active tickets are active=true. Priorities are priority=1..5. Incident states: 1 New, 2 In Progress, 3 On Hold, 6 Resolved, 7 Closed, 8 Cancelled. Be careful: "closed" usually means both 6 and 7, so use stateIN6,7 unless the user clearly means only one.
+- Breached SLAs are task_sla with has_breached=true. Security incidents are sn_si_incident.
+- Relative dates use ServiceNow javascript functions, e.g. opened_at<javascript:gs.daysAgoStart(30)
+- Never invent a table or field you are not confident exists. Prefer NO_ANSWER.
+- If the data plainly does not exist in ServiceNow (uptime, latency, synthetic checks, anything from a monitoring tool), reply NO_ANSWER.
+
+Never answer a knowledge question from your own knowledge. If CONTEXT does not contain it and better keywords will not help, reply NO_ANSWER.`
 
 /** Articles are labelled [1]..[n]. The model cites labels, never sys_ids or KB numbers (D10). */
 export function buildContextBlock(articles: Article[]): string {
+  if (articles.length === 0) return '(no articles matched)'
   return articles.map((a, i) => `[${i + 1}] ${a.title}\n${a.body}`).join('\n\n---\n\n')
 }
 
@@ -1068,35 +1270,58 @@ export function stripCitationMarkup(answer: string): string {
   return answer.replace(/\s*\[\d{1,2}\]/g, '').replace(/\s{2,}/g, ' ').trim()
 }
 
-export const TRIAGE_PROMPT = `A user asked an IT/operations question. A keyword search of the knowledge base returned poor matches, shown below.
-
-Decide one of two things:
-
-1. The question is outside what an IT/operations knowledge base covers (general knowledge, chit-chat, a monitoring alert, an unreadable fragment). Reply exactly: OUT_OF_SCOPE
-
-2. The question is reasonable but the user's words did not match how the articles are written. Reply with BETTER SEARCH KEYWORDS ONLY — no explanation, no quotes, no punctuation beyond spaces. Use the vocabulary an IT knowledge base would use.
-
-Example: "windows security pop up everytime i try to use outlook" becomes: outlook repeated password prompt credentials SSO
-
-Reply with either OUT_OF_SCOPE or the keywords. Nothing else.`
-
 /**
- * Interprets the triage reply. Returns a query to retry with, or null meaning decline.
- *
- * Null on: OUT_OF_SCOPE, an empty reply, or a rewrite identical to the original —
- * repeating the same search would burn a call for the same results.
+ * Interprets the model's reply. Anything unrecognised, malformed or useless
+ * becomes NO_ANSWER — the same discipline as stripping a fabricated citation.
+ * This function never repairs; it only accepts or declines.
  */
-export function parseTriage(raw: string, originalQuery: string): string | null {
-  const cleaned = raw.trim().replace(/^["'`]+|["'`]+$/g, '').trim()
-  if (!cleaned) return null
-  if (cleaned.toUpperCase().includes('OUT_OF_SCOPE')) return null
-  if (cleaned.toLowerCase() === originalQuery.trim().toLowerCase()) return null
-  return cleaned
+export function parseReply(raw: string, originalQuery: string): Reply {
+  const lines = raw.trim().split('\n')
+  const verbLine = (lines.shift() ?? '').trim().toUpperCase()
+  const rest = lines.join('\n').trim()
+
+  if (verbLine === 'ANSWER') {
+    return rest ? { kind: 'answer', text: rest } : { kind: 'no_answer' }
+  }
+
+  if (verbLine === 'METRIC') {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(rest)
+    } catch {
+      return { kind: 'no_answer' }
+    }
+    const o = parsed as Partial<MetricRequest>
+    if (typeof o?.table !== 'string' || !o.table.trim()) return { kind: 'no_answer' }
+    if (!isAggregate(o.aggregate)) return { kind: 'no_answer' }
+    if (o.aggregate !== 'count' && (typeof o.field !== 'string' || !o.field.trim())) {
+      return { kind: 'no_answer' }
+    }
+    return {
+      kind: 'metric',
+      request: {
+        table: o.table.trim(),
+        filter: typeof o.filter === 'string' ? o.filter.trim() : '',
+        aggregate: o.aggregate,
+        ...(o.field ? { field: o.field.trim() } : {}),
+      },
+    }
+  }
+
+  if (verbLine === 'SEARCH') {
+    const q = rest.replace(/^["'`]+|["'`]+$/g, '').trim()
+    if (!q) return { kind: 'no_answer' }
+    // Re-running the identical search burns a call for identical results.
+    if (q.toLowerCase() === originalQuery.trim().toLowerCase()) return { kind: 'no_answer' }
+    return { kind: 'search', query: q }
+  }
+
+  return { kind: 'no_answer' }
 }
 
 /**
  * Stand-in for the gateway, used only when LLM_MODE=stub — for building and
- * demoing the whole app before the Key Vault secret is available.
+ * exercising the whole app before the Key Vault secret is available.
  *
  * It must be loud and obviously fake. Shipping with this enabled unnoticed
  * would be far worse than not booting at all.
@@ -1106,16 +1331,27 @@ export function makeStubLlm() {
     async preflight(): Promise<void> {
       log('llm.STUB_MODE', { warning: 'No real model. Answers are canned. Do not demo as real.' })
     },
-    async answer(opts: { question: string; articles: Article[] }): Promise<string> {
-      log('llm.STUB_MODE.answer', { q: opts.question })
+
+    async decide(opts: { question: string; articles: Article[] }): Promise<Reply> {
+      log('llm.STUB_MODE.decide', { q: opts.question })
+
+      // A fixture, not intelligence: it exists so the aggregate path can be
+      // exercised end-to-end, with a real number, before the key arrives.
+      if (/how many|count of/i.test(opts.question)) {
+        return {
+          kind: 'metric',
+          request: { table: 'incident', filter: 'active=true', aggregate: 'count' },
+        }
+      }
+
       const first = opts.articles[0]
-      if (!first) return 'NO_ANSWER_IN_KB'
-      return `[STUB — no live model] The knowledge base article that matches this is ` +
-        `"${first.title}". Its content begins: ${first.body.slice(0, 200)} [1]`
-    },
-    // No rewriting without a model: stub mode declines rather than pretending.
-    async triage(): Promise<string | null> {
-      return null
+      if (!first) return { kind: 'no_answer' }
+      return {
+        kind: 'answer',
+        text:
+          `[STUB — no live model] The knowledge base article that matches this is ` +
+          `"${first.title}". Its content begins: ${first.body.slice(0, 200)} [1]`,
+      }
     },
   }
 }
@@ -1125,6 +1361,19 @@ export function makeLlm(cfg: Config) {
 
   // Two env vars, standard SDK, no wrapper (nowstudio-reference §1).
   const client = new Anthropic({ apiKey: cfg.anthropicApiKey, baseURL: cfg.anthropicBaseUrl })
+
+  async function complete(system: string, messages: Turn[], maxTokens: number): Promise<string> {
+    const res = await client.messages.create({
+      model: cfg.claudeModel,
+      max_tokens: maxTokens,
+      system,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    })
+    return res.content
+      .map((b) => (b.type === 'text' ? b.text : ''))
+      .join('')
+      .trim()
+  }
 
   return {
     /**
@@ -1143,60 +1392,21 @@ export function makeLlm(cfg: Config) {
       } catch (e) {
         throw new Error(
           `Gateway preflight failed for model '${cfg.claudeModel}' at ${cfg.anthropicBaseUrl} ` +
-            `(key ${mask(cfg.anthropicApiKey)}). Model ids are gateway-specific — do not assume ` +
-            `a public Anthropic id works. Original error: ${e instanceof Error ? e.message : String(e)}`,
+            `(key ${mask(cfg.anthropicApiKey)}). The gateway renames model ids — check the exact ` +
+            `id with the platform team. Cause: ${e instanceof Error ? e.message : String(e)}`,
         )
       }
     },
 
-    async answer(opts: { question: string; articles: Article[]; history: Turn[] }): Promise<string> {
-      const res = await client.messages.create({
-        model: cfg.claudeModel,
-        max_tokens: 1024,
-        system: SYSTEM_PROMPT,
-        messages: [
-          ...opts.history.slice(-6),
-          {
-            role: 'user' as const,
-            content: `CONTEXT:\n\n${buildContextBlock(opts.articles)}\n\nQUESTION: ${opts.question}`,
-          },
-        ],
-      })
-
-      return res.content
-        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-        .map((b) => b.text)
-        .join('')
-    },
-
-    /**
-     * D13. Shows Claude the question and the weak candidates; returns better search
-     * terms, or null to decline. Small max_tokens — this returns keywords, not prose.
-     * Any failure returns null so a broken triage degrades to an ordinary decline.
-     */
-    async triage(opts: { question: string; articles: Article[] }): Promise<string | null> {
-      const found = opts.articles.length
-        ? opts.articles.map((a, i) => `${i + 1}. ${a.title}`).join('\n')
-        : '(nothing found)'
-      try {
-        const res = await client.messages.create({
-          model: cfg.claudeModel,
-          max_tokens: 60,
-          system: TRIAGE_PROMPT,
-          messages: [{
-            role: 'user',
-            content: `QUESTION: ${opts.question}\n\nPOOR MATCHES RETURNED:\n${found}`,
-          }],
-        })
-        const raw = res.content
-          .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-          .map((b) => b.text)
-          .join('')
-        return parseTriage(raw, opts.question)
-      } catch (e) {
-        log('llm.triage.failed', { message: e instanceof Error ? e.message : String(e) })
-        return null
-      }
+    async decide(opts: {
+      question: string
+      articles: Article[]
+      history: Turn[]
+    }): Promise<Reply> {
+      const user =
+        `CONTEXT\n${buildContextBlock(opts.articles)}\n\nQUESTION\n${opts.question}`
+      const raw = await complete(SYSTEM_PROMPT, [...opts.history, { role: 'user', content: user }], 1024)
+      return parseReply(raw, opts.question)
     },
   }
 }
@@ -1205,23 +1415,21 @@ export function makeLlm(cfg: Config) {
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run tests/llm.test.ts`
-Expected: PASS, 14 tests
+Expected: PASS, 17 tests
 
 - [ ] **Step 5: Verify preflight against the live gateway** — ⏸ **BLOCKED until the Key Vault secret is available**
 
-Skip this step for now and continue to Task 5; everything else in this task is done. Return here once `.\tools\set-gateway-env.ps1` has been run with the real value and `LLM_MODE=live`.
-
 ```bash
-npx tsx -e "import {loadConfig} from './src/config.js';import {makeLlm} from './src/llm/client.js';makeLlm(loadConfig()).preflight().then(()=>console.log('preflight OK')).catch(e=>{console.error(e.message);process.exit(1)})"
+npx tsx -e "import {loadConfig} from './src/config.js';import {makeLlm} from './src/llm/client.js';makeLlm(loadConfig()).preflight().then(()=>console.log('preflight ok')).catch(e=>{console.error(e.message);process.exit(1)})"
 ```
 
-Expected: `preflight OK`. On failure the message names the model id and base URL.
+Expected: `preflight ok`. A failure names the model id and the masked key — treat a wrong model id as the most likely cause.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add src/llm tests/llm.test.ts
-git commit -m "feat: Claude client, label-based prompting and citation verification"
+git commit -m "feat: Claude client with one prompt and four-way reply parsing"
 ```
 
 ---
@@ -1233,205 +1441,224 @@ git commit -m "feat: Claude client, label-based prompting and citation verificat
 - Test: `tests/server.test.ts`
 
 **Interfaces:**
-- Consumes: everything from Tasks 1-4
-- Produces: `makeApp(deps: { cfg: Config; sn: Sn; llm: Llm }): express.Express`. `POST /api/chat` takes `{ message, conversationId }` and returns `{ answer: string; sources: { id, label, title, url }[]; grounded: boolean; gateReason: GateReason }`. `GET /api/health` returns `{ ok, model, servicenow }`.
+- Consumes: everything from Tasks 1–4
+- Produces: `makeApp({ cfg, sn, stats, llm })` → Express app
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/server.test.ts`:
-
 ```ts
 import { describe, it, expect, vi } from 'vitest'
-import { createServer } from 'node:http'
 import { makeApp } from '../src/server.js'
-import { parseConfig } from '../src/config.js'
+import { parseConfig, type Config } from '../src/config.js'
 import type { Article } from '../src/servicenow/types.js'
 import { ServiceNowUnavailableError } from '../src/servicenow/types.js'
+import type { Reply } from '../src/llm/client.js'
 
-const cfg = parseConfig({
-  ANTHROPIC_API_KEY: 'sk-test-abcdefghijkl',
-  ANTHROPIC_BASE_URL: 'https://llmproxy.ustdev.com',
+const cfg: Config = parseConfig({
+  ANTHROPIC_API_KEY: 'sk-test-key-1234567890',
+  ANTHROPIC_BASE_URL: 'https://llmproxy.example.com',
   CLAUDE_MODEL: 'm',
-  SN_INSTANCE_URL: 'https://abhrademo4.service-now.com',
-  SN_CLIENT_ID: 'c', SN_CLIENT_SECRET: 's', SN_REFRESH_TOKEN: 'r',
-  LLM_MODE: 'live',
+  SN_INSTANCE_URL: 'https://sn.example.com',
+  SN_CLIENT_ID: 'cid',
+  SN_CLIENT_SECRET: 'csecret',
+  SN_REFRESH_TOKEN: 'rtoken',
 })
 
-const articles: Article[] = [
-  { id: 'sysA', label: 'KB0010141', title: 'Printer jam warehouse', body: 'clear the warehouse printer jam', url: 'uA' },
-]
+const article = (id: string, title: string): Article =>
+  ({ id, title, body: 'body text', url: `https://sn/${id}`, label: `KB${id}` })
 
-const snOk = { search: async () => articles, health: async () => ({ ok: true }) }
-
-/** Triage defaults to null (decline), so tests opt in to retry explicitly. */
-const llmSaying = (text: string, triageResult: string | null = null) => ({
-  preflight: async () => {},
-  answer: async () => text,
-  triage: async () => triageResult,
+const okSn = (articles: Article[] = [article('a', 'Reset SAP password')]) => ({
+  search: async () => articles,
+  health: async () => ({ ok: true, detail: 'reachable' }),
 })
 
+const noStats = { run: vi.fn() }
+
+/** Minimal HTTP driver so the tests need no supertest dependency. */
 async function post(app: ReturnType<typeof makeApp>, body: unknown) {
-  const server = createServer(app)
-  await new Promise<void>((r) => server.listen(0, r))
-  const { port } = server.address() as { port: number }
-  const res = await fetch(`http://127.0.0.1:${port}/api/chat`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const json = (await res.json()) as Record<string, unknown>
-  server.close()
-  return { status: res.status, json }
+  const server = app.listen(0)
+  const addr = server.address()
+  const port = typeof addr === 'object' && addr ? addr.port : 0
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> }
+  } finally {
+    server.close()
+  }
 }
 
 describe('POST /api/chat', () => {
-  it('answers and returns verified sources', async () => {
-    const app = makeApp({ cfg, sn: snOk, llm: llmSaying('Clear the jam [1].') })
-    const { json } = await post(app, { message: 'printer jam warehouse' })
-    expect(json.grounded).toBe(true)
-    expect((json.sources as { id: string }[])[0].id).toBe('sysA')
-    expect(json.answer as string).not.toContain('[1]')
+  it('rejects an empty message', async () => {
+    const app = makeApp({ cfg, sn: okSn(), stats: noStats, llm: fakeLlm(() => ({ kind: 'no_answer' })) })
+    const r = await post(app, { message: '' })
+    expect(r.status).toBe(400)
   })
 
-  it('declines short input without calling the model or searching', async () => {
+  it('declines greeting noise without searching or calling the model', async () => {
     const search = vi.fn()
-    const answer = vi.fn()
+    const decide = vi.fn()
     const app = makeApp({
       cfg,
-      sn: { search, health: async () => ({ ok: true }) } as never,
-      llm: { preflight: async () => {}, answer } as never,
+      sn: { search, health: async () => ({ ok: true }) },
+      stats: noStats,
+      llm: { preflight: async () => {}, decide },
     })
-    const { json } = await post(app, { message: 'Hi Team,' })
-    expect(json.gateReason).toBe('too_few_tokens')
+    const r = await post(app, { message: 'Hi Team,' })
+    expect(r.body.gateReason).toBe('too_few_tokens')
     expect(search).not.toHaveBeenCalled()
-    expect(answer).not.toHaveBeenCalled()
+    expect(decide).not.toHaveBeenCalled()
   })
 
-  it('declines irrelevant questions without calling the model', async () => {
-    const answer = vi.fn()
-    // Retry off: with it on, low coverage would go to triage — that path has its own tests below.
+  it('answers from articles and returns verified sources', async () => {
+    const app = makeApp({
+      cfg,
+      sn: okSn(),
+      stats: noStats,
+      llm: fakeLlm(() => ({ kind: 'answer', text: 'Use the portal [1].' })),
+    })
+    const r = await post(app, { message: 'how do I reset my SAP password' })
+    expect(r.body.kind).toBe('article')
+    expect(r.body.grounded).toBe(true)
+    expect(r.body.answer).toBe('Use the portal.')
+    expect((r.body.sources as unknown[]).length).toBe(1)
+  })
+
+  it('drops a fabricated citation rather than linking it', async () => {
+    const app = makeApp({
+      cfg,
+      sn: okSn(),
+      stats: noStats,
+      llm: fakeLlm(() => ({ kind: 'answer', text: 'See [1] and [9].' })),
+    })
+    const r = await post(app, { message: 'how do I reset my SAP password' })
+    expect((r.body.sources as unknown[]).length).toBe(1)
+  })
+
+  it('runs a metric and returns the value, filter and link', async () => {
+    const run = vi.fn(async () => ({
+      table: 'incident', filter: 'active=true', aggregate: 'count' as const,
+      value: 5513, url: 'https://sn.example.com/incident_list.do?sysparm_query=active%3Dtrue',
+    }))
+    const app = makeApp({
+      cfg,
+      sn: okSn(),
+      stats: { run },
+      llm: fakeLlm(() => ({
+        kind: 'metric',
+        request: { table: 'incident', filter: 'active=true', aggregate: 'count' },
+      })),
+    })
+    const r = await post(app, { message: 'how many open incidents are there' })
+    expect(r.body.kind).toBe('metric')
+    const m = r.body.metric as Record<string, unknown>
+    expect(m.value).toBe(5513)
+    expect(m.filter).toBe('active=true')
+    expect(String(m.url)).toContain('incident_list.do')
+  })
+
+  it('declines when the aggregate query fails, and does not retry it', async () => {
+    const run = vi.fn(async () => { throw new ServiceNowUnavailableError('rejected') })
+    const app = makeApp({
+      cfg,
+      sn: okSn(),
+      stats: { run },
+      llm: fakeLlm(() => ({
+        kind: 'metric',
+        request: { table: 'incident', filter: 'bad!!', aggregate: 'count' },
+      })),
+    })
+    const r = await post(app, { message: 'how many widgets are broken' })
+    expect(r.body.gateReason).toBe('metric_unavailable')
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('searches again once when the model asks, then answers', async () => {
+    const search = vi.fn()
+      .mockResolvedValueOnce([article('a', 'What is the Windows key?')])
+      .mockResolvedValueOnce([article('b', 'New Starter Onboarding')])
+    const decide = vi.fn()
+      .mockResolvedValueOnce({ kind: 'search', query: 'new starter onboarding checklist' })
+      .mockResolvedValueOnce({ kind: 'answer', text: 'Raise an onboarding request [1].' })
+    const app = makeApp({
+      cfg,
+      sn: { search, health: async () => ({ ok: true }) },
+      stats: noStats,
+      llm: { preflight: async () => {}, decide },
+    })
+    const r = await post(app, { message: 'new joiner starts on monday' })
+    expect(r.body.retried).toBe(true)
+    expect(r.body.grounded).toBe(true)
+    expect(search).toHaveBeenCalledTimes(2)
+    expect(decide).toHaveBeenCalledTimes(2)
+  })
+
+  it('never honours a second SEARCH', async () => {
+    const decide = vi.fn().mockResolvedValue({ kind: 'search', query: 'different words each time' })
+    const search = vi.fn().mockResolvedValue([article('a', 'x')])
+    const app = makeApp({
+      cfg,
+      sn: { search, health: async () => ({ ok: true }) },
+      stats: noStats,
+      llm: { preflight: async () => {}, decide },
+    })
+    const r = await post(app, { message: 'something obscure' })
+    expect(r.body.grounded).toBe(false)
+    expect(search).toHaveBeenCalledTimes(2)
+    expect(decide).toHaveBeenCalledTimes(2)
+  })
+
+  it('treats SEARCH as a decline when retry is disabled', async () => {
+    const search = vi.fn().mockResolvedValue([article('a', 'x')])
     const app = makeApp({
       cfg: { ...cfg, retryEnabled: false },
-      sn: { search: async () => [{ id: 'z', title: 'Feedback Mechanisms', body: '', url: 'u' }], health: async () => ({ ok: true }) },
-      llm: { preflight: async () => {}, answer } as never,
+      sn: { search, health: async () => ({ ok: true }) },
+      stats: noStats,
+      llm: fakeLlm(() => ({ kind: 'search', query: 'better words' })),
     })
-    const { json } = await post(app, { message: 'what is the capital of France' })
-    expect(json.gateReason).toBe('low_coverage')
-    expect(answer).not.toHaveBeenCalled()
+    const r = await post(app, { message: 'something obscure' })
+    expect(r.body.grounded).toBe(false)
+    expect(search).toHaveBeenCalledTimes(1)
   })
 
-  it('honours the model declining even when the gate let it through', async () => {
-    const app = makeApp({ cfg, sn: snOk, llm: llmSaying('NO_ANSWER_IN_KB') })
-    const { json } = await post(app, { message: 'printer jam warehouse' })
-    expect(json.grounded).toBe(false)
-    expect(json.gateReason).toBe('model_declined')
-  })
-
-  it('strips fabricated citations', async () => {
-    const app = makeApp({ cfg, sn: snOk, llm: llmSaying('Do this [1] and that [9].') })
-    const { json } = await post(app, { message: 'printer jam warehouse' })
-    expect(json.sources).toHaveLength(1)
-  })
-
-  it('reports an unreachable instance differently from no match', async () => {
+  it('distinguishes an outage from a no-match', async () => {
     const app = makeApp({
       cfg,
-      sn: { search: async () => { throw new ServiceNowUnavailableError('down') }, health: async () => ({ ok: false }) },
-      llm: llmSaying('x'),
-    })
-    const { status, json } = await post(app, { message: 'printer jam warehouse' })
-    expect(status).toBe(503)
-    expect(json.gateReason).toBe('servicenow_unavailable')
-    expect(json.answer as string).toMatch(/reach the knowledge base/i)
-  })
-
-  it('rejects oversized input before searching', async () => {
-    const app = makeApp({ cfg, sn: snOk, llm: llmSaying('x') })
-    expect((await post(app, { message: 'x'.repeat(5000) })).status).toBe(400)
-  })
-})
-
-describe('D13 query rewriting and retry', () => {
-  /** First search returns junk; the rewritten query finds the right article. */
-  function snRetry() {
-    const calls: string[] = []
-    return {
-      calls,
-      search: async (q: string) => {
-        calls.push(q)
-        return calls.length === 1
-          ? [{ id: 'junk', label: 'KB0000017', title: 'What is the Windows key?', body: 'press it', url: 'u' }]
-          : [{ id: 'sysN', label: 'KB0010469', title: 'New Starter Onboarding', body: 'account access equipment for a new starter', url: 'uN' }]
+      sn: {
+        search: async () => { throw new ServiceNowUnavailableError('down') },
+        health: async () => ({ ok: false }),
       },
-      health: async () => ({ ok: true }),
-    }
-  }
-
-  it('recovers a baseline miss by searching again with better terms', async () => {
-    const sn = snRetry()
-    const app = makeApp({
-      cfg, sn,
-      llm: llmSaying('Set up their account [1].', 'new starter onboarding account access equipment'),
+      stats: noStats,
+      llm: fakeLlm(() => ({ kind: 'no_answer' })),
     })
-    const { json } = await post(app, { message: 'new joiner starts on monday' })
-
-    expect(json.grounded).toBe(true)
-    expect(json.retried).toBe(true)
-    expect((json.sources as { id: string }[])[0].id).toBe('sysN')
-    expect(sn.calls).toHaveLength(2)
+    const r = await post(app, { message: 'how do I reset my SAP password' })
+    expect(r.status).toBe(503)
+    expect(r.body.gateReason).toBe('servicenow_unavailable')
   })
 
-  it('declines as out_of_scope when triage refuses, without a second search', async () => {
-    const sn = snRetry()
-    const app = makeApp({ cfg, sn, llm: llmSaying('unused', null) })
-    const { json } = await post(app, { message: 'what is the capital of France' })
-
-    expect(json.gateReason).toBe('out_of_scope')
-    expect(json.retried).toBe(false)
-    expect(sn.calls).toHaveLength(1)
-  })
-
-  it('never retries more than once', async () => {
-    const sn = {
-      calls: [] as string[],
-      search: async (q: string) => { sn.calls.push(q); return [] },
-      health: async () => ({ ok: true }),
-    }
-    const app = makeApp({ cfg, sn, llm: llmSaying('unused', 'some better words entirely') })
-    const { json } = await post(app, { message: 'a question nothing matches' })
-
-    expect(sn.calls).toHaveLength(2)
-    expect(json.grounded).toBe(false)
-    expect(json.retried).toBe(true)
-  })
-
-  it('keeps articles from the first search when merging results', async () => {
-    const first = { id: 'sysFirst', label: 'KB1', title: 'printer jam warehouse', body: 'clear the warehouse printer jam', url: 'u1' }
-    const sn = {
-      n: 0,
-      search: async () => { sn.n++; return sn.n === 1 ? [first] : [{ id: 'sysSecond', label: 'KB2', title: 'unrelated', body: '', url: 'u2' }] },
-      health: async () => ({ ok: true }),
-    }
-    // Force a retry by setting an unreachable coverage floor, then check nothing was lost.
-    const strict = { ...cfg, gateMinCoverage: 0.99 }
-    const app = makeApp({ cfg: strict, sn, llm: llmSaying('Cleared [1].', 'printer jam warehouse') })
-    const { json } = await post(app, { message: 'printer jam warehouse' })
-
-    expect(json.grounded).toBe(true)
-    expect((json.sources as { id: string }[])[0].id).toBe('sysFirst')
-  })
-
-  it('does not retry at all when RETRY_ENABLED is false', async () => {
-    const sn = snRetry()
-    const noRetry = { ...cfg, retryEnabled: false }
-    const app = makeApp({ cfg: noRetry, sn, llm: llmSaying('unused', 'better words') })
-    const { json } = await post(app, { message: 'new joiner starts on monday' })
-
-    expect(json.gateReason).toBe('low_coverage')
-    expect(json.retried).toBe(false)
-    expect(sn.calls).toHaveLength(1)
+  it('declines a metric question when METRICS_ENABLED is false', async () => {
+    const run = vi.fn()
+    const app = makeApp({
+      cfg: { ...cfg, metricsEnabled: false },
+      sn: okSn(),
+      stats: { run },
+      llm: fakeLlm(() => ({
+        kind: 'metric',
+        request: { table: 'incident', filter: 'active=true', aggregate: 'count' },
+      })),
+    })
+    const r = await post(app, { message: 'how many open incidents are there' })
+    expect(r.body.grounded).toBe(false)
+    expect(run).not.toHaveBeenCalled()
   })
 })
+
+function fakeLlm(reply: () => Reply) {
+  return { preflight: async () => {}, decide: async () => reply() }
+}
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -1449,9 +1676,11 @@ import { loadConfig, type Config } from './config.js'
 import type { Article } from './servicenow/types.js'
 import { ServiceNowUnavailableError } from './servicenow/types.js'
 import { makeSearch } from './servicenow/search.js'
-import { decide } from './gate/decide.js'
+import { makeStats, type MetricRequest, type MetricResult } from './servicenow/stats.js'
+import { hasEnoughTokens } from './guard.js'
 import {
-  makeLlm, parseCitations, verifyCitations, stripCitationMarkup, type Turn,
+  makeLlm, parseCitations, verifyCitations, stripCitationMarkup,
+  type Turn, type Reply,
 } from './llm/client.js'
 import { log } from './log.js'
 
@@ -1466,15 +1695,17 @@ interface Sn {
   health(): Promise<{ ok: boolean; detail?: string }>
 }
 
-interface Llm {
-  preflight(): Promise<void>
-  answer(o: { question: string; articles: Article[]; history: Turn[] }): Promise<string>
-  /** D13: better search terms, or null to decline. */
-  triage(o: { question: string; articles: Article[] }): Promise<string | null>
+interface Stats {
+  run(req: MetricRequest): Promise<MetricResult>
 }
 
-export function makeApp(deps: { cfg: Config; sn: Sn; llm: Llm }) {
-  const { cfg, sn, llm } = deps
+interface Llm {
+  preflight(): Promise<void>
+  decide(o: { question: string; articles: Article[]; history: Turn[] }): Promise<Reply>
+}
+
+export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
+  const { cfg, sn, stats, llm } = deps
   const conversations = new Map<string, Turn[]>()
   const app = express()
 
@@ -1487,124 +1718,129 @@ export function makeApp(deps: { cfg: Config; sn: Sn; llm: Llm }) {
       // Stub mode must be visible in the UI, not merely in a log file.
       model: cfg.llmMode === 'stub' ? 'STUB — no live model' : cfg.claudeModel,
       llmMode: cfg.llmMode,
+      metricsEnabled: cfg.metricsEnabled,
       servicenow,
     })
   })
 
   app.post('/api/chat', async (req, res, next) => {
+    const started = Date.now()
     try {
       const message = String(req.body?.message ?? '').trim()
       const conversationId = String(req.body?.conversationId ?? 'default')
-      const started = Date.now()
-      const opts = { minTokens: cfg.gateMinTokens, minCoverage: cfg.gateMinCoverage }
 
       if (!message) return res.status(400).json({ error: 'message is required' })
       if (message.length > MAX_MESSAGE_LENGTH) {
         return res.status(400).json({ error: `message exceeds ${MAX_MESSAGE_LENGTH} characters` })
       }
 
-      // Layer 1 runs before any network call — noise never reaches the instance.
-      const pre = decide(message, [], opts)
-      if (pre.reason === 'too_few_tokens') {
-        log('chat', { q: message, gate: pre.reason, ms: Date.now() - started })
-        return res.json({ answer: DECLINE_TEXT, sources: [], grounded: false, gateReason: pre.reason })
+      const decline = (gateReason: string, retried = false) => {
+        log('chat', { q: message, gate: gateReason, retried, ms: Date.now() - started })
+        return res.json({
+          answer: DECLINE_TEXT, kind: 'decline', sources: [], grounded: false, gateReason, retried,
+        })
       }
+
+      // Gate layer 1 — runs before any network call, so greeting noise never
+      // reaches the instance or the model. The only free rejection there is.
+      if (!hasEnoughTokens(message, cfg.gateMinTokens)) return decline('too_few_tokens')
 
       let articles: Article[]
       try {
         articles = await sn.search(message, cfg.searchLimit)
       } catch (e) {
-        if (e instanceof ServiceNowUnavailableError) {
-          log('chat.servicenow_unavailable', { q: message, detail: e.message })
-          return res.status(503).json({
-            answer: UNAVAILABLE_TEXT, sources: [], grounded: false,
-            gateReason: 'servicenow_unavailable', retried: false,
-          })
-        }
-        throw e
-      }
-
-      // Layer 2.
-      let gate = decide(message, articles, opts)
-      let retried = false
-      let rewritten: string | null = null
-
-      // D13: weak results get one triage + one retry. Never more.
-      if (!gate.answer && cfg.retryEnabled) {
-        rewritten = await llm.triage({ question: message, articles })
-
-        if (rewritten === null) {
-          // Claude judged it out of scope, or gave nothing usable. Decline without searching again.
-          log('chat', {
-            q: message, cov: gate.topCoverage, gate: 'out_of_scope', retried: false,
-            ms: Date.now() - started,
-          })
-          return res.json({
-            answer: DECLINE_TEXT, sources: [], grounded: false,
-            gateReason: 'out_of_scope', retried: false,
-          })
-        }
-
-        retried = true
-        try {
-          const second = await sn.search(rewritten, cfg.searchLimit)
-          // Union, deduped by sys_id: a good article from the first search is never lost.
-          // Rewritten results go first — they are what the gate scores against — and
-          // nothing is truncated: the first search usually fills the limit on its own,
-          // so a slice here would drop everything the rewrite found.
-          const seen = new Set(second.map((a) => a.id))
-          articles = [...second, ...articles.filter((a) => !seen.has(a.id))]
-        } catch (e) {
-          if (!(e instanceof ServiceNowUnavailableError)) throw e
-          // Second search failed: fall through and decline on what we already had.
-          log('chat.retry_search_failed', { q: message, detail: e.message })
-        }
-
-        // Score the rewritten query against the union — the original wording is what failed.
-        gate = decide(rewritten, articles, opts)
-      }
-
-      if (!gate.answer) {
-        log('chat', {
-          q: message, rewritten, candidates: articles.map((a) => a.label),
-          cov: gate.topCoverage, gate: gate.reason, retried, ms: Date.now() - started,
-        })
-        return res.json({
-          answer: DECLINE_TEXT, sources: [], grounded: false, gateReason: gate.reason, retried,
+        if (!(e instanceof ServiceNowUnavailableError)) throw e
+        log('chat.servicenow_unavailable', { q: message, detail: e.message })
+        return res.status(503).json({
+          answer: UNAVAILABLE_TEXT, kind: 'decline', sources: [], grounded: false,
+          gateReason: 'servicenow_unavailable', retried: false,
         })
       }
 
       const history = conversations.get(conversationId) ?? []
-      const text = await llm.answer({ question: message, articles, history })
 
-      // Layer 3.
-      if (text.includes('NO_ANSWER_IN_KB')) {
+      // Gate layer 2 — one call, four possible replies (D16).
+      let reply = await llm.decide({ question: message, articles, history })
+      let retried = false
+      let rewritten: string | null = null
+
+      // D13: at most one rewrite, ever.
+      if (reply.kind === 'search') {
+        if (!cfg.retryEnabled) return decline('model_declined')
+
+        retried = true
+        rewritten = reply.query
+        try {
+          const second = await sn.search(rewritten, cfg.searchLimit)
+          // Union, deduped by sys_id. Rewritten results lead because they are the
+          // better guess; nothing is truncated, or the first search — which usually
+          // fills the limit on its own — would discard everything the rewrite found.
+          const seen = new Set(second.map((a) => a.id))
+          articles = [...second, ...articles.filter((a) => !seen.has(a.id))]
+        } catch (e) {
+          if (!(e instanceof ServiceNowUnavailableError)) throw e
+          // Second search failed: decide again on what we already had.
+          log('chat.retry_search_failed', { q: message, detail: e.message })
+        }
+
+        reply = await llm.decide({ question: message, articles, history })
+        // A second SEARCH is never honoured — no loops.
+        if (reply.kind === 'search') reply = { kind: 'no_answer' }
+      }
+
+      if (reply.kind === 'metric') {
+        if (!cfg.metricsEnabled) return decline('model_declined', retried)
+
+        let result: MetricResult
+        try {
+          result = await stats.run(reply.request)
+        } catch (e) {
+          // No repair attempt: a second guess is a second chance to be wrong.
+          log('chat.metric_failed', {
+            q: message, table: reply.request.table, filter: reply.request.filter,
+            detail: e instanceof Error ? e.message : String(e),
+          })
+          return decline('metric_unavailable', retried)
+        }
+
         log('chat', {
-          q: message, cov: gate.topCoverage, gate: 'model_declined', retried, ms: Date.now() - started,
+          q: message, gate: 'metric', table: result.table, filter: result.filter,
+          aggregate: result.aggregate, field: result.field, value: result.value,
+          retried, ms: Date.now() - started,
         })
+
         return res.json({
-          answer: DECLINE_TEXT, sources: [], grounded: false, gateReason: 'model_declined', retried,
+          answer: `${result.value}`,
+          kind: 'metric',
+          sources: [],
+          metric: result,
+          grounded: true,
+          gateReason: null,
+          retried,
         })
       }
 
-      const { sources, fabricated } = verifyCitations(parseCitations(text), articles)
+      if (reply.kind !== 'answer') return decline('model_declined', retried)
+
+      const { sources, fabricated } = verifyCitations(parseCitations(reply.text), articles)
       if (fabricated.length) log('chat.fabricated_citation', { q: message, labels: fabricated })
 
       conversations.set(
         conversationId,
         [...history,
           { role: 'user' as const, content: message },
-          { role: 'assistant' as const, content: text },
+          { role: 'assistant' as const, content: reply.text },
         ].slice(-12),
       )
 
       log('chat', {
-        q: message, rewritten, candidates: articles.map((a) => a.label), cov: gate.topCoverage,
-        gate: 'answered', cited: sources.map((s) => s.label), retried, ms: Date.now() - started,
+        q: message, rewritten, candidates: articles.map((a) => a.label), gate: 'answered',
+        cited: sources.map((s) => s.label), retried, ms: Date.now() - started,
       })
 
       res.json({
-        answer: stripCitationMarkup(text),
+        answer: stripCitationMarkup(reply.text),
+        kind: 'article',
         sources: sources.map((s) => ({ id: s.id, label: s.label, title: s.title, url: s.url })),
         grounded: true,
         gateReason: null,
@@ -1636,12 +1872,13 @@ async function main() {
   await llm.preflight() // fails the boot on a bad model id or key (no-op in stub mode)
 
   const sn = makeSearch(cfg)
+  const stats = makeStats(cfg)
   const health = await sn.health()
   if (!health.ok) throw new Error(`ServiceNow is not reachable: ${health.detail}`)
   log('servicenow.ok', { detail: health.detail })
 
-  makeApp({ cfg, sn, llm }).listen(cfg.port, () => {
-    log('listening', { port: cfg.port, model: cfg.claudeModel })
+  makeApp({ cfg, sn, stats, llm }).listen(cfg.port, () => {
+    log('listening', { port: cfg.port, model: cfg.claudeModel, metrics: cfg.metricsEnabled })
   })
 }
 
@@ -1658,13 +1895,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run tests/server.test.ts`
-Expected: PASS, 12 tests
+Expected: PASS, 11 tests
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/server.ts tests/server.test.ts
-git commit -m "feat: chat routes with three-layer gate and one-shot query retry"
+git commit -m "feat: chat route with article, metric and decline paths"
 ```
 
 ---
@@ -1698,7 +1935,7 @@ git commit -m "feat: chat routes with three-layer gate and one-shot query retry"
   <main id="log" aria-live="polite"></main>
 
   <form id="composer">
-    <input id="q" autocomplete="off" placeholder="Ask about the knowledge base…" />
+    <input id="q" autocomplete="off" placeholder="Ask about articles, or how many…" />
     <button>Send</button>
   </form>
 
@@ -1724,10 +1961,16 @@ main { flex:1; overflow-y:auto; padding:1rem; display:flex; flex-direction:colum
 .msg { max-width:46rem; }
 .msg.user { align-self:flex-end; background:#22304a; padding:.55rem .8rem; border-radius:10px 10px 2px 10px; }
 .msg.bot { align-self:flex-start; background:var(--panel); padding:.55rem .8rem; border-radius:10px 10px 10px 2px; white-space:pre-wrap; }
+.metric { font-size:2rem; font-weight:600; line-height:1.1; }
 .sources { font-size:.78rem; color:var(--muted); margin-top:.45rem; }
 .sources a { color:var(--accent); text-decoration:none; }
 .sources a:hover { text-decoration:underline; }
 .sources.none { color:var(--warn); }
+/* The filter is long and ugly. It wraps; it is never truncated — it is the only
+   thing that makes the number checkable (spec §8b). */
+.filter { font-family:ui-monospace,Consolas,monospace; font-size:.72rem; color:var(--muted);
+          background:#11141a; border:1px solid #262b35; border-radius:6px;
+          padding:.3rem .45rem; margin-top:.3rem; overflow-wrap:anywhere; }
 form { display:flex; gap:.5rem; padding:.75rem 1rem; border-top:1px solid #262b35; }
 input { flex:1; background:var(--panel); border:1px solid #2b3240; color:var(--ink); padding:.6rem .8rem; border-radius:8px; }
 button { background:var(--accent); border:0; color:#08121f; font-weight:600; padding:.6rem 1.1rem; border-radius:8px; cursor:pointer; }
@@ -1735,8 +1978,6 @@ button { background:var(--accent); border:0; color:#08121f; font-weight:600; pad
 ```
 
 - [ ] **Step 3: Create `public/app.js`**
-
-The three source-line states come from spec §12.
 
 ```js
 const logEl = document.getElementById('log')
@@ -1754,29 +1995,53 @@ function bubble(cls, text) {
   return el
 }
 
+function link(href, text) {
+  const a = document.createElement('a')
+  a.href = href
+  a.target = '_blank'
+  a.rel = 'noopener'
+  a.textContent = text
+  return a
+}
+
+/** Article answers cite KB numbers; metric answers show the query that produced them. */
 function renderSources(el, data) {
   const line = document.createElement('div')
   line.className = 'sources'
+
+  if (data.kind === 'metric' && data.metric) {
+    const m = data.metric
+    const agg = m.aggregate === 'count' ? 'count' : `${m.aggregate}(${m.field})`
+    line.append(`Source: ${m.table} · ${agg} · `)
+    line.appendChild(link(m.url, 'open in abhrademo4 →'))
+    el.appendChild(line)
+
+    const f = document.createElement('div')
+    f.className = 'filter'
+    f.textContent = m.filter || '(no filter — whole table)'
+    el.appendChild(f)
+    return
+  }
 
   if (!data.grounded || !data.sources || data.sources.length === 0) {
     line.classList.add('none')
     line.textContent =
       data.gateReason === 'servicenow_unavailable'
         ? 'Knowledge base unreachable — not answered'
-        : 'No knowledge base match — not answered'
-  } else {
-    line.append('Sources: ')
-    data.sources.forEach((s, i) => {
-      if (i) line.append(' · ')
-      const a = document.createElement('a')
-      a.href = s.url
-      a.target = '_blank'
-      a.rel = 'noopener'
-      a.textContent = s.label || s.title
-      a.title = s.title
-      line.appendChild(a)
-    })
+        : data.gateReason === 'metric_unavailable'
+          ? 'Could not run that query — not answered'
+          : 'No knowledge base match — not answered'
+    el.appendChild(line)
+    return
   }
+
+  line.append('Sources: ')
+  data.sources.forEach((s, i) => {
+    if (i) line.append(' · ')
+    const a = link(s.url, s.label || s.title)
+    a.title = s.title
+    line.appendChild(a)
+  })
   el.appendChild(line)
 }
 
@@ -1799,7 +2064,7 @@ form.addEventListener('submit', async (e) => {
   input.value = ''
   bubble('user', message)
 
-  const pending = bubble('bot typing', 'Searching the knowledge base…')
+  const pending = bubble('bot typing', 'Working…')
 
   try {
     const res = await fetch('/api/chat', {
@@ -1809,7 +2074,13 @@ form.addEventListener('submit', async (e) => {
     })
     const data = await res.json()
     pending.className = 'msg bot'
-    pending.textContent = data.answer ?? data.error ?? 'No response.'
+    pending.textContent = ''
+
+    const body = document.createElement('div')
+    if (data.kind === 'metric') body.className = 'metric'
+    body.textContent = data.answer ?? data.error ?? 'No response.'
+    pending.appendChild(body)
+
     renderSources(pending, data)
   } catch {
     pending.className = 'msg bot'
@@ -1822,35 +2093,37 @@ loadHealth()
 
 - [ ] **Step 4: Verify by hand**
 
-Without the gateway key, set `LLM_MODE=stub` in `.env` first. The health pill turns amber and reads *STUB — no live model*.
+Without the gateway key, set `LLM_MODE=stub` in `.env` first. The health pill turns amber.
 
 ```bash
 npm run dev
 ```
 
-Open `http://localhost:3000` and check all three states:
+Open `http://localhost:3000` and check four states:
 
-1. `Self-checkout lanes 1-4 down at Store #208 after image push` → an answer with a linked source; the link opens KB0010141 in abhrademo4. **In stub mode the prose is canned, but the article, the citation and the link are all real** — which is exactly what this step is verifying
-2. `Hi Team,` → "No knowledge base match — not answered"
-3. `what is the capital of France` → the same decline (in stub mode this is `out_of_scope`, because the stub triage always returns null)
+1. `Self-checkout lanes 1-4 down at Store #208 after image push` → an answer with a linked source; the link opens KB0010141 in abhrademo4. **In stub mode the prose is canned, but the article, the citation and the link are all real** — which is what this step verifies
+2. `how many open incidents are there` → **a large number in big type**, with `incident · count` and the filter `active=true` beneath it, and a link that opens exactly those records. In stub mode the query is a fixture, but the number and the link are live
+3. `Hi Team,` → "No knowledge base match — not answered"
+4. `what is the capital of France` → the same decline
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add public
-git commit -m "feat: chat UI with the three-state source line"
+git commit -m "feat: chat UI rendering article sources and metric filters"
 ```
 
 ---
 
-## Task 7: Eval script and acceptance run
+## Task 7: Evals and acceptance run
 
 **Files:**
-- Create: `tools/eval.ts`
+- Create: `tools/eval.ts`, `tools/eval-metrics.ts`, `tests/fixtures/metric-eval.json`
+- Modify: nothing
 
 **Interfaces:**
-- Consumes: `makeSearch` (Task 2), `coverage`/`tokenise` (Task 3), `tests/fixtures/retrieval-eval.json`
-- Produces: `npm run eval`
+- Consumes: everything
+- Produces: `npm run eval`, `npm run eval:metrics`
 
 - [ ] **Step 1: Implement `tools/eval.ts`**
 
@@ -1858,7 +2131,7 @@ git commit -m "feat: chat UI with the three-state source line"
 import { readFileSync } from 'node:fs'
 import { loadConfig } from '../src/config.js'
 import { makeSearch } from '../src/servicenow/search.js'
-import { coverage, tokenise, decide } from '../src/gate/decide.js'
+import { hasEnoughTokens } from '../src/guard.js'
 import { makeLlm } from '../src/llm/client.js'
 
 interface EvalQ {
@@ -1889,18 +2162,16 @@ const llm = WITH_RETRY ? makeLlm(cfg) : null
 
 const accept = (q: EvalQ) => q.acceptableSysIds ?? (q.expectedSysId ? [q.expectedSysId] : [])
 
-/** Mirrors the server's D13 branch so the eval measures what users actually get. */
+/** Mirrors the server's retry branch so the eval measures what users actually get. */
 async function lookup(question: string) {
   let articles = await sn.search(question, cfg.searchLimit)
   let retried = false
 
-  if (llm && decide(question, articles, {
-    minTokens: cfg.gateMinTokens, minCoverage: cfg.gateMinCoverage,
-  }).answer === false) {
-    const rewritten = await llm.triage({ question, articles })
-    if (rewritten) {
+  if (llm) {
+    const reply = await llm.decide({ question, articles, history: [] })
+    if (reply.kind === 'search') {
       retried = true
-      const second = await sn.search(rewritten, cfg.searchLimit)
+      const second = await sn.search(reply.query, cfg.searchLimit)
       const seen = new Set(second.map((a) => a.id))
       articles = [...second, ...articles.filter((a) => !seen.has(a.id))]
     }
@@ -1908,16 +2179,8 @@ async function lookup(question: string) {
   return { articles, retried }
 }
 
-/** -1 means the token guard caught it before coverage was consulted. */
-async function topCoverage(question: string): Promise<number> {
-  if (tokenise(question).length < cfg.gateMinTokens) return -1
-  const r = await sn.search(question, cfg.searchLimit)
-  return r.length ? coverage(question, `${r[0].title} ${r[0].body}`) : 0
-}
-
 async function main() {
   const ranks: { id: string; rank: number; source: string }[] = []
-  const inCov: number[] = []
 
   console.log(`=== IN-SCOPE ${WITH_RETRY ? '(with D13 retry)' : '(search only)'} ===`)
   let retryCount = 0
@@ -1927,21 +2190,36 @@ async function main() {
     const ok = accept(q)
     const rank = results.findIndex((a) => ok.includes(a.id)) + 1
     ranks.push({ id: q.id, rank, source: q.source })
-
-    const cov = results.length ? coverage(q.question, `${results[0].title} ${results[0].body}`) : 0
-    inCov.push(cov)
     console.log(
-      `${q.id.padEnd(9)} ${(rank ? `#${rank}` : 'MISS').padEnd(6)} ${retried ? 'retry ' : '      '}` +
-        `cov=${cov} ${results[0]?.label ?? '-'}`,
+      `${q.id.padEnd(9)} ${(rank ? `#${rank}` : 'MISS').padEnd(6)} ` +
+        `${retried ? 'retry ' : '      '}${results[0]?.label ?? '-'}`,
     )
   }
 
+  // Rev 8 removed the coverage floor, so noise rejection is no longer a deterministic
+  // property — it is Claude's judgement. Without --with-retry all we can report is
+  // which questions the token guard catches for free.
   console.log('\n=== OUT-OF-SCOPE ===')
-  const outCov: number[] = []
+  let guarded = 0
+  let declined = 0
   for (const q of data.outOfScope) {
-    const cov = await topCoverage(q.question)
-    outCov.push(cov)
-    console.log(`${q.id.padEnd(12)} cov=${cov === -1 ? 'guarded' : cov}`)
+    if (!hasEnoughTokens(q.question, cfg.gateMinTokens)) {
+      guarded++
+      console.log(`${q.id.padEnd(12)} guarded (no model call)`)
+      continue
+    }
+    if (!llm) {
+      console.log(`${q.id.padEnd(12)} needs a model call to judge`)
+      continue
+    }
+    const reply = await llm.decide({
+      question: q.question,
+      articles: await sn.search(q.question, cfg.searchLimit),
+      history: [],
+    })
+    const good = reply.kind === 'no_answer'
+    if (good) declined++
+    console.log(`${q.id.padEnd(12)} ${good ? 'declined' : `ANSWERED (${reply.kind}) <- check this`}`)
   }
 
   const n = ranks.length
@@ -1957,26 +2235,11 @@ async function main() {
   console.log(`Recall@5 : ${at(5)}/${n} (${Math.round((100 * at(5)) / n)}%)`)
   console.log(`incident : ${bySrc('incident')}   synthetic: ${bySrc('synthetic')}`)
   console.log(`Misses   : ${ranks.filter((r) => !r.rank).map((r) => r.id).join(', ') || 'none'}`)
+  console.log(`Noise    : ${guarded} guarded free${llm ? `, ${declined} declined by the model` : ''}`)
   if (WITH_RETRY) {
     console.log(`Retries  : ${retryCount}/${n} questions triggered a rewrite`)
     console.log('Baseline without retry was 26/35 (74%) recall@1 — compare against that.')
   }
-
-  console.log('\n=== THRESHOLD SWEEP ===')
-  console.log('cutoff  keeps(good)  rejects(noise)  score')
-  let best = { cutoff: cfg.gateMinCoverage, score: -1 }
-  for (let c = 0.1; c <= 0.9001; c += 0.05) {
-    const cutoff = Math.round(c * 100) / 100
-    const keeps = inCov.filter((v) => v >= cutoff).length
-    const rejects = outCov.filter((v) => v < cutoff).length
-    const score = keeps / inCov.length + rejects / outCov.length
-    console.log(
-      `${String(cutoff).padEnd(7)} ${`${keeps}/${inCov.length}`.padEnd(12)} ` +
-        `${`${rejects}/${outCov.length}`.padEnd(15)} ${score.toFixed(3)}`,
-    )
-    if (score > best.score) best = { cutoff, score }
-  }
-  console.log(`\nRecommended GATE_MIN_COVERAGE=${best.cutoff}  (configured: ${cfg.gateMinCoverage})`)
 
   // The guard applies only to the deterministic mode. Retry varies run to run, and a
   // regression gate on a wobbling number is worse than none.
@@ -1989,55 +2252,219 @@ async function main() {
 main()
 ```
 
-- [ ] **Step 2: Run the eval live, both modes**
+- [ ] **Step 2: Create `tests/fixtures/metric-eval.json`**
+
+The fifteen questions measured live on 2026-09-14 (spec §8b), plus five that must be
+declined. `expectedFilter` is compared clause-by-clause, so order does not matter.
+
+```json
+{
+  "shouldAnswer": [
+    { "id": "m-01", "question": "how many open incidents are there",
+      "table": "incident", "aggregate": "count", "expectedFilter": "active=true" },
+    { "id": "m-02", "question": "how many P1 incidents are open",
+      "table": "incident", "aggregate": "count", "expectedFilter": "active=true^priority=1" },
+    { "id": "m-03", "question": "how many incidents are unassigned",
+      "table": "incident", "aggregate": "count", "expectedFilter": "active=true^assigned_toISEMPTY" },
+    { "id": "m-04", "question": "how many open incidents does the Network group have",
+      "table": "incident", "aggregate": "count", "expectedFilter": "active=true^assignment_group.name=Network" },
+    { "id": "m-05", "question": "how many incidents breached their SLA",
+      "table": "task_sla", "aggregate": "count", "expectedFilter": "has_breached=true" },
+    { "id": "m-06", "question": "how many security incidents are open",
+      "table": "sn_si_incident", "aggregate": "count", "expectedFilter": "active=true" },
+    { "id": "m-07", "question": "how many vulnerable items are there",
+      "table": "sn_vul_vulnerable_item", "aggregate": "count", "expectedFilter": "" },
+    { "id": "m-08", "question": "how many changes are open",
+      "table": "change_request", "aggregate": "count", "expectedFilter": "active=true" },
+    { "id": "m-09", "question": "how many problems are open",
+      "table": "problem", "aggregate": "count", "expectedFilter": "active=true" },
+    { "id": "m-10", "question": "how many incidents are on hold",
+      "table": "incident", "aggregate": "count", "expectedFilter": "state=3" },
+    { "id": "m-11", "question": "how many P1 incidents are still unresolved after 30 days",
+      "table": "incident", "aggregate": "count", "expectedFilter": "active=true^priority=1^opened_at<javascript:gs.daysAgoStart(30)" },
+    { "id": "m-12", "question": "what is the average resolution time for P2 incidents",
+      "table": "incident", "aggregate": "avg", "field": "calendar_duration", "expectedFilter": "priority=2^state=6" },
+    { "id": "m-13", "question": "how many incidents were resolved last month",
+      "table": "incident", "aggregate": "count", "expectedFilter": "resolved_atONLast month@javascript:gs.beginningOfLastMonth()@javascript:gs.endOfLastMonth()" },
+    { "id": "m-14", "question": "how many SLAs are close to breaching",
+      "table": "task_sla", "aggregate": "count", "expectedFilter": "active=true^has_breached=false^percentage>80" },
+    { "id": "m-15", "question": "how many incidents were opened this month",
+      "table": "incident", "aggregate": "count", "expectedFilter": "opened_atONThis month@javascript:gs.beginningOfThisMonth()@javascript:gs.endOfThisMonth()" }
+  ],
+  "shouldDecline": [
+    { "id": "d-01", "question": "what is our uptime",
+      "why": "no uptime data exists anywhere in the instance" },
+    { "id": "d-02", "question": "what is the average latency of the SAP service",
+      "why": "no latency data exists; it lives in the client monitoring stack" },
+    { "id": "d-03", "question": "how many incidents will we get next month",
+      "why": "a forecast, not a query" },
+    { "id": "d-04", "question": "how many synthetic checks failed overnight",
+      "why": "no synthetic-check table exists" },
+    { "id": "d-05", "question": "how many incidents did Priya close last week",
+      "why": "a person's name that may not resolve to a user; must not be guessed at" }
+  ]
+}
+```
+
+- [ ] **Step 3: Implement `tools/eval-metrics.ts`** — ⏸ **needs the gateway key to run**
+
+```ts
+import { readFileSync } from 'node:fs'
+import { loadConfig } from '../src/config.js'
+import { makeSearch } from '../src/servicenow/search.js'
+import { makeStats } from '../src/servicenow/stats.js'
+import { makeLlm } from '../src/llm/client.js'
+
+interface AnswerQ {
+  id: string
+  question: string
+  table: string
+  aggregate: string
+  field?: string
+  expectedFilter: string
+}
+interface DeclineQ { id: string; question: string; why: string }
+
+const cfg = loadConfig()
+const llm = makeLlm(cfg)
+const sn = makeSearch(cfg)
+const stats = makeStats(cfg)
+
+const data = JSON.parse(readFileSync('tests/fixtures/metric-eval.json', 'utf8')) as {
+  shouldAnswer: AnswerQ[]
+  shouldDecline: DeclineQ[]
+}
+
+/** Clause order carries no meaning: active=true^priority=1 equals priority=1^active=true. */
+const clauses = (f: string) =>
+  f.split('^').map((c) => c.trim()).filter(Boolean).sort().join('^')
+
+async function main() {
+  let executed = 0
+  let exactFilter = 0
+  let rightTable = 0
+
+  console.log('=== SHOULD ANSWER ===')
+  for (const q of data.shouldAnswer) {
+    // Real conditions: metric questions still retrieve articles first, and those
+    // articles are usually irrelevant. The model must not be distracted by them.
+    const articles = await sn.search(q.question, cfg.searchLimit)
+    const reply = await llm.decide({ question: q.question, articles, history: [] })
+
+    if (reply.kind !== 'metric') {
+      console.log(`${q.id}  NOT A METRIC (${reply.kind})`)
+      continue
+    }
+
+    const r = reply.request
+    const tableOk = r.table === q.table
+    const filterOk = clauses(r.filter) === clauses(q.expectedFilter)
+    if (tableOk) rightTable++
+    if (tableOk && filterOk) exactFilter++
+
+    let value: string | number | 'ERROR' = 'ERROR'
+    try {
+      value = (await stats.run(r)).value
+      executed++
+    } catch (e) {
+      console.log(`         execution failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+
+    console.log(
+      `${q.id}  ${tableOk ? 'table✓' : `table✗(${r.table})`} ` +
+        `${filterOk ? 'filter✓' : 'filter~'}  = ${value}`,
+    )
+    if (!filterOk) {
+      console.log(`         expected: ${q.expectedFilter}`)
+      console.log(`         actual  : ${r.filter}`)
+    }
+  }
+
+  console.log('\n=== SHOULD DECLINE ===')
+  let declined = 0
+  for (const q of data.shouldDecline) {
+    const articles = await sn.search(q.question, cfg.searchLimit)
+    const reply = await llm.decide({ question: q.question, articles, history: [] })
+    const ok = reply.kind !== 'metric'
+    if (ok) declined++
+    console.log(`${q.id}  ${ok ? 'declined' : 'INVENTED A QUERY <- investigate'}  (${q.why})`)
+  }
+
+  const n = data.shouldAnswer.length
+  console.log('\n=== SUMMARY ===')
+  console.log(`Executed cleanly : ${executed}/${n}   <- the floor; 15/15 was measured by hand`)
+  console.log(`Right table      : ${rightTable}/${n}`)
+  console.log(`Exact filter     : ${exactFilter}/${n}`)
+  console.log(`Correctly declined: ${declined}/${data.shouldDecline.length}`)
+  console.log('\nA filter~ is not automatically wrong — read it. Different clauses can be')
+  console.log('equally defensible. What matters is that it executes and says what it counted.')
+
+  if (executed < n) {
+    console.error(`\nREGRESSION: ${n - executed} composed queries failed to execute`)
+    process.exit(1)
+  }
+}
+
+main()
+```
+
+- [ ] **Step 4: Run both evals**
 
 ```bash
 npm run eval                    # works now — search only, no gateway needed
 npm run eval -- --with-retry    # ⏸ BLOCKED until the gateway key is available
+npm run eval:metrics            # ⏸ BLOCKED until the gateway key is available
 ```
 
-**First run (search only):** recall@1 at or above **26/35 (74%)** and recall@5 at or above **29/35 (83%)** — the spec §9 baseline. A lower number exits non-zero; investigate rather than lowering the baseline. If the recommended cutoff differs materially from `0.3`, update `GATE_MIN_COVERAGE` in `.env` and note it in spec §9.
+**`npm run eval` (search only):** recall@1 at or above **26/35 (74%)** and recall@5 at or above **29/35 (83%)** — the spec §9 baseline. A lower number exits non-zero; investigate rather than lowering the baseline.
 
-**Second run (with retry):** expect roughly **31/35 (89%)**, based on the measurement that five of the six baseline misses recover at rank 1 when rewritten. This run costs Claude calls and varies between runs.
+**`--with-retry`:** expect roughly **31/35 (89%)**. Costs Claude calls and varies between runs. **If retry does not beat the baseline meaningfully, say so and stop.** Setting `RETRY_ENABLED=false` and keeping the simpler system is a legitimate outcome, not a failure.
 
-**If retry does not beat the baseline meaningfully, say so and stop.** D13 buys ~15 points at the price of an extra call on every declined question and roughly double the latency on rescued ones. If the measured gain is small, set `RETRY_ENABLED=false` and keep the simpler system — that is a legitimate outcome, not a failure.
+**`eval:metrics`:** every question must execute. 15/15 was measured by hand on 2026-09-14, so anything less is a regression in the prompt, not a surprise about the data. Filter mismatches need reading rather than counting — `stateIN6,7` versus `state=7` for "closed" is a real bug, while a differing date window may be equally defensible.
 
-- [ ] **Step 3: Run the full suite and a type check**
+- [ ] **Step 5: Run the full suite and a type check**
 
 Run: `npx vitest run && npx tsc --noEmit`
 Expected: all tests PASS, no type errors.
 
-- [ ] **Step 4: Walk the acceptance criteria (spec §16)**
+- [ ] **Step 6: Walk the acceptance criteria (spec §16)**
 
 - [ ] 1. `npm run dev` boots; gateway preflight passes; the ServiceNow probe succeeds
 - [ ] 2. `/api/health` shows ok, the model id, and ServiceNow reachable
-- [ ] 3. Five known questions answer correctly with working links. Use `inc-01`, `inc-04`, `inc-06`, `syn-09`, `syn-18` from the eval fixture
+- [ ] 3. Five known questions answer correctly with working links — use `inc-01`, `inc-04`, `inc-06`, `syn-09`, `syn-18`
 - [ ] 4. `Hi Team,` gives `too_few_tokens` with **no Claude call at all** (confirm in the logs)
-- [ ] 5. ⏸ *needs the key* — `what is the capital of France` gives `out_of_scope`: one triage call, no second search, no answer call
-- [ ] 6. ⏸ *needs the key* — `new joiner starts on monday` is **answered correctly**, with `retried: true` and the rewritten query in the logs
+- [ ] 5. ⏸ *needs the key* — `what is the capital of France` gives `model_declined` with no second search
+- [ ] 6. ⏸ *needs the key* — `new joiner starts on monday` is **answered correctly**, `retried: true`, rewritten query in the logs
 - [ ] 7. ⏸ *needs the key* — no question ever logs two retries
-- [ ] 8. Temporarily set `SN_INSTANCE_URL=https://invalid.example.com` and confirm the reply is "cannot reach the knowledge base", **not** "no match". Restore afterwards
-- [ ] 9. No secrets in captured logs — search them for `sk-` and for the client id
-- [ ] 10. `npm run eval` meets or beats 26/35 recall@1 and prints the sweep
-- [ ] 11. `npm run eval -- --with-retry` beats it materially (expect ~31/35). If not, set `RETRY_ENABLED=false` and record why
+- [ ] 8. **`how many open incidents are there` returns a number, the filter `active=true`, and a link whose record count equals the number.** This is the acceptance test for the metrics path
+- [ ] 9. `how many incidents are on hold` returns 1, matching the QBR On-Hold tile
+- [ ] 10. ⏸ *needs the key* — `what is our uptime` is declined, not answered from an approximate metric
+- [ ] 11. Set `METRICS_ENABLED=false` and confirm behaviour is identical to revision 5
+- [ ] 12. Run `npm run eval` with `METRICS_ENABLED=true` and confirm article recall is unchanged
+- [ ] 13. Temporarily set `SN_INSTANCE_URL=https://invalid.example.com` and confirm "cannot reach the knowledge base", **not** "no match". Restore afterwards
+- [ ] 14. No secrets in captured logs — search them for `sk-` and for the client id
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add tools/eval.ts
-git commit -m "feat: eval script with recall and threshold sweep"
+git add tools tests/fixtures/metric-eval.json
+git commit -m "feat: article and metric evals with acceptance walkthrough"
 ```
 
 ---
 
 ## Things that will bite you
 
-- **Use `Article.id`, never `label`.** `KB0010004` maps to four different articles on abhrademo4 and `KB0010141` to two. Any lookup, comparison or link keyed on the number is a bug waiting for a demo.
+- **Use `Article.id`, never `label`.** `KB0010004` maps to four different articles on abhrademo4. Any lookup, comparison or link keyed on the number is a bug waiting for a demo.
 - **Gateway model ids are renamed by LiteLLM** — yours is `claude-opus-4-8-Codon`. A wrong id fails at *runtime with a plausible answer*, not at startup, which is why preflight exists. Never hardcode a public Anthropic id as a fallback.
-- **The API key is the Key Vault secret's VALUE**, not its name and not its version. A 32-character hex string is a version identifier; a real gateway key normally starts `sk-`.
+- **The API key is the Key Vault secret's VALUE**, not its name and not its version. A 32-character hex string is a version identifier.
 - **`123TEXTQUERY321` needs sanitising.** A `^` or `=` in the user's question breaks `sysparm_query` and produces confusing results rather than an error.
-- **Layer 1 of the gate runs before searching.** Do not "simplify" by searching first — greeting-shaped noise should never reach the instance or the model.
-- **Expect most real traffic to be declined.** Of 36,023 incidents on abhrademo4, most are monitoring alerts and fragments. A high decline rate is the system working (spec §9).
+- **The metric filter is NOT sanitised** — it is a `sysparm_query` by design and `^` is its clause separator. It goes through `URLSearchParams`, never string concatenation, and never through `sanitiseQuery`.
+- **"Closed" is two states.** `state=6` is Resolved and `state=7` is Closed. A query using only one silently undercounts, and the number looks perfectly reasonable. This is the single likeliest wrong answer the system will produce.
+- **ServiceNow returns aggregates as strings**, and durations as `HH:MM:SS`. `Number('00:43:22')` is `NaN` — hence the `coerce` helper.
+- **The token guard runs before searching.** Do not "simplify" by searching first — greeting-shaped noise should never reach the instance or the model.
+- **PowerShell scalar trap, if you script against this.** A one-element ServiceNow result is a scalar whose `.Count` is `$null`, so `for ($i=0; $i -lt $r.Count; ...)` never runs. Always `@()`-wrap. This once made an eval report 54% when the true figure was 80%.
+- **Expect most real traffic to be declined.** Of 36,030 incidents on abhrademo4, most are monitoring alerts and fragments. A high decline rate is the system working.
 - **`.env` holds live secrets** and is gitignored. Check `git status` before `git add -A`.
 
 ---
@@ -2046,16 +2473,17 @@ git commit -m "feat: eval script with recall and threshold sweep"
 
 | Spec section | Tasks |
 |---|---|
-| §4 architecture | 2, 5 |
-| §5 decisions | D1 T1 · D2 T2 · D3 T6 · D4 T3, T5 · D5 T1 · D6 T5 · D7 T2 · D8 T1 · D9 T1, T2 · D10 T2, T4 · D11 T3, T5 · D12 (nothing to build — the seam was removed) |
-| §6 layout | 1-7 |
+| §4 architecture | 2, 3, 5 |
+| §5 decisions | D1 T1 · D2 T2 · D3 T6 · D4 T4, T5 · D5 T2 · D6 T4 · D7 (nothing to build) · D8 T1 · D9 withdrawn · D10 T2, T4 · D11 T1, T5 · D12 (nothing to build) · D13 T5 · D14 T3, T4 · D15 withdrawn · D16 T4, T5 |
+| §6 layout | 1–7 |
 | §7 config and gateway rules | 1, 4 |
 | §8 ServiceNow search | 2 |
-| §9 gate and eval | 3, 7 |
+| §8b metrics path | 3, 4, 5, 6 |
+| §9 gate and eval | 1, 5, 7 |
 | §10 prompt and citations | 4 |
 | §11 API contract | 5 |
 | §12 frontend | 6 |
-| §13 error handling | 2, 5 |
+| §13 error handling | 2, 3, 5 |
 | §14 observability | 1, 5 |
 | §15 testing | every task |
 | §16 acceptance | 7 |
