@@ -1576,7 +1576,9 @@ describe('POST /api/chat', () => {
     }))
     const app = makeApp({ cfg, sn: okSn(), stats: { run }, llm: { preflight: async () => {}, decide } })
     await post(app, { message: 'how many open incidents are there', conversationId: 'c1' })
-    await post(app, { message: 'and how many of those are P1', conversationId: 'c1' })
+    // "P1" is two characters and "many" is a stopword — this wording keeps two real tokens
+    // so the guard lets it through and the model actually sees the history.
+    await post(app, { message: 'and how many of those incidents are priority one', conversationId: 'c1' })
     const second = decide.mock.calls[1]?.[0] as { history: { role: string; content: string }[] }
     expect(second.history).toHaveLength(2)
     expect(second.history[1]?.content).toContain('active=true')
@@ -1742,10 +1744,8 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
   const app = express()
 
   function remember(conversationId: string, history: Turn[], question: string, answer: string) {
-    conversations.set(
-      conversationId,
-      [...history, { role: 'user', content: question }, { role: 'assistant', content: answer }].slice(-12),
-    )
+    const turns: Turn[] = [...history, { role: 'user', content: question }, { role: 'assistant', content: answer }]
+    conversations.set(conversationId, turns.slice(-12))
   }
 
   app.use(express.json({ limit: '64kb' }))
