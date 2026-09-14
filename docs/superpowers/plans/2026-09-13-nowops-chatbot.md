@@ -100,7 +100,7 @@ Nine source files, three static assets, one tool.
 - Consumes: nothing
 - Produces: `loadConfig(): Config`, `parseConfig(env): Config`, `Config` interface; `log(event, fields)`, `mask(secret)`; `tokenise(s): string[]`, `hasEnoughTokens(s, min): boolean`
 
-- [ ] **Step 1: Initialise the project**
+- [x] **Step 1: Initialise the project**
 
 ```bash
 npm init -y
@@ -115,7 +115,7 @@ npm i -D typescript tsx vitest @types/node @types/express
 node -e "require('fs').writeFileSync('.nvmrc','22\n')"
 ```
 
-- [ ] **Step 2: Create `tsconfig.json`**
+- [x] **Step 2: Create `tsconfig.json`**
 
 ```json
 {
@@ -139,7 +139,7 @@ node -e "require('fs').writeFileSync('.nvmrc','22\n')"
 
 `noEmit` because nothing is compiled — `tsx` runs the source. `tests/` is included so a test that calls a function with the wrong arguments fails `npm run typecheck` instead of silently passing under vitest, which strips types without checking them. `noUncheckedIndexedAccess` matters here: `articles[0]` is `Article | undefined`, which forces the empty-result case to be handled rather than discovered in a demo.
 
-- [ ] **Step 3: Write the failing tests**
+- [x] **Step 3: Write the failing tests**
 
 `tests/config.test.ts`:
 
@@ -237,12 +237,12 @@ describe('hasEnoughTokens', () => {
 })
 ```
 
-- [ ] **Step 4: Run to verify they fail**
+- [x] **Step 4: Run to verify they fail**
 
 Run: `npx vitest run`
 Expected: FAIL — cannot resolve `../src/config.js`, `../src/log.js`, `../src/guard.js`
 
-- [ ] **Step 5: Implement `src/log.ts`**
+- [x] **Step 5: Implement `src/log.ts`**
 
 ```ts
 /** Masks a secret for logs: sk-abcdefghijklmnop -> sk-ab…mnop */
@@ -257,7 +257,7 @@ export function log(event: string, fields: Record<string, unknown> = {}): void {
 }
 ```
 
-- [ ] **Step 6: Implement `src/guard.ts`**
+- [x] **Step 6: Implement `src/guard.ts`**
 
 ```ts
 const STOPWORDS = new Set([
@@ -293,7 +293,7 @@ export function hasEnoughTokens(s: string): boolean {
 }
 ```
 
-- [ ] **Step 7: Implement `src/config.ts`**
+- [x] **Step 7: Implement `src/config.ts`**
 
 `.env` is read by Node itself — every script passes `--env-file=.env`, so there is no
 loader library and nothing to call before the schema runs.
@@ -361,12 +361,12 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
 export const loadConfig = (): Config => parseConfig(process.env)
 ```
 
-- [ ] **Step 8: Run to verify they pass**
+- [x] **Step 8: Run to verify they pass**
 
 Run: `npx vitest run`
 Expected: PASS, 13 tests
 
-- [ ] **Step 9: Write `.env.example`**
+- [x] **Step 9: Write `.env.example`**
 
 The real `.env` holds live ServiceNow credentials. This committed file documents the shape with placeholders only.
 
@@ -392,11 +392,11 @@ PORT=3000
 LLM_MODE=live
 ```
 
-- [ ] **Step 10: Reconcile the real `.env`**
+- [x] **Step 10: Reconcile the real `.env`**
 
 The existing `.env` carries three keys removed in revs 8 and 9: `GATE_MIN_TOKENS`, `GATE_MIN_COVERAGE` and `SEARCH_LIMIT`. Unknown keys are harmless to Node's `--env-file`, but leaving them implies they still do something. Delete those three lines by hand; touch nothing else in the file. Also remove the `$ModelChoices` parameter and the `CLAUDE_MODEL_CHOICES` entry from `tools/set-gateway-env.ps1` — that key was dropped with the model picker and nothing reads it.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add package.json package-lock.json tsconfig.json .nvmrc .env.example src tests tools/set-gateway-env.ps1
@@ -417,7 +417,7 @@ git commit -m "feat: scaffold, validated config, masking logger and token guard"
 
 `makeSnClient` is the only place that knows about OAuth, bearer headers, timeouts or how a ServiceNow error becomes a `ServiceNowUnavailableError`. Search (this task) and stats (Task 3) both take the client, so the process holds **one** token cache and every request has the same timeout.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { describe, it, expect, vi } from 'vitest'
@@ -538,12 +538,12 @@ describe('makeSearch', () => {
 })
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `npx vitest run tests/servicenow.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement `src/servicenow/types.ts`**
+- [x] **Step 3: Implement `src/servicenow/types.ts`**
 
 ```ts
 /** One knowledge base article. A plain record — nothing implements an interface here. */
@@ -570,7 +570,7 @@ export class ServiceNowUnavailableError extends Error {
 }
 ```
 
-- [ ] **Step 4: Implement `src/servicenow/client.ts`**
+- [x] **Step 4: Implement `src/servicenow/client.ts`**
 
 ```ts
 import type { Config } from '../config.js'
@@ -668,7 +668,7 @@ export function makeSnClient(cfg: Config, fetchImpl: typeof fetch = fetch): SnCl
 }
 ```
 
-- [ ] **Step 5: Implement `src/servicenow/search.ts`**
+- [x] **Step 5: Implement `src/servicenow/search.ts`**
 
 ```ts
 import type { Article } from './types.js'
@@ -747,12 +747,12 @@ export function makeSearch(sn: SnClient) {
 }
 ```
 
-- [ ] **Step 6: Run to verify it passes**
+- [x] **Step 6: Run to verify it passes**
 
 Run: `npx vitest run tests/servicenow.test.ts`
 Expected: PASS, 13 tests
 
-- [ ] **Step 7: Verify against the live instance**
+- [x] **Step 7: Verify against the live instance**
 
 ```bash
 node --env-file=.env --import tsx --input-type=module -e "import {loadConfig} from './src/config.ts';import {makeSnClient} from './src/servicenow/client.ts';import {makeSearch} from './src/servicenow/search.ts';const r=await makeSearch(makeSnClient(loadConfig())).search('Self-checkout lanes 1-4 down at Store #208 after image push');console.log(r.map(a=>a.label+' '+a.title))"
@@ -762,7 +762,7 @@ node --env-file=.env --import tsx --input-type=module -e "import {loadConfig} fr
 
 Expected: `KB0010141 Self-checkout NCR terminal will not boot after image push` first — that is eval question `inc-01`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/servicenow tests/servicenow.test.ts
@@ -783,7 +783,7 @@ git commit -m "feat: ServiceNow OAuth and live knowledge search"
 
 This is the whole of D14's execution side. The model supplies four fields as data (plus an optional display `label`); everything here builds a read-only `GET`. The table name is interpolated into a URL path, so it is shape-checked — the one place model output touches a path.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { describe, it, expect, vi } from 'vitest'
@@ -917,12 +917,12 @@ describe('makeStats.run', () => {
 })
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `npx vitest run tests/stats.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement `src/servicenow/stats.ts`**
+- [x] **Step 3: Implement `src/servicenow/stats.ts`**
 
 ```ts
 import type { SnClient } from './client.js'
@@ -1028,12 +1028,12 @@ export function makeStats(sn: SnClient) {
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run tests/stats.test.ts`
 Expected: PASS, 15 tests
 
-- [ ] **Step 5: Verify against the live instance**
+- [x] **Step 5: Verify against the live instance**
 
 ```bash
 node --env-file=.env --import tsx --input-type=module -e "import {loadConfig} from './src/config.ts';import {makeSnClient} from './src/servicenow/client.ts';import {makeStats} from './src/servicenow/stats.ts';const s=makeStats(makeSnClient(loadConfig()));const r=await Promise.all([s.run({table:'incident',filter:'active=true',aggregate:'count'}),s.run({table:'incident',filter:'active=true^priority=1',aggregate:'count'}),s.run({table:'task_sla',filter:'has_breached=true',aggregate:'count'})]);r.forEach(x=>console.log(x.value,'|',x.table,x.filter))"
@@ -1047,7 +1047,7 @@ Expected, matching the spec §8b measurements (numbers drift as tickets are rais
 23429| task_sla has_breached=true
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/servicenow/stats.ts tests/stats.test.ts
@@ -1068,7 +1068,7 @@ git commit -m "feat: read-only aggregate queries with deep links"
 
 One prompt, four possible replies (D16). There is no triage prompt and no second method.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { describe, it, expect } from 'vitest'
@@ -1183,12 +1183,12 @@ describe('parseCitations and stripCitationMarkup', () => {
 })
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `npx vitest run tests/llm.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement `src/llm/client.ts`**
+- [x] **Step 3: Implement `src/llm/client.ts`**
 
 ```ts
 import Anthropic from '@anthropic-ai/sdk'
@@ -1335,7 +1335,8 @@ export function makeStubLlm() {
       log('llm.STUB_MODE', { warning: 'No real model. Answers are canned. Do not demo as real.' })
     },
 
-    async decide(opts: { question: string; articles: Article[] }): Promise<Reply> {
+    // Same signature as the live client so makeLlm returns one shape; history is unused here.
+    async decide(opts: { question: string; articles: Article[]; history: Turn[] }): Promise<Reply> {
       log('llm.STUB_MODE.decide', { q: opts.question })
 
       // A fixture, not intelligence: it exists so the aggregate path can be
@@ -1415,7 +1416,7 @@ export function makeLlm(cfg: Config) {
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run tests/llm.test.ts`
 Expected: PASS, 18 tests
@@ -1428,7 +1429,7 @@ node --env-file=.env --import tsx --input-type=module -e "import {loadConfig} fr
 
 Expected: `preflight ok`. A failure names the model id and the masked key — treat a wrong model id as the most likely cause.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/llm tests/llm.test.ts
@@ -1447,7 +1448,7 @@ git commit -m "feat: Claude client with one prompt and four-way reply parsing"
 - Consumes: everything from Tasks 1–4
 - Produces: `makeApp({ cfg, sn, stats, llm })` → Express app
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { describe, it, expect, vi } from 'vitest'
@@ -1686,12 +1687,12 @@ function fakeLlm(reply: () => Reply) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `npx vitest run tests/server.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement `src/server.ts`**
+- [x] **Step 3: Implement `src/server.ts`**
 
 ```ts
 import express from 'express'
@@ -1927,12 +1928,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run tests/server.test.ts`
 Expected: PASS, 12 tests
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/server.ts tests/server.test.ts
@@ -1950,7 +1951,7 @@ git commit -m "feat: chat route with article, metric and decline paths"
 - Consumes: `POST /api/chat`, `GET /api/health` (Task 5)
 - Produces: nothing consumed by later tasks
 
-- [ ] **Step 1: Create `public/index.html`**
+- [x] **Step 1: Create `public/index.html`**
 
 ```html
 <!doctype html>
@@ -1979,7 +1980,7 @@ git commit -m "feat: chat route with article, metric and decline paths"
 </html>
 ```
 
-- [ ] **Step 2: Create `public/styles.css`**
+- [x] **Step 2: Create `public/styles.css`**
 
 ```css
 :root { --bg:#0f1115; --panel:#171a21; --ink:#e8eaed; --muted:#9aa4b2; --accent:#5b9dff; --warn:#e0a458; }
@@ -2012,7 +2013,7 @@ button { background:var(--accent); border:0; color:#08121f; font-weight:600; pad
 .typing { color:var(--muted); font-style:italic; }
 ```
 
-- [ ] **Step 3: Create `public/app.js`**
+- [x] **Step 3: Create `public/app.js`**
 
 ```js
 const logEl = document.getElementById('log')
@@ -2126,7 +2127,7 @@ form.addEventListener('submit', async (e) => {
 loadHealth()
 ```
 
-- [ ] **Step 4: Verify by hand**
+- [x] **Step 4: Verify by hand**
 
 Without the gateway key, set `LLM_MODE=stub` in `.env` first. The health pill turns amber.
 
@@ -2141,7 +2142,7 @@ Open `http://localhost:3000` and check four states:
 3. `Hi Team,` → "No knowledge base match — not answered"
 4. `what is the capital of France` → the same decline **with a live model**. In stub mode this is *answered*, citing whatever article search returned first — the stub always cites `[1]`. That is the stub being a fixture, not a bug; re-check this state once the key arrives
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add public
@@ -2163,7 +2164,7 @@ git commit -m "feat: chat UI rendering article sources and metric filters"
 One script, three modes. They share config loading, the ServiceNow client, argument
 parsing and summary formatting; two files would duplicate roughly forty lines to no end.
 
-- [ ] **Step 1: Implement `tools/eval.ts`**
+- [x] **Step 1: Implement `tools/eval.ts`**
 
 ```ts
 import { readFileSync } from 'node:fs'
@@ -2377,7 +2378,7 @@ async function main() {
 main()
 ```
 
-- [ ] **Step 2: Create `tests/fixtures/metric-eval.json`**
+- [x] **Step 2: Create `tests/fixtures/metric-eval.json`**
 
 The fifteen questions measured live on 2026-09-14 (spec §8b), plus five that must be
 declined. `expectedFilter` is compared clause-by-clause, so order does not matter.
@@ -2431,7 +2432,7 @@ declined. `expectedFilter` is compared clause-by-clause, so order does not matte
 }
 ```
 
-- [ ] **Step 3: Run all three modes**
+- [x] **Step 3: Run all three modes**
 
 ```bash
 npm run eval                    # works now — search only, no gateway needed
@@ -2445,29 +2446,29 @@ npm run eval -- --metrics       # ⏸ BLOCKED until the gateway key is available
 
 **`--metrics`:** every question must execute. 15/15 was measured by hand on 2026-09-14, so anything less is a regression in the prompt, not a surprise about the data. Filter mismatches need reading rather than counting — `stateIN6,7` versus `state=7` for "closed" is a real bug, while a differing date window may be equally defensible.
 
-- [ ] **Step 4: Run the full suite and a type check**
+- [x] **Step 4: Run the full suite and a type check**
 
 Run: `npm test && npm run typecheck`
 Expected: all tests PASS, no type errors — the type check covers `tests/` too, so a test calling a function with the wrong shape fails here.
 
-- [ ] **Step 5: Walk the acceptance criteria (spec §16)**
+- [x] **Step 5: Walk the acceptance criteria (spec §16)**
 
-- [ ] 1. `npm run dev` boots; gateway preflight passes; the ServiceNow probe succeeds
-- [ ] 2. `/api/health` shows ok, the model id, and ServiceNow reachable
-- [ ] 3. Five known questions answer correctly with working links — use `inc-01`, `inc-04`, `inc-06`, `syn-09`, `syn-18`
-- [ ] 4. `Hi Team,` gives `too_few_tokens` with **no Claude call at all** (confirm in the logs)
+- [x] 1. `npm run dev` boots; gateway preflight passes; the ServiceNow probe succeeds
+- [x] 2. `/api/health` shows ok, the model id, and ServiceNow reachable
+- [x] 3. Five known questions answer correctly with working links — use `inc-01`, `inc-04`, `inc-06`, `syn-09`, `syn-18`
+- [x] 4. `Hi Team,` gives `too_few_tokens` with **no Claude call at all** (confirm in the logs)
 - [ ] 5. ⏸ *needs the key* — `what is the capital of France` gives `model_declined` with no second search
 - [ ] 6. ⏸ *needs the key* — `new joiner starts on monday` is **answered correctly**, `retried: true`, rewritten query in the logs
 - [ ] 7. ⏸ *needs the key* — no question ever logs two retries
-- [ ] 8. **`how many open incidents are there` returns "N open incidents", the filter `active=true`, and a link whose record count equals N.** This is the acceptance test for the metrics path
-- [ ] 9. `how many incidents are on hold` returns 1, matching the QBR On-Hold tile
+- [x] 8. **`how many open incidents are there` returns "N open incidents", the filter `active=true`, and a link whose record count equals N.** This is the acceptance test for the metrics path
+- [x] 9. `how many incidents are on hold` returns 1, matching the QBR On-Hold tile
 - [ ] 10. ⏸ *needs the key* — `what is our uptime` is declined, not answered from an approximate metric
-- [ ] 11. `npm run eval` recall is unchanged from the revision 5 baseline (26/35 @1, 29/35 @5). This is the article-regression check; there is no other repository to compare against
-- [ ] 12. Temporarily set `SN_INSTANCE_URL=https://invalid.example.com` and confirm "cannot reach the knowledge base", **not** "no match". Restore afterwards
-- [ ] 13. No secrets in captured logs — search them for `sk-` and for the client id
-- [ ] 14. A metric reply naming a table such as `../oauth_token.do` (forced in a test) is declined before any request leaves the process
+- [x] 11. `npm run eval` recall is unchanged from the revision 5 baseline (26/35 @1, 29/35 @5). This is the article-regression check; there is no other repository to compare against
+- [x] 12. Temporarily set `SN_INSTANCE_URL=https://invalid.example.com` and confirm "cannot reach the knowledge base", **not** "no match". Restore afterwards
+- [x] 13. No secrets in captured logs — search them for `sk-` and for the client id
+- [x] 14. A metric reply naming a table such as `../oauth_token.do` (forced in a test) is declined before any request leaves the process
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add tools tests/fixtures

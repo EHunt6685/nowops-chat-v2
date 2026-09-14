@@ -142,7 +142,8 @@ export function makeStubLlm() {
       log('llm.STUB_MODE', { warning: 'No real model. Answers are canned. Do not demo as real.' })
     },
 
-    async decide(opts: { question: string; articles: Article[] }): Promise<Reply> {
+    // Same signature as the live client so makeLlm returns one shape; history is unused here.
+    async decide(opts: { question: string; articles: Article[]; history: Turn[] }): Promise<Reply> {
       log('llm.STUB_MODE.decide', { q: opts.question })
 
       // A fixture, not intelligence: it exists so the aggregate path can be
