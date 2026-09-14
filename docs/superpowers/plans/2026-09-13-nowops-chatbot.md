@@ -2139,7 +2139,7 @@ Open `http://localhost:3000` and check four states:
 1. `Self-checkout lanes 1-4 down at Store #208 after image push` → an answer with a linked source; the link opens KB0010141 in abhrademo4. **In stub mode the prose is canned, but the article, the citation and the link are all real** — which is what this step verifies
 2. `how many open incidents are there` → **"5,513 open incidents" in big type** (the number will have drifted), with `incident · count` and the filter `active=true` beneath it, and a link that opens exactly those records. In stub mode the query is a fixture, but the number and the link are live
 3. `Hi Team,` → "No knowledge base match — not answered"
-4. `what is the capital of France` → the same decline
+4. `what is the capital of France` → the same decline **with a live model**. In stub mode this is *answered*, citing whatever article search returned first — the stub always cites `[1]`. That is the stub being a fixture, not a bug; re-check this state once the key arrives
 
 - [ ] **Step 5: Commit**
 

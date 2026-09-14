@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NowOps Assistant</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>NowOps Assistant</h1>
+    <span id="health" class="pill">checking…</span>
+  </header>
+
+  <main id="log" aria-live="polite"></main>
+
+  <form id="composer">
+    <input id="q" autocomplete="off" placeholder="Ask about articles, or how many…" />
+    <button>Send</button>
+  </form>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
