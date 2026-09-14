@@ -475,9 +475,24 @@ followed immediately by an operator (`=`, `!=`, `<`, `>`, `IN`, `ISEMPTY`, `ON`,
 a shape check, not a validator — a wrong field name still goes through and ServiceNow
 answers it — but prose can no longer masquerade as a query. A filter containing
 `GROUPBY` is also declined: `/stats/` ignores it and returns the total, which is a right
-number for the wrong question (series are out of scope, section 2). Whatever ServiceNow
-does reject, we catch and decline rather than attempt repair — a second guess at a
-query is a second chance to be confidently wrong.
+number for the wrong question (series are out of scope, section 2).
+
+**Field names are validated before counting.** ServiceNow also silently drops a clause
+whose *field* does not exist — measured during the KPI data pull: `product_type=full` on
+`alm_license` returned all 202 rows because the column is not there. So before the
+aggregate runs, the server fetches one record from the table asking for exactly the
+fields the filter (and the aggregate) name; the table API omits unknown fields from the
+response, and any missing one is a decline with `metric_unavailable`. One extra
+round-trip per metric turn. An empty table is not validated — it counts to zero anyway.
+
+Whatever ServiceNow does reject, we catch and decline rather than attempt repair — a
+second guess at a query is a second chance to be confidently wrong.
+
+**"Open" is ambiguous on this instance.** `active=true` includes the 111 Resolved
+incidents (state 6) and a handful of Closed/Cancelled rows whose flag was never cleared,
+while the App360 tiles count `stateIN1,2`. The prompt tells the model to use
+`active=true^stateIN1,2,3` when the user says *unresolved* or *not yet resolved*, and the
+rendered filter shows which reading was applied.
 
 ### Measured basis (2026-09-14, live)
 
@@ -799,6 +814,7 @@ Principle: **fail loudly at boot, degrade gracefully at runtime.**
 | Model returns an aggregate outside the five permitted | Decline, and log what it asked for. Same discipline as stripping fabricated `[n]` citations (D10) |
 | Model returns a filter that is not an encoded query (prose, spaces around `=`) | Refused by the shape check before any request; decline with `metric_unavailable`. ServiceNow would have ignored it and returned the whole table |
 | Model returns a filter with `GROUPBY` | Declined at parse time. `/stats/` ignores it and would return a total for a breakdown question |
+| Model names a field the table does not have | One-record probe shows the field is missing; decline with `metric_unavailable`. ServiceNow would have dropped the clause and counted the whole table |
 | Model returns a filter ServiceNow does reject | Decline with `metric_unavailable`. **No repair attempt** — a second guess at a query is a second chance to be confidently wrong |
 | Model wraps its reply in a code fence, adds a preamble, writes `METRIC:` or `COUNT` | Parsed as intended. These are formatting variations, not different intents; the verb line is found wherever it is, fences are stripped, the first JSON object is taken, aggregate case is normalised |
 | Request body is not JSON | HTTP 400, not 500 |

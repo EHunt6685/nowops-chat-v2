@@ -149,6 +149,48 @@ describe('makeStats.run', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
+  it('declines a filter naming a field the table does not have, before counting', async () => {
+    // ServiceNow silently drops an unknown field from a filter and returns the whole
+    // table — measured: product_type=full on alm_license returned all 202 rows.
+    const calls: string[] = []
+    const fetchImpl = snFetch((u) => {
+      calls.push(u)
+      // The probe: table API echoes back only the fields that exist.
+      if (u.includes('/api/now/table/')) return ok({ result: [{ sys_id: 'x', active: 'true' }] })
+      return ok({ result: { stats: { count: '202' } } })
+    })
+    await expect(
+      stats(fetchImpl).run({ table: 'alm_license', filter: 'active=true^product_type=full', aggregate: 'count' }),
+    ).rejects.toThrow(/product_type/)
+    expect(calls.some((u) => u.includes('/api/now/stats/'))).toBe(false)
+  })
+
+  it('validates dotted and aggregate fields the same way, then counts', async () => {
+    const fetchImpl = snFetch((u) => {
+      if (u.includes('/api/now/table/')) {
+        const fields = new URL(u).searchParams.get('sysparm_fields')!.split(',')
+        const rec: Record<string, string> = {}
+        for (const f of fields) rec[f] = 'v'
+        return ok({ result: [rec] })
+      }
+      return ok({ result: { stats: { avg: { calendar_duration: '00:43:22' } } } })
+    })
+    const r = await stats(fetchImpl).run({
+      table: 'incident', filter: 'active=true^assignment_group.name=Network^ORpriority=1', aggregate: 'avg', field: 'calendar_duration',
+    })
+    expect(r.value).toBe('00:43:22')
+    const probe = fetchImpl.mock.calls.map((c) => String(c[0])).find((u) => u.includes('/api/now/table/incident'))!
+    expect(new URL(probe).searchParams.get('sysparm_fields')!.split(',').sort())
+      .toEqual(['active', 'assignment_group.name', 'calendar_duration', 'priority'])
+  })
+
+  it('skips field validation when the table is empty — there is nothing to count anyway', async () => {
+    const fetchImpl = snFetch((u) =>
+      u.includes('/api/now/table/') ? ok({ result: [] }) : ok({ result: { stats: { count: '0' } } }))
+    const r = await stats(fetchImpl).run({ table: 'sn_vul_entry', filter: 'active=true', aggregate: 'count' })
+    expect(r.value).toBe(0)
+  })
+
   it('raises rather than repairing a filter ServiceNow rejects', async () => {
     // Well-formed shape, so it reaches the instance; the instance says no.
     await expect(

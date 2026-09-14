@@ -47,6 +47,17 @@ export function isEncodedQuery(filter: string): boolean {
     c === 'EQ' || /^ORDERBY(DESC)?[a-z0-9_.]+$/.test(c) || /^(NQ|OR)?[a-z0-9_.]+(=|!=|>=|<=|>|<|[A-Z])/.test(c))
 }
 
+/** Field names a filter refers to: the identifier before each clause's operator. */
+export function filterFields(filter: string): string[] {
+  const names = new Set<string>()
+  for (const clause of filter.split('^')) {
+    if (clause === '' || clause === 'EQ' || clause.startsWith('ORDERBY')) continue
+    const m = /^(?:NQ|OR)?([a-z0-9_.]+)/.exec(clause)
+    if (m) names.add(m[1]!)
+  }
+  return [...names]
+}
+
 /** count uses sysparm_count; every other aggregate uses sysparm_<agg>_fields. */
 export function buildStatsPath(req: MetricRequest): string {
   const params = new URLSearchParams()
@@ -102,6 +113,21 @@ export function makeStats(sn: SnClient) {
       }
       if (!isEncodedQuery(req.filter)) {
         throw new Error(`filter '${req.filter}' is not an encoded query`)
+      }
+
+      // ServiceNow silently drops a clause whose field does not exist and returns the
+      // whole table — measured: product_type=full on alm_license counted all 202 rows.
+      // One record with the requested fields tells us which ones are real: the table
+      // API omits unknown fields from the response. An empty table proves nothing and
+      // counts to zero anyway, so it is not validated.
+      const fields = [...filterFields(req.filter), ...(req.field ? [req.field] : [])]
+      if (fields.length) {
+        const probe = new URLSearchParams({ sysparm_fields: fields.join(','), sysparm_limit: '1' })
+        const sample = (await sn.get<{ result?: Record<string, unknown>[] }>(
+          `/api/now/table/${req.table}?${probe}`,
+        )).result?.[0]
+        const unknown = sample ? fields.filter((f) => !(f in sample)) : []
+        if (unknown.length) throw new Error(`field '${unknown.join("', '")}' does not exist on ${req.table}`)
       }
 
       // The client rejects a non-2xx as ServiceNowUnavailableError. Deliberately no

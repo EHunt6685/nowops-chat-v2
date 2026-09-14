@@ -41,7 +41,8 @@ NO_ANSWER
 
 Rules for METRIC:
 - "filter" is a ServiceNow encoded query: clauses joined by ^, e.g. active=true^priority=1
-- Open/active tickets are active=true. Priorities are priority=1..5. Incident states: 1 New, 2 In Progress, 3 On Hold, 6 Resolved, 7 Closed, 8 Cancelled. Be careful: "closed" usually means both 6 and 7, so use stateIN6,7 unless the user clearly means only one.
+- Open/active tickets are active=true. Priorities are priority=1..5. Incident states: 1 New, 2 In Progress, 3 On Hold, 6 Resolved, 7 Closed, 8 Cancelled. Be careful: "closed" usually means both 6 and 7, so use stateIN6,7 unless the user clearly means only one. On this instance Resolved incidents are still active=true; if the user says "unresolved", "still open" or "not yet resolved", use active=true^stateIN1,2,3.
+- Only use fields you are confident exist on that table. A filter with an unknown field is rejected by the server and the question is declined — it is never silently ignored.
 - "Tickets" means incidents (table incident) unless the user names requests (sc_req_item), changes (change_request) or problems (problem). "All" or "total" means no active filter; only add active=true when the user says open, active, current or outstanding.
 - Breached SLAs are task_sla with has_breached=true. Security incidents are sn_si_incident.
 - Breakdowns ("by priority", "per group", "trend over time") are not supported: reply NO_ANSWER rather than returning a single total.
