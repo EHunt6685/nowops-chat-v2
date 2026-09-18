@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>NowOps — onboarding mockup</title>
+<style>
+:root{--bg:#0f1115;--panel:#171a21;--ink:#e8eaed;--muted:#9aa4b2;--accent:#5b9dff;--ok:#7ee787;--warn:#e0a458;--bad:#ff7b72}
+body{margin:0;font:14px/1.5 "Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+header{display:flex;gap:1rem;align-items:center;padding:.7rem 1rem;border-bottom:1px solid #262b35}
+header h1{font-size:1rem;margin:0}
+.steps{display:flex;gap:.4rem;margin-left:auto}
+.steps span{font-size:.75rem;color:var(--muted);border:1px solid #2b3240;border-radius:999px;padding:.1rem .6rem}
+.steps span.on{color:var(--ok);border-color:var(--ok)}
+main{max-width:1150px;margin:1.2rem auto;padding:0 1rem}
+section{background:var(--panel);border:1px solid #262b35;border-radius:10px;padding:1rem;margin-bottom:1rem}
+section h2{margin:.1rem 0 .6rem;font-size:1rem}
+h3{font-size:.9rem;margin:.9rem 0 .3rem}
+.muted{color:var(--muted);font-size:.85rem}
+button{background:var(--accent);border:0;color:#08121f;font-weight:600;padding:.5rem 1rem;border-radius:8px;cursor:pointer}
+button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+input,select{background:#11141a;border:1px solid #2b3240;color:var(--ink);padding:.45rem .6rem;border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{padding:.3rem .5rem;border-bottom:1px solid #262b35;text-align:left;vertical-align:top}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:.7rem}
+.tile{background:#11141a;border:1px solid #262b35;border-radius:10px;padding:.7rem}
+.tile .v{font-size:1.7rem;font-weight:600;line-height:1.1}.tile .n{color:var(--muted);font-size:.8rem}
+.tile .f{font-family:Consolas,monospace;font-size:.68rem;color:var(--muted);overflow-wrap:anywhere;margin-top:.3rem}
+.tile a{color:var(--accent);font-size:.75rem;text-decoration:none}
+.tile.off{opacity:.55;border-style:dashed}
+.badge{font-size:.68rem;border:1px solid var(--warn);color:var(--warn);border-radius:999px;padding:0 .4rem;margin-left:.3rem}
+code{font-family:Consolas,monospace;font-size:.8em}
+</style></head><body>
+<header><h1>NowOps — onboarding mockup</h1>
+<div class="steps" id="steps"><span>1 Sign in</span><span>2 Connect</span><span>3 Scan</span><span>4 Confirm</span><span>5 Validate</span><span>6 Dashboard</span></div></header>
+<main id="main"></main>
+<script type="module">
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+const $ = (h) => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstElementChild }
+const main = document.getElementById('main')
+const api = (m, p, b) => fetch(p, { method: m, headers: { 'content-type': 'application/json' }, body: b ? JSON.stringify(b) : undefined }).then((r) => r.json())
+const fmt = (v) => typeof v === 'number' ? v.toLocaleString('en-US') : String(v)
+let step = 0, profile, definitions
+const mark = () => [...document.querySelectorAll('#steps span')].forEach((s, i) => s.classList.toggle('on', i <= step))
+const show = (el) => { step++; mark(); main.appendChild(el); el.scrollIntoView({ behavior: 'smooth' }) }
+
+// 1 Sign in (fake SSO)
+main.appendChild($(`<section><h2>1 · Sign in</h2><p class="muted">SSO stands in for a text box here. The session resolves to a tenant.</p>
+<input id="u" value="sdm@ust.com"> <button id="b1">Sign in with UST SSO</button><div id="o1" class="muted"></div></section>`))
+document.getElementById('b1').onclick = async () => {
+  const r = await api('POST', '/api/signin', { user: document.getElementById('u').value })
+  document.getElementById('o1').textContent = `Signed in as ${r.user} · tenant: ${r.tenant}`
+  connect()
+}
+
+// 2 Connect (prefilled from .env; credential never shown)
+async function connect() {
+  const c = await api('GET', '/api/connection')
+  show($(`<section><h2>2 · Connect instance</h2><p class="muted">The client's admin enters the instance URL and the service credential. The credential goes to the secrets store; only a reference is kept. Prefilled here from <code>.env</code>.</p>
+  <table><tr><th>Instance URL</th><td>${c.instance_url}</td></tr><tr><th>OAuth client id</th><td>${c.client_id}</td></tr><tr><th>Credential</th><td>${c.credential}</td></tr></table>
+  <p><button id="b2">Connect and scan instance</button> <span id="o2" class="muted"></span></p></section>`))
+  document.getElementById('b2').onclick = async (e) => { e.target.disabled = true; document.getElementById('o2').textContent = 'scanning abhrademo4 live — about 30 s…'; profile = await api('POST', '/api/scan'); scan() }
+}
+
+// 3 Scan result (instance profile)
+function scan() {
+  const rows = Object.entries(profile.tables).map(([t, x]) => `<tr><td><code>${t}</code></td><td>${x.present ? '<span class=ok>present</span>' : '<span class=bad>not present</span>'}</td><td>${x.rows ?? ''}</td><td class="${x.missing_fields?.length ? 'warn' : ''}">${(x.missing_fields ?? []).join(', ') || '—'}</td></tr>`).join('')
+  show($(`<section><h2>3 · Instance profile</h2><p class="muted">Read from the instance's own metadata at ${profile.scanned_at}. The tables checked are exactly those the definitions use — nothing else. No ticket data is stored.</p>
+  <table><tr><th>Table</th><th>Status</th><th>Rows</th><th>Missing fields we need</th></tr>${rows}</table>
+  <p><button id="b3">Continue</button></p></section>`))
+  document.getElementById('b3').onclick = confirm
+}
+
+// 4 Confirm: read-only where the scan is sure; a picker only where it is not
+function confirm() {
+  const slaRows = Object.entries(profile.sla_matches).map(([k, m]) => {
+    if (m.sure) { const s = m.candidates[0]; return `<tr><th>P${m.priority} resolution</th><td>${s.name} <span class=muted>· target ${s.duration}</span></td><td class=ok>matched by name</td></tr>` }
+    const opts = profile.sla_definitions.map((s) => `<option value="${s.sys_id}">${s.name} · ${s.duration}</option>`).join('')
+    return `<tr><th>P${m.priority} resolution</th><td><select data-p="${k}"><option value="">— choose —</option>${opts}</select></td><td class=warn>${m.candidates.length ? m.candidates.length + ' candidates' : 'no name match'}</td></tr>`
+  }).join('')
+  const std = profile.standard_states.map((s) => `<tr><td>${s.value}</td><td>${s.shipped}</td><td>${s.label === s.shipped ? '<span class=muted>same</span>' : `<span class=warn>${s.label}</span>`}</td><td>${fmt(s.count)}</td></tr>`).join('')
+  const custom = profile.custom_states.map((s) => `<tr><td>${s.value}</td><td>${s.label}</td><td>${fmt(s.count)}</td><td><label><input type=radio name="st${s.value}" value="open" checked> open</label> &nbsp; <label><input type=radio name="st${s.value}" value="closed"> closed</label></td></tr>`).join('')
+  show($(`<section><h2>4 · Confirm</h2>
+  <h3>Your SLA definitions</h3><p class="muted">NowOps reads SLA targets from your instance; it never sets them. Where exactly one record matched a priority it is shown as found. If your contract says a different target, the fix is in ServiceNow — the SLA engine there is what marks breaches.</p>
+  <table>${slaRows}</table>
+  <h3>Standard ticket states, with your labels</h3><p class="muted">Read-only. A relabelled standard state (for example 6 "Resolved" renamed) is worth a glance, because NowOps still treats 6 and 7 as closed.</p>
+  <table><tr><th>Value</th><th>ServiceNow ships</th><th>Your label</th><th>Tickets</th></tr>${std}</table>
+  <h3>Custom ticket states</h3><p class="muted">States your instance defines or uses that ServiceNow does not ship with. Should tickets in them count as open or closed? Default is open — a missed open ticket is worse than an over-counted one.</p>
+  <table><tr><th>Value</th><th>Label</th><th>Tickets now</th><th>Counts as</th></tr>${custom || '<tr><td colspan=4 class=muted>none</td></tr>'}</table>
+  <p><button id="b4">Confirm</button> <button id="b4s" class=ghost>Skip — accept what the scan found</button> <span class=muted>You can come back and confirm later; the dashboard works either way.</span></p></section>`))
+  document.getElementById('b4').onclick = async () => {
+    const slas = Object.fromEntries(Object.entries(profile.sla_matches).map(([k, m]) => [k, m.sure ? m.selected : (document.querySelector(`select[data-p="${k}"]`)?.value ?? '')]))
+    const open_states = profile.custom_states.filter((s) => document.querySelector(`input[name="st${s.value}"]:checked`).value === 'open').map((s) => s.value)
+    await api('POST', '/api/confirm', { slas, open_states }); definitions = await api('GET', '/api/validate'); validate(true)
+  }
+  document.getElementById('b4s').onclick = async () => { await api('POST', '/api/skip-confirm'); definitions = await api('GET', '/api/validate'); validate(false) }
+}
+
+// 5 Validate definitions against the profile
+function validate(confirmed) {
+  const cls = { available: 'ok', unavailable: 'bad', derived: 'muted' }
+  const rows = definitions.map((d) => `<tr><td>${d.name}<div class=muted>${d.meaning}</div></td><td><code>${d.table ?? 'ratio'}</code></td><td><code>${esc(d.filter_resolved ?? d.reason)}</code></td><td class="${cls[d.status] ?? 'warn'}">${d.status}${d.reason && d.status !== 'derived' ? `<div class=muted>${d.reason}</div>` : ''}</td></tr>`).join('')
+  const n = definitions.filter((d) => d.status === 'available').length
+  show($(`<section><h2>5 · Validate definitions</h2><p class="muted">${n} of ${definitions.length} definitions available on this instance${confirmed ? '' : '. Using what the scan suggested for SLA records and custom states; you can confirm them in step 4 at any time'}. Unavailable ones are hidden from the dashboard and listed in the onboarding report with the reason. A tile whose table exists but holds no records shows "no data yet", never a zero.</p>
+  <table><tr><th>Definition</th><th>Table</th><th>Filter (resolved)</th><th>Status</th></tr>${rows}</table>
+  <p><button id="b5">Render dashboard live</button> <a href="/app.html" style="margin-left:.8rem;color:var(--accent)">or open the NowOps app view →</a></p></section>`))
+  document.getElementById('b5').onclick = dashboard
+}
+
+// 6 Live dashboard
+async function dashboard() {
+  const sec = $(`<section><h2>6 · Dashboard (live from abhrademo4)</h2>
+  <p class="muted">Every tile runs its definition live and shows the exact filter and a link to the records. Ratios show numerator ÷ denominator. Filter: <input id="grp" placeholder="assignment group, e.g. Network" size=28> <button id="b6" class=ghost>Apply</button> <label><input type=checkbox id="showoff"> show unavailable</label> <span id="o6"></span></p>
+  <h3>SDM QBR</h3><div class="tiles" id="qbr"></div>
+  <h3>Application 360</h3><div class="tiles" id="a360"></div></section>`)
+  show(sec)
+  const render = async () => {
+    document.getElementById('o6').textContent = 'running ~50 live queries, first time takes a few seconds…'
+    const grp = document.getElementById('grp').value.trim()
+    const tiles = await api('GET', `/api/dashboard?group=${encodeURIComponent(grp)}`)
+    const showOff = document.getElementById('showoff').checked
+    for (const id of ['qbr', 'a360']) document.getElementById(id).innerHTML = ''
+    for (const d of tiles) {
+      const live = d.status === 'available'
+      if (!live && !showOff && d.status !== 'no data yet') continue
+      const el = $(`<div class="tile ${live ? '' : 'off'}"><div class=n>${d.name}</div>
+        <div class=v>${live ? fmt(d.value) : d.status === 'no data yet' ? 'no data yet' : '—'}</div>
+        <div class=f>${live ? `${d.kind === 'ratio' ? d.detail : `${d.table} · ${d.aggregate}${d.field ? `(${d.field})` : ''}`}<br>${esc(d.filter_resolved || '(no filter)')}` : `<span class=warn>${d.status}: ${d.reason}</span>`}</div>
+        ${live && d.url ? `<a href="${d.url}" target=_blank rel=noopener>open in ServiceNow →</a>` : ''}</div>`)
+      document.getElementById(d.dashboard === 'QBR' ? 'qbr' : 'a360').appendChild(el)
+    }
+    document.getElementById('o6').textContent = `${tiles.filter((t) => t.status === 'available').length} tiles live · ${new Date().toLocaleTimeString()}`
+  }
+  document.getElementById('b6').onclick = render
+  document.getElementById('showoff').onchange = render
+  render()
+}
+</script></body></html>

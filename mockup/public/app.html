@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NowOps — Acme</title>
+<style>
+/* Brand: NowOps navy + teal from the current portal, on a light page. Data colours are the
+   validated reference palette and are never reused for UI. One family, system sans. */
+:root{color-scheme:light;--page:#f5f7f9;--surface:#ffffff;--ink:#12213a;--ink-2:#4f5d73;--muted:#8a94a6;--grid:#e6eaf0;--axis:#c9d1dc;--ring:rgba(18,33,58,.10);
+--navy:#12213a;--teal:#0f8b8d;--teal-2:#0b6c6e;--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--seq:#2a78d6;--good:#0ca30c;--warning:#fab219;--critical:#d03b3b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+a{color:inherit}
+/* Shell: left nav is the product's map; the page is one group at a time. */
+.shell{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
+nav{background:var(--navy);color:#dfe6f0;padding:1.1rem .9rem;position:sticky;top:0;height:100vh}
+.brand{font-weight:700;letter-spacing:.02em;color:#fff;font-size:1.05rem;margin:0 .35rem 1.2rem}.brand b{color:#5fd0d2}
+nav a{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;padding:.5rem .6rem;border-radius:6px;text-decoration:none;color:#c6d0de;font-size:.92rem}
+nav a:hover{background:rgba(255,255,255,.06);color:#fff}nav a.on{background:#fff;color:var(--navy);font-weight:600}
+nav a .k{font-size:.8rem;color:inherit;opacity:.75;font-variant-numeric:tabular-nums}
+nav .grp{margin:.9rem .6rem .25rem;font-size:.72rem;color:#8ea0b8;letter-spacing:.04em}
+.ask{margin-top:1.4rem;display:block;text-align:center;background:var(--teal);color:#fff;border-radius:8px;padding:.55rem;font-weight:600;text-decoration:none}
+main{padding:1.4rem 2rem 3rem;max-width:1280px}
+.top{display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;margin-bottom:1.1rem}
+.top h1{font-size:1.45rem;font-weight:600;margin:0;letter-spacing:-.015em}
+.top p{margin:0;color:var(--ink-2);max-width:60ch}
+.top .ctl{margin-left:auto;display:flex;gap:.5rem;align-items:center;color:var(--ink-2);font-size:.9rem}
+.top input,.top button{font:inherit;padding:.38rem .65rem;border-radius:6px;border:1px solid var(--axis);background:var(--surface);color:var(--ink)}
+.top button{cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:.9rem}
+.card{background:var(--surface);border:1px solid var(--ring);border-radius:8px;padding:.95rem 1.05rem;min-width:0;position:relative}
+.c2{grid-column:span 2}.c3{grid-column:span 3}.c4{grid-column:span 4}.c6{grid-column:span 6}.c8{grid-column:span 8}.c12{grid-column:span 12}
+.card .t{color:var(--ink-2);font-size:.85rem;margin:0 0 .35rem}
+.card .n{font-size:1.85rem;font-weight:600;line-height:1.05;letter-spacing:-.02em}
+.card .sub{color:var(--ink-2);font-size:.8rem;margin-top:.3rem}
+.card.off .n{color:var(--muted);font-size:1rem;font-weight:500}
+.sect{margin:1.6rem 0 .6rem;display:flex;align-items:baseline;gap:.8rem}
+.sect h2{font-size:1.05rem;font-weight:600;margin:0}.sect p{margin:0;color:var(--ink-2);font-size:.88rem}
+.hero{display:grid;grid-template-columns:auto 1fr;gap:2.2rem;align-items:start}
+.hero .big{font-size:4.4rem;font-weight:600;line-height:.95;letter-spacing:-.035em}.hero .big small{font-size:1.3rem;color:var(--ink-2);font-weight:500;letter-spacing:0}
+.status{display:inline-flex;align-items:center;gap:.35rem;font-size:.8rem;color:var(--ink-2);margin-top:.35rem}.status i{width:.6rem;height:.6rem;border-radius:2px}
+.def{position:absolute;top:.65rem;right:.7rem;font-size:.75rem;color:var(--muted);background:none;border:1px solid var(--ring);border-radius:999px;width:1.35rem;height:1.35rem;cursor:pointer;line-height:1}
+.def:hover,.def:focus-visible{color:var(--ink);border-color:var(--axis);outline:none}
+.recipe{display:none;margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--grid);font-size:.78rem;color:var(--ink-2)}
+.recipe code{font:.74rem/1.4 ui-monospace,Consolas,monospace;color:var(--ink);overflow-wrap:anywhere;display:block;margin:.2rem 0}
+.recipe a{color:var(--teal-2)}.card.open .recipe{display:block}
+/* Group cards on the overview: headline + one line, link to the page. */
+.gcard{text-decoration:none;display:block}.gcard:hover{border-color:var(--teal)}
+.gcard .n{font-size:1.5rem}.gcard .go{color:var(--teal-2);font-size:.82rem;margin-top:.45rem;font-weight:600}
+svg{display:block;width:100%;height:auto;overflow:visible}
+svg text{font:12px system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink-2)}svg .lbl{fill:var(--ink);font-weight:500;font-variant-numeric:tabular-nums}
+svg .axis{stroke:var(--axis)}svg .gridl{stroke:var(--grid)}
+.legend{display:flex;gap:1rem;font-size:.8rem;color:var(--ink-2);margin-top:.5rem;flex-wrap:wrap}.legend i{width:.7rem;height:.7rem;border-radius:2px;display:inline-block;margin-right:.3rem;vertical-align:-1px}
+#tip{position:fixed;pointer-events:none;background:var(--navy);color:#fff;font-size:.78rem;padding:.4rem .6rem;border-radius:6px;max-width:36ch;display:none;z-index:9}
+#tip code{font:.72rem ui-monospace,Consolas,monospace;color:#c6d0de;display:block;margin-top:.2rem;overflow-wrap:anywhere}
+.tbl{width:100%;border-collapse:collapse;font-size:.85rem;margin-top:.3rem}.tbl th{text-align:left;color:var(--ink-2);font-weight:500;padding:.3rem .5rem;border-bottom:1px solid var(--grid)}.tbl td{padding:.3rem .5rem;border-bottom:1px solid var(--grid);font-variant-numeric:tabular-nums}
+.foot{margin-top:2rem;padding-top:1rem;border-top:1px solid var(--grid);color:var(--ink-2);font-size:.85rem}.foot ul{margin:.3rem 0 0;padding-left:1.1rem}
+/* Chat drawer: the assistant answers from the same instance, beside whatever page is open. */
+#chat{position:fixed;right:0;top:0;height:100vh;width:400px;background:var(--surface);border-left:1px solid var(--ring);display:flex;flex-direction:column;z-index:8;box-shadow:-8px 0 24px rgba(18,33,58,.08)}
+#chat[hidden]{display:none}
+.chead{display:flex;align-items:center;gap:.6rem;padding:.8rem 1rem;border-bottom:1px solid var(--grid)}.chead b{font-size:.95rem}.chead .muted{font-size:.75rem;margin-left:auto}
+#cclose{background:none;border:0;font-size:1.2rem;color:var(--ink-2);cursor:pointer;line-height:1}
+#clog{flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:.7rem}
+.msg{max-width:92%;font-size:.9rem;line-height:1.45;white-space:pre-wrap}
+.msg.user{align-self:flex-end;background:var(--navy);color:#fff;padding:.5rem .75rem;border-radius:10px 10px 2px 10px}
+.msg.bot{align-self:flex-start;background:var(--page);padding:.55rem .8rem;border-radius:10px 10px 10px 2px;border:1px solid var(--grid)}
+.msg .big{font-size:1.5rem;font-weight:600;letter-spacing:-.02em}
+.msg .src{font-size:.75rem;color:var(--ink-2);margin-top:.4rem}.msg .src a{color:var(--teal-2)}
+.msg .src code{font:.7rem ui-monospace,Consolas,monospace;display:block;overflow-wrap:anywhere;color:var(--ink);margin-top:.2rem}
+#cform{display:flex;gap:.5rem;padding:.75rem 1rem;border-top:1px solid var(--grid)}
+#cform input{flex:1;font:inherit;padding:.5rem .7rem;border:1px solid var(--axis);border-radius:8px;color:var(--ink)}
+#cform button{font:inherit;font-weight:600;background:var(--teal);color:#fff;border:0;border-radius:8px;padding:.5rem .9rem;cursor:pointer}
+@media (max-width:980px){#chat{width:100%}.shell{grid-template-columns:1fr}nav{position:static;height:auto}.c2,.c3,.c4,.c6,.c8{grid-column:span 12}.hero{grid-template-columns:1fr}}
+</style></head><body>
+<div class="shell">
+<nav>
+  <div class="brand">NOW<b>OPS</b></div>
+  <div id="nav"></div>
+  <a class="ask" href="#" id="ask" title="Ask about articles or counts on this instance">Ask NowOps</a>
+</nav>
+<aside id="chat" hidden>
+  <div class="chead"><b>NowOps Assistant</b><span id="cmode" class="muted"></span><button id="cclose" aria-label="Close">×</button></div>
+  <div id="clog"></div>
+  <form id="cform"><input id="cq" autocomplete="off" placeholder="Ask about an article, or how many…"><button>Send</button></form>
+</aside>
+<main>
+  <div class="top"><div><h1 id="title"></h1><p id="lede"></p></div>
+    <div class="ctl"><span id="when" style="font-size:.8rem;color:var(--muted)"></span></div></div>
+  <div id="page"></div>
+  <div class="foot" id="foot"></div>
+</main></div>
+<div id="tip"></div>
+<script type="module">
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+const api = (p) => fetch(p).then((r) => r.json())
+const fmt = (v) => typeof v === 'number' ? v.toLocaleString('en-US') : String(v ?? '—')
+const el = (h) => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstElementChild }
+const tip = document.getElementById('tip')
+const showTip = (e, html) => { tip.innerHTML = html; tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 12, innerWidth - 320) + 'px'; tip.style.top = (e.clientY + 12) + 'px' }
+const hideTip = () => tip.style.display = 'none'
+const P = ['P1', 'P2', 'P3', 'P4'], PC = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)']
+const hrs = (h) => h == null ? '—' : h >= 48 ? `${(h / 24).toFixed(1)} d` : `${h.toFixed(1)} h`
+const grp = () => ''
+
+// ---- SVG builders: thin marks, rounded data ends, 2px gaps, recessive axes, hover on every mark.
+function hbars(rows, { max, color = 'var(--seq)', fmtv = fmt, w = 520, rowH = 28, lw = 34 } = {}) {
+  const vw = w - lw - 74, h = rows.length * rowH, m = max ?? (Math.max(...rows.map((r) => r.v ?? 0)) || 1)
+  return `<svg viewBox="0 0 ${w} ${h}">${rows.map((r, i) => { const y = i * rowH + 6, bw = Math.max(2, ((r.v ?? 0) / m) * vw)
+    return `<text x="0" y="${y + 13}" class="lbl"><title>${r.k}</title>${String(r.k).length > 14 ? String(r.k).slice(0, 13) + '…' : r.k}</text><rect x="${lw}" y="${y}" width="${bw}" height="16" fill="${r.c ?? color}" style="clip-path:inset(0 round 0 4px 4px 0)" data-tip="${r.tip ?? `${r.k}: ${fmtv(r.v)}`}"/><text x="${lw + bw + 8}" y="${y + 13}" class="lbl">${fmtv(r.v)}</text>` }).join('')}<line x1="${lw}" y1="0" x2="${lw}" y2="${h}" class="axis"/></svg>`
+}
+function stacked(rows, keys, colors, { w = 520, rowH = 28, lw = 52 } = {}) {
+  const vw = w - lw - 60, h = rows.length * rowH, m = Math.max(...rows.map((r) => keys.reduce((a, k) => a + (r[k] ?? 0), 0))) || 1
+  return `<svg viewBox="0 0 ${w} ${h}">${rows.map((r, i) => { const y = i * rowH + 6; let x = lw; const total = keys.reduce((a, k) => a + (r[k] ?? 0), 0)
+    const segs = keys.map((k, j) => { const bw = ((r[k] ?? 0) / m) * vw; const s = bw > 0 ? `<rect x="${x}" y="${y}" width="${Math.max(0, bw - 2)}" height="16" fill="${colors[j]}" data-tip="${r.bucket} · ${k}: ${fmt(r[k])}<code>${esc(r.q)}^priority=${j + 1}</code>"/>` : ''; x += bw; return s }).join('')
+    return `<text x="0" y="${y + 13}" class="lbl">${r.bucket}</text>${segs}<text x="${x + 6}" y="${y + 13}" class="lbl">${fmt(total)}</text>` }).join('')}<line x1="${lw}" y1="0" x2="${lw}" y2="${h}" class="axis"/></svg>`
+}
+function grouped(months, a, b, ca, cb, { w = 560, h = 170 } = {}) {
+  const pad = { l: 44, b: 22, t: 8 }, cw = (w - pad.l) / months.length, m = Math.max(...months.flatMap((x) => [x[a.k] ?? 0, x[b.k] ?? 0])) || 1
+  const ph = h - pad.b - pad.t, y = (v) => pad.t + ph - (v / m) * ph
+  return `<svg viewBox="0 0 ${w} ${h}">${[0, .5, 1].map((f) => { const t = Math.round(m * f); return `<line x1="${pad.l}" x2="${w}" y1="${y(t)}" y2="${y(t)}" class="gridl"/><text x="${pad.l - 6}" y="${y(t) + 4}" text-anchor="end">${fmt(t)}</text>` }).join('')}
+    ${months.map((x, i) => { const gx = pad.l + i * cw + cw * .18, bw = cw * .28
+      return `<rect x="${gx}" y="${y(x[a.k] ?? 0)}" width="${bw}" height="${ph + pad.t - y(x[a.k] ?? 0)}" fill="${ca}" style="clip-path:inset(0 round 4px 4px 0 0)" data-tip="${x.label} · ${a.n}: ${fmt(x[a.k])}<code>${esc(x[a.q])}</code>"/><rect x="${gx + bw + 2}" y="${y(x[b.k] ?? 0)}" width="${bw}" height="${ph + pad.t - y(x[b.k] ?? 0)}" fill="${cb}" style="clip-path:inset(0 round 4px 4px 0 0)" data-tip="${x.label} · ${b.n}: ${fmt(x[b.k])}<code>${esc(x[b.q])}</code>"/><text x="${pad.l + i * cw + cw / 2}" y="${h - 6}" text-anchor="middle">${x.label}</text>` }).join('')}
+    <line x1="${pad.l}" x2="${w}" y1="${pad.t + ph}" y2="${pad.t + ph}" class="axis"/></svg>`
+}
+const legend = (items) => `<div class="legend">${items.map(([n, c]) => `<span><i style="background:${c}"></i>${n}</span>`).join('')}</div>`
+
+// ---- cards
+const level = (v, warn, bad) => v == null ? null : v >= bad ? ['critical', 'Needs attention'] : v >= warn ? ['warning', 'Watch'] : ['good', 'Healthy']
+const badge = (lv) => lv ? `<div class="status"><i style="background:var(--${lv[0]})"></i>${lv[1]}</div>` : ''
+function stat(d, span = 3, extra = '') {
+  if (!d) return ''
+  const live = d.status === 'available'
+  const v = !live ? (d.status === 'no data yet' ? 'no data yet' : `not available`) : d.kind === 'ratio' ? d.value : fmt(d.value)
+  return `<div class="card c${span}${live ? '' : ' off'}"><button class="def" aria-label="Show definition">?</button><p class="t">${d.name}</p><div class="n">${v}</div>${live ? extra : `<div class="sub">${d.reason ?? ''}</div>`}
+    <div class="recipe">${d.meaning}<code>${d.kind === 'ratio' ? (d.detail ?? '') + '<br>' + esc(d.filter_resolved ?? '') : `${d.table} · ${d.aggregate}${d.field ? `(${d.field})` : ''} · ${esc(d.filter_resolved || 'no filter')}`}</code>${live && d.url ? `<a href="${d.url}" target="_blank" rel="noopener">Open these records in ServiceNow</a>` : ''}</div></div>`
+}
+const chart = (title, svg, span = 6, note = '', leg = '') => `<div class="card c${span}"><button class="def" aria-label="Show definition">?</button><p class="t">${title}</p>${svg}${leg}<div class="recipe">${note}</div></div>`
+async function breakdown(title, table, q, by, { span = 6, top = 8, color, fmtv } = {}) {
+  const b = await api(`/api/breakdown?table=${table}&by=${by}&top=${top}&q=${encodeURIComponent(q)}`)
+  const rows = (b.rows ?? []).map((r) => ({ k: r.k, v: r.v, c: color, tip: `${r.k}: ${fmt(r.v)}<code>${esc(b.q ? b.q + '^' : '')}${by}=${esc(r.raw)}</code>` }))
+  return chart(title, rows.length ? hbars(rows, { fmtv, lw: 110, w: 560 }) : '<p class="sub">no rows</p>', span, `<code>${table}</code> where <code>${b.q || 'no filter'}</code>, counted by <code>${by}</code>. Top ${top}, rest folded into Other.`)
+}
+// Pivot a two-field breakdown into stacked rows: first field = row, second field = segment.
+async function stackedBreakdown(title, table, q, by, keys, colors, { span = 6, top = 10, note = '' } = {}) {
+  const b = await api(`/api/breakdown?table=${table}&by=${by}&top=200&q=${encodeURIComponent(q)}`)
+  const rows = {}
+  // ServiceNow returns group-by fields in its own order, so find the segment key by membership.
+  for (const r of b.rows ?? []) { if (!r.keys || r.keys.length < 2) continue; const seg = r.keys.find((k) => keys.includes(k)) ?? r.keys[1]; const row = r.keys.find((k) => k !== seg) ?? r.keys[0]; rows[row] ??= { bucket: row.length > 22 ? row.slice(0, 21) + '…' : row, q: `${b.q ? b.q + '^' : ''}${by.split(',')[0]}=${r.raw}` }; rows[row][seg] = (rows[row][seg] ?? 0) + r.v }
+  const list = Object.values(rows).sort((a, c) => keys.reduce((t, k) => t + (c[k] ?? 0), 0) - keys.reduce((t, k) => t + (a[k] ?? 0), 0)).slice(0, top)
+  return chart(title, list.length ? stacked(list, keys, colors, { rowH: 26, w: 560, lw: 150 }) : '<p class="sub">no rows</p>', span, note || `<code>${table}</code> counted by <code>${by}</code>, top ${top} rows.`, legend(keys.map((k, i) => [k, colors[i]])))
+}
+async function listTable(title, table, fields, labels, order, { span = 12, limit = 10 } = {}) {
+  const r = await api(`/api/list?table=${table}&fields=${fields.join(',')}&order=${order}&limit=${limit}`)
+  // The instance holds duplicate entitlement records; collapse identical rows and say how many each stands for.
+  const seen = new Map()
+  for (const row of r.rows ?? []) { const k = fields.map((f) => row[f] ?? '').join(''); seen.set(k, (seen.get(k) ?? 0) + 1) }
+  const body = [...seen].map(([k, n]) => `<tr>${k.split('').map((v) => `<td>${esc(v)}</td>`).join('')}<td class="sub">${n > 1 ? `${n} records` : ''}</td></tr>`).join('')
+  return `<div class="card c${span}"><button class="def" aria-label="Show definition">?</button><p class="t">${title}</p><table class="tbl"><tr>${labels.map((l) => `<th>${l}</th>`).join('')}<th></th></tr>${body}</table><div class="recipe"><code>${table}</code> · fields ${fields.join(', ')} · ordered by ${order}</div></div>`
+}
+const sect = (h, p = '') => `<div class="sect c12"><h2>${h}</h2><p>${p}</p></div>`
+
+// ---- pages: the overview holds what an SDM checks first; each group holds the rest.
+const PAGES = {
+  overview: { title: 'Service overview', lede: 'What a service delivery manager checks first. Every number opens its recipe and its records; the groups on the left hold the rest.' },
+  operational: { title: 'Operational metrics', lede: 'The live ticket picture across incidents, requests, changes and problems.' },
+  sla: { title: 'SLA performance', lede: 'Attainment as ServiceNow measured it, breaches, and what is about to breach.' },
+  backlog: { title: 'Backlog and aging', lede: 'Opened against resolved, how long open work has waited, and how fast it resolves.' },
+  change: { title: 'Change and approvals', lede: 'Change outcomes, emergency share, and approvals waiting.' },
+  security: { title: 'Security', lede: 'Security incidents and vulnerable items. Shown only where the plugins exist.' },
+  cmdb: { title: 'CMDB and assets', lede: 'Infrastructure inventory, warranty exposure, software entitlements and alerts.' },
+  knowledge: { title: 'Knowledge and satisfaction', lede: 'Article usage, survey responses and reopened work.' },
+  estate: { title: 'Application 360', lede: 'The estate behind the service: applications, infrastructure, software, security and risk. Pick an application to see its own picture.' },
+}
+const NAV = [['overview', 'Overview', 'sla_attainment'], ['operational', 'Operational', 'open_incidents'], ['sla', 'SLA performance', 'sla_attainment'], ['backlog', 'Backlog & aging', 'backlog'], ['change', 'Change & approvals', 'change_success_rate'], ['knowledge', 'Knowledge & CSAT', 'kb_uses'], ['estate', 'Application 360', 'servers'], ['security', 'Security', 'security_open'], ['cmdb', 'CMDB & assets', 'servers']]
+const LENS = { overview: 'Service review', estate: 'Estate' }
+const short = (d) => !d || d.status !== 'available' ? '' : d.kind === 'ratio' ? d.value : fmt(d.value)
+
+let cache = null
+async function load() {
+  document.getElementById('title').textContent = 'Loading live measures from abhrademo4'
+  document.getElementById('lede').textContent = 'About 50 aggregate queries run against the instance the first time; after that they are cached for a few minutes.'
+  document.getElementById('page').innerHTML = '<div class="card c12" style="color:var(--ink-2)">Working…</div>'
+  const [rows, s] = await Promise.all([api(`/api/dashboard?group=${encodeURIComponent(grp())}`), api('/api/series')])
+  cache = { rows, s, d: Object.fromEntries(rows.map((r) => [r.id, r])) }
+  document.getElementById('when').textContent = `live · ${new Date().toLocaleTimeString()}${grp() ? ` · ${grp()}` : ''}`
+  document.getElementById('nav').innerHTML = NAV.map(([id, n, k]) => `${LENS[id] ? `<div class="grp">${LENS[id]}</div>` : ''}<a href="#${id}" data-p="${id}">${n}<span class="k">${short(cache.d[k])}</span></a>`).join('')
+}
+
+async function render() {
+  if (!cache) await load()
+  const { rows, s, d } = cache
+  const page = (location.hash.slice(1).split('&')[0] || 'overview'); const meta = PAGES[page] ?? PAGES.overview
+  document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.p === page))
+  document.getElementById('title').textContent = meta.title; document.getElementById('lede').textContent = meta.lede
+  const g = document.getElementById('page'); g.innerHTML = ''; const grid = el('<div class="grid"></div>'); g.appendChild(grid)
+  const add = (h) => grid.insertAdjacentHTML('beforeend', h)
+  const addAll = async (...ps) => add((await Promise.all(ps)).join(''))
+  const att = d.sla_attainment, attPct = att?.status === 'available' ? parseFloat(att.value) : null
+  const heroCard = () => `<div class="card c12"><button class="def" aria-label="Show definition">?</button><div class="hero"><div><p class="t">SLA attainment, resolution</p><div class="big">${attPct == null ? '—' : attPct.toFixed(1)}<small>%</small></div><div class="sub">${att?.detail ?? ''} incident SLAs met · target 80%</div>${badge(attPct == null ? null : attPct >= 80 ? ['good', 'On target'] : attPct >= 70 ? ['warning', 'Below target'] : ['critical', 'Well below target'])}</div>
+    <div><p class="t">By priority</p>${hbars(s.attainment.map((a) => ({ k: a.priority, v: a.pct, tip: `${a.priority}: ${fmt(a.met)} of ${fmt(a.all)} met<code>${esc(a.q)}</code>` })), { max: 100, fmtv: (v) => v == null ? '—' : v.toFixed(1) + '%', rowH: 26 })}</div></div><div class="recipe">${att?.meaning ?? ''}<code>${esc(att?.filter_resolved)}</code></div></div>`
+  const agingChart = () => chart('Open incidents by age and priority', stacked(s.aging, P, PC), 6, 'Open incidents (states counted as open for this client) bucketed on <code>opened_at</code>, split by priority.', legend(P.map((p, i) => [p, PC[i]])))
+  const flowChart = () => chart('Opened vs resolved, per month', grouped(s.months, { k: 'opened', n: 'opened', q: 'opened_q' }, { k: 'resolved', n: 'resolved', q: 'resolved_q' }, 'var(--s1)', 'var(--s3)'), 6, 'Incidents by <code>opened_at</code> and <code>resolved_at</code>, calendar months.', legend([['Opened', 'var(--s1)'], ['Resolved', 'var(--s3)']]))
+  const mttrChart = () => chart('Mean time to resolve, by priority', hbars(s.mttr.map((m) => ({ k: m.priority, v: m.hours, tip: `${m.priority}: ${m.raw} over ${fmt(m.n)} incidents<code>${esc(m.q)}</code>` })), { fmtv: hrs }), 6, 'Average <code>calendar_duration</code> on resolved or closed incidents, one window for every priority. P1 is dominated by incidents opened in 2015–2018.')
+  const slaTrend = () => chart('SLAs met vs breached, per month', grouped(s.months, { k: 'met', n: 'met' }, { k: 'breached', n: 'breached' }, 'var(--s1)', 'var(--s2)'), 6, 'Completed incident resolution SLAs by created month.', legend([['Met', 'var(--s1)'], ['Breached', 'var(--s2)']]))
+
+  if (page === 'overview') {
+    add(heroCard())
+    add(sect('Right now', 'Open work that can still breach or already sits too long.'))
+    add(stat(d.open_incidents, 2) + stat(d.active_major, 2, badge(level(d.active_major?.value, 20, 50))) + stat(d.approaching_breach, 2, badge(level(d.approaching_breach?.value, 50, 200))) + stat(d.due_72h, 2) + stat(d.open_changes, 2) + stat(d.open_problems, 2))
+    add(sect('Trend', 'Six months of flow and the age of what is still open.'))
+    add(flowChart() + agingChart())
+    add(sect('Explore by area', 'Each area holds its full set of measures and charts.'))
+    add(NAV.slice(1).map(([id, n, k]) => { const x = d[k]; return `<a class="card c3 gcard" href="#${id}"><p class="t">${n}</p><div class="n">${short(x) || '—'}</div><div class="sub">${x?.name ?? ''}</div><div class="go">Open ${n}</div></a>` }).join(''))
+  }
+  if (page === 'operational') {
+    add(stat(d.open_incidents, 2) + stat(d.open_p1, 2) + stat(d.active_major, 2) + stat(d.on_hold, 2) + stat(d.open_changes, 2) + stat(d.open_problems, 2))
+    add(sect('Where the open incidents are'))
+    await addAll(breakdown('Open incidents by priority', 'incident', 'stateIN{{open_states}}', 'priority', { top: 5 }), breakdown('Open incidents by support group', 'incident', 'stateIN{{open_states}}', 'assignment_group'))
+    await addAll(breakdown('Open incidents by state', 'incident', 'stateIN{{open_states}}', 'state', { top: 6 }), breakdown('Open incidents by location', 'incident', 'stateIN{{open_states}}^locationISNOTEMPTY', 'location'))
+    add(sect('Requests, changes, problems'))
+    await addAll(breakdown('Requests by state', 'sc_request', '', 'state', { top: 6, color: 'var(--s3)' }), breakdown('Problems by state', 'problem', '', 'state', { top: 8, color: 'var(--s3)' }))
+  }
+  if (page === 'sla') {
+    add(heroCard())
+    add(stat(d.sla_breached, 3) + stat(d.approaching_breach, 3, badge(level(d.approaching_breach?.value, 50, 200))) + stat(d.due_72h, 3) + stat(d.sla_p1_attainment, 3))
+    add(sect('Trend and where breaches land'))
+    add(slaTrend(), breakdown('Breached SLAs by support group', 'task_sla', 'has_breached=true^task.sys_class_name=incident', 'task.assignment_group', { color: 'var(--s2)' }))
+    await addAll(breakdown('SLA stage, all incident SLAs', 'task_sla', 'task.sys_class_name=incident', 'stage', { top: 6 }), breakdown('Breached SLAs by priority', 'task_sla', 'has_breached=true^task.sys_class_name=incident', 'task.priority', { top: 5, color: 'var(--s2)' }))
+  }
+  if (page === 'backlog') {
+    add(stat(d.backlog, 3, '<div class="sub">in progress, assigned, P2–P4</div>') + stat(d.aged_90, 3, badge(level(d.aged_90?.value, 500, 2000))) + stat(d.oldest_open_p1, 3, '<div class="sub">opened</div>') + stat(d.reassignment_rate, 3, `<div class="sub">${d.reassignment_rate?.detail ?? ''}</div>`))
+    add(sect('Flow and age'))
+    add(flowChart() + agingChart())
+    add(sect('Speed'))
+    add(mttrChart() + `<div class="grid c6" style="display:contents">${stat(d.mtta, 3, '<div class="sub">ServiceNow metric</div>')}${stat(d.time_in_state, 3, '<div class="sub">any single state</div>')}</div>`)
+    await addAll(breakdown('Open incidents by assignee', 'incident', 'stateIN{{open_states}}^assigned_toISNOTEMPTY', 'assigned_to', { top: 10 }))
+  }
+  if (page === 'change') {
+    add(stat(d.change_success_rate, 3, `<div class="sub">${d.change_success_rate?.detail ?? ''} with a close code</div>`) + stat(d.emergency_change_pct, 3, `<div class="sub">${d.emergency_change_pct?.detail ?? ''}</div>`) + stat(d.approvals_pending, 3) + stat(d.approval_time, 3, '<div class="sub">ServiceNow metric</div>'))
+    add(sect('Change mix and outcomes'))
+    await addAll(breakdown('Changes by type', 'change_request', '', 'type', { top: 6 }), breakdown('Changes by close code', 'change_request', '', 'close_code', { top: 6 }))
+    await addAll(breakdown('Open changes by priority', 'change_request', 'active=true', 'priority', { top: 5 }), breakdown('Approvals by state', 'sysapproval_approver', '', 'state', { top: 6, color: 'var(--s3)' }))
+  }
+  if (page === 'security') {
+    add(stat(d.security_open, 3) + stat(d.vulnerable_items, 3) + stat(d.critical_vulns, 3) + stat(d.reopened, 3))
+    add(sect('Open security incidents'))
+    await addAll(breakdown('By priority', 'sn_si_incident', 'active=true', 'priority', { top: 5 }), breakdown('By assignment group', 'sn_si_incident', 'active=true', 'assignment_group'))
+    await addAll(breakdown('By location', 'sn_si_incident', 'active=true^locationISNOTEMPTY', 'location'), breakdown('Vulnerable items by risk rating', 'sn_vul_vulnerable_item', 'active=true', 'risk_rating', { top: 6, color: 'var(--s2)' }))
+  }
+  if (page === 'cmdb') {
+    add(stat(d.servers, 2) + stat(d.databases, 2) + stat(d.warranty_expired, 2, badge(level(d.warranty_expired?.value, 20, 60))) + stat(d.entitlements_in_use, 2) + stat(d.perpetual_licences, 2) + stat(d.alerts_active, 2))
+    add(sect('Inventory'))
+    await addAll(breakdown('CIs by class', 'cmdb_ci', '', 'sys_class_name', { top: 10 }), breakdown('Servers by class', 'cmdb_ci_server', '', 'sys_class_name', { top: 6 }))
+    await addAll(breakdown('CIs by location', 'cmdb_ci', 'locationISNOTEMPTY', 'location'), breakdown('Entitlements by status and acquisition', 'alm_license', '', 'acquisition_method', { top: 6, color: 'var(--s3)' }))
+  }
+  if (page === 'estate') {
+    const services = await api('/api/services')
+    const sel = location.hash.split('=')[1] || services.find((s) => /SAP Enterprise/.test(s.name))?.id || services[0]?.id
+    add(`<div class="card c12"><p class="t">Application</p><div style="display:flex;gap:.8rem;align-items:center;flex-wrap:wrap"><select id="svc" style="font:inherit;padding:.4rem .6rem;border-radius:6px;border:1px solid var(--axis)">${services.map((s) => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${esc(s.name)}${s.criticality ? ' · ' + esc(s.criticality) : ''}</option>`).join('')}</select><span class="sub">${services.length} business services on this instance. Ticket tiles need tickets linked to the service; on this instance 9 of 36,038 incidents are.</span></div></div>`)
+    if (sel) {
+      const a = await api(`/api/app?service=${sel}`); const c = a.counts, name = services.find((s) => s.id === sel)?.name ?? ''
+      const t = (label, k) => `<div class="card c2"><button class="def" aria-label="Show definition">?</button><p class="t">${label}</p><div class="n">${fmt(c[k].value)}</div><div class="recipe"><code>${c[k].table} · ${esc(c[k].filter)}</code><a href="${c[k].url}" target="_blank" rel="noopener">Open these records in ServiceNow</a></div></div>`
+      add(t('Incidents, all time', 'incidents_all') + t('Open incidents', 'incidents_open') + t('Open P1/P2', 'incidents_p1p2_open') + t('Changes on this CI', 'changes') + t('Problems', 'problems') + t('SLA breaches', 'sla_breached'))
+    }
+    add(sect('IT configuration', 'Counted directly from the CMDB; the house tile counts relationships, shown beside it.'))
+    add(stat(d.applications, 2) + stat(d.business_apps, 2) + stat(d.servers, 2) + stat(d.servers_related, 2, '<div class="sub">house number</div>') + stat(d.databases, 2) + stat(d.ci_relationships, 2))
+    await addAll(breakdown('Servers by class', 'cmdb_ci_server', '', 'sys_class_name', { top: 6 }), breakdown('CIs by class', 'cmdb_ci', '', 'sys_class_name', { top: 10 }))
+    add(sect('Unified software view', 'Software entitlements from Software Asset Management.'))
+    add(stat(d.entitlements_total, 3) + stat(d.entitlements_in_use, 3) + stat(d.entitlements_in_stock, 3) + stat(d.perpetual_licences, 3))
+    await addAll(stackedBreakdown('Software entitlement by state, per product', 'alm_license', '', 'model.display_name,install_status', ['In use', 'In stock'], ['var(--s1)', 'var(--s3)'], { top: 12, note: 'Entitlements grouped by software product model and install status — the house "Software Entitlement by State – License Metric" chart.' }), stackedBreakdown('Entitlements by vendor and acquisition', 'alm_license', '', 'model.manufacturer,acquisition_method', ['Purchase', 'Lease', 'Rental', 'Device as a Service', 'Loan'], ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--muted)'], { top: 8, note: 'The house "Entitlements with active maintenance" heatmap is vendor × acquisition method.' }))
+    await addAll(listTable('Active v/s purchase rights — top entitlements by cost', 'alm_license', ['display_name', 'install_status', 'rights', 'cost'], ['Entitlement', 'State', 'Rights', 'Cost'], '-cost', { limit: 10 }))
+    add(sect('Security', 'Shown only where Security Operations is installed.'))
+    add(stat(d.security_open, 3) + stat(d.vulnerable_items, 3) + stat(d.critical_vulns, 3) + stat(d.alerts_active, 3))
+    await addAll(breakdown('Open security incidents by priority', 'sn_si_incident', 'active=true', 'priority', { top: 5 }), breakdown('Open security incidents by assignment group', 'sn_si_incident', 'active=true', 'assignment_group'))
+    add(sect('CMDB health and integrity'))
+    add(stat(d.cis_updated_30d, 3) + stat(d.orphan_cis, 3) + stat(d.ci_relationships, 3))
+    await addAll(breakdown('CIs updated in last 30 days, by class', 'cmdb_ci', 'sys_updated_on>=javascript:gs.daysAgoStart(30)', 'sys_class_name', { top: 8, color: 'var(--s3)' }), breakdown('CIs by location', 'cmdb_ci', 'locationISNOTEMPTY', 'location', { top: 10 }))
+    add(sect('Application portfolio'))
+    await addAll(breakdown('Business applications by lifecycle stage', 'cmdb_ci_business_app', 'active=true^life_cycle_stageISNOTEMPTY', 'life_cycle_stage', { top: 8 }), breakdown('Business applications by criticality', 'cmdb_ci_business_app', '', 'business_criticality', { top: 6 }))
+    add(sect('CIO view', 'Warranty exposure, and the server capacity fields the current dashboard labels "utilization".'))
+    add(stat(d.warranty_expired, 3, badge(level(d.warranty_expired?.value, 20, 60))) + stat(d.warranty_90d, 3) + stat(d.servers_no_warranty, 3))
+    await addAll(breakdown('Servers by installed memory (MB) — static capacity, not utilisation', 'cmdb_ci_server', 'ramISNOTEMPTY', 'ram', { top: 8 }), breakdown('Servers by CPU count — static capacity, not utilisation', 'cmdb_ci_server', 'cpu_countISNOTEMPTY', 'cpu_count', { top: 8 }))
+    const svc = document.getElementById('svc'); if (svc) svc.onchange = () => { location.hash = 'estate&service=' + svc.value }
+  }
+  if (page === 'knowledge') {
+    add(stat(d.kb_uses, 3) + stat(d.csat_responses, 3) + stat(d.reopened, 3))
+    add(sect('Knowledge'))
+    await addAll(breakdown('Published articles by knowledge base', 'kb_knowledge', 'workflow_state=published', 'kb_knowledge_base', { top: 8 }), breakdown('Article uses by knowledge base', 'kb_use', '', 'article.kb_knowledge_base', { top: 8, color: 'var(--s3)' }))
+  }
+
+  const off = rows.filter((r) => r.status !== 'available' && r.status !== 'derived')
+  document.getElementById('foot').innerHTML = `Every number can show its recipe (the ? on each card) and opens the exact records in ServiceNow. ${off.length ? `Not shown on this instance: ${off.map((r) => `${r.name} (${r.status}: ${r.reason})`).join(' · ')}` : ''}`
+  document.querySelectorAll('.def').forEach((b) => b.onclick = (e) => { e.preventDefault(); b.closest('.card').classList.toggle('open') })
+  document.querySelectorAll('[data-tip]').forEach((m) => { m.addEventListener('mousemove', (e) => showTip(e, m.dataset.tip)); m.addEventListener('mouseleave', hideTip) })
+}
+// ---- Ask NowOps: the real chatbot (/api/chat), rendered as a drawer beside the dashboard.
+const chat = document.getElementById('chat'), clog = document.getElementById('clog'), cq = document.getElementById('cq')
+const conversationId = crypto.randomUUID()
+const bubble = (cls, html) => { const m = el(`<div class="msg ${cls}">${html}</div>`); clog.appendChild(m); clog.scrollTop = clog.scrollHeight; return m }
+document.getElementById('ask').onclick = async (e) => {
+  e.preventDefault(); chat.hidden = !chat.hidden
+  if (!chat.hidden) { cq.focus(); if (!clog.children.length) { const h = await api('/api/health').catch(() => null); document.getElementById('cmode').textContent = h?.llmMode === 'stub' ? 'stub mode — canned answers, live data' : (h?.model ?? ''); bubble('bot', 'Ask me how to do something from the knowledge base, or how many of something there are on this instance.') } }
+}
+document.getElementById('cclose').onclick = () => { chat.hidden = true }
+document.getElementById('cform').onsubmit = async (e) => {
+  e.preventDefault(); const message = cq.value.trim(); if (!message) return; cq.value = ''
+  bubble('user', esc(message)); const pending = bubble('bot', 'Working…')
+  try {
+    const r = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, conversationId }) })
+    const data = await r.json()
+    if (data.kind === 'metric' && data.metric) {
+      const m = data.metric
+      pending.innerHTML = `<div class="big">${esc(data.answer)}</div><div class="src">${m.table} · ${m.aggregate}${m.field ? `(${m.field})` : ''}<code>${esc(m.filter || '(no filter)')}</code><a href="${m.url}" target="_blank" rel="noopener">Open these records in ServiceNow</a></div>`
+    } else if (data.kind === 'article') {
+      pending.innerHTML = `${esc(data.answer)}<div class="src">Sources: ${(data.sources || []).map((s) => `<a href="${s.url}" target="_blank" rel="noopener" title="${esc(s.title)}">${esc(s.label || s.title)}</a>`).join(' · ')}</div>`
+    } else {
+      pending.innerHTML = `${esc(data.answer ?? data.error ?? 'No response.')}<div class="src">${data.gateReason === 'servicenow_unavailable' ? 'Knowledge base unreachable' : data.gateReason === 'metric_unavailable' ? 'Could not run that query' : 'No knowledge base match'}</div>`
+    }
+  } catch { pending.textContent = 'Request failed.' }
+}
+
+// A mockup should fail loudly: any script error is written into the page, not lost in a console.
+const fail = (e) => { document.getElementById('page').innerHTML = `<div class="card c12" style="color:var(--critical)">Page error: ${e?.message ?? e}<pre style="white-space:pre-wrap;font-size:.75rem;color:var(--ink-2)">${e?.stack ?? ''}</pre></div>` }
+addEventListener('error', (e) => fail(e.error ?? e.message)); addEventListener('unhandledrejection', (e) => fail(e.reason))
+const safe = (fn) => async () => { try { await fn() } catch (e) { fail(e) } }
+addEventListener('hashchange', safe(render))
+safe(render)()
+</script></body></html>
