@@ -4,20 +4,24 @@
 <style>
 /* Brand: NowOps navy + teal from the current portal, on a light page. Data colours are the
    validated reference palette and are never reused for UI. One family, system sans. */
-:root{color-scheme:light;--page:#f5f7f9;--surface:#ffffff;--ink:#12213a;--ink-2:#4f5d73;--muted:#8a94a6;--grid:#e6eaf0;--axis:#c9d1dc;--ring:rgba(18,33,58,.10);
---navy:#12213a;--teal:#0f8b8d;--teal-2:#0b6c6e;--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--seq:#2a78d6;--good:#0ca30c;--warning:#fab219;--critical:#d03b3b}
+/* UST brand (theme "UST 2025 Q1"): Soft Black ink, Light Gray Wash page, Dark Teal primary, Petrol for the
+   active state, Purple for anything an agent produced. Aptos is the brand face; Segoe UI stands in. */
+:root{color-scheme:light;--page:#F2F7F8;--surface:#ffffff;--ink:#231F20;--ink-2:#575257;--muted:#7A7480;--grid:#D7E0E3;--axis:#C2BCBE;--ring:rgba(0,60,81,.12);
+--navy:#003C51;--teal:#006E74;--teal-2:#004F54;--teal-l:#0097AC;--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--seq:#2a78d6;--good:#01B27C;--warning:#fab219;--critical:#d9452f}
 *{box-sizing:border-box}
-body{margin:0;background:var(--page);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+body{margin:0;background:var(--page);color:var(--ink);font:15px/1.45 "Aptos","Aptos Light","Segoe UI",system-ui,-apple-system,sans-serif}
+h1,h2,h3,.tile .n,.hero .big,.card .n{font-family:"Aptos Display","Aptos","Segoe UI",system-ui,sans-serif}
 a{color:inherit}
 /* Shell: left nav is the product's map; the page is one group at a time. */
-.shell{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
-nav{background:var(--navy);color:#dfe6f0;padding:1.1rem .9rem;position:sticky;top:0;height:100vh}
-.brand{font-weight:700;letter-spacing:.02em;color:#fff;font-size:1.05rem;margin:0 .35rem 1.2rem}.brand b{color:#5fd0d2}
-nav a{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;padding:.5rem .6rem;border-radius:6px;text-decoration:none;color:#c6d0de;font-size:.92rem}
-nav a:hover{background:rgba(255,255,255,.06);color:#fff}nav a.on{background:#fff;color:var(--navy);font-weight:600}
-nav a .k{font-size:.8rem;color:inherit;opacity:.75;font-variant-numeric:tabular-nums}
-nav .grp{margin:.9rem .6rem .25rem;font-size:.72rem;color:#8ea0b8;letter-spacing:.04em}
-.ask{margin-top:1.4rem;display:block;text-align:center;background:var(--teal);color:#fff;border-radius:8px;padding:.55rem;font-weight:600;text-decoration:none}
+.shell{display:grid;grid-template-columns:248px 1fr;min-height:100vh}
+nav{background:var(--surface);color:var(--ink-2);padding:1rem .75rem;position:sticky;top:0;height:100vh;border-right:1px solid var(--grid);display:flex;flex-direction:column}
+.brand{font-weight:700;letter-spacing:.02em;color:var(--navy);font-size:1.05rem;margin:0 .5rem 1rem;display:flex;align-items:center;gap:.5rem}.brand b{color:var(--teal)}
+.brand .ws{margin-left:auto;font-weight:500;font-size:.72rem;color:var(--muted);letter-spacing:0}
+nav a{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;padding:.45rem .65rem;border-radius:6px;text-decoration:none;color:var(--ink-2);font-size:.86rem}
+nav a:hover{background:rgba(18,33,58,.04);color:var(--ink)}nav a.on{background:rgba(18,33,58,.06);color:var(--ink);font-weight:600}
+nav a .k{font-size:.78rem;color:var(--muted);font-variant-numeric:tabular-nums}nav a.on .k{color:var(--ink-2)}
+nav .grp{margin:1rem .65rem .3rem;font-size:.68rem;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+.ask{margin-top:auto;display:block;text-align:center;background:var(--teal);color:#fff;border-radius:8px;padding:.55rem;font-weight:600;text-decoration:none}.ask:hover{background:var(--teal-2)}
 main{padding:1.4rem 2rem 3rem;max-width:1280px}
 .top{display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;margin-bottom:1.1rem}
 .top h1{font-size:1.45rem;font-weight:600;margin:0;letter-spacing:-.015em}
@@ -26,7 +30,8 @@ main{padding:1.4rem 2rem 3rem;max-width:1280px}
 .top input,.top button{font:inherit;padding:.38rem .65rem;border-radius:6px;border:1px solid var(--axis);background:var(--surface);color:var(--ink)}
 .top button{cursor:pointer}
 .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:.9rem}
-.card{background:var(--surface);border:1px solid var(--ring);border-radius:8px;padding:.95rem 1.05rem;min-width:0;position:relative}
+.card{background:var(--surface);border:1px solid var(--ring);border-radius:10px;padding:1rem 1.1rem;min-width:0;position:relative;box-shadow:0 1px 2px rgba(18,33,58,.04);transition:box-shadow .15s,border-color .15s}
+.card:hover{box-shadow:0 6px 18px rgba(18,33,58,.08);border-color:rgba(18,33,58,.16)}
 .c2{grid-column:span 2}.c3{grid-column:span 3}.c4{grid-column:span 4}.c6{grid-column:span 6}.c8{grid-column:span 8}.c12{grid-column:span 12}
 .card .t{color:var(--ink-2);font-size:.85rem;margin:0 0 .35rem}
 .card .n{font-size:1.85rem;font-weight:600;line-height:1.05;letter-spacing:-.02em}
@@ -36,7 +41,13 @@ main{padding:1.4rem 2rem 3rem;max-width:1280px}
 .sect h2{font-size:1.05rem;font-weight:600;margin:0}.sect p{margin:0;color:var(--ink-2);font-size:.88rem}
 .hero{display:grid;grid-template-columns:auto 1fr;gap:2.2rem;align-items:start}
 .hero .big{font-size:4.4rem;font-weight:600;line-height:.95;letter-spacing:-.035em}.hero .big small{font-size:1.3rem;color:var(--ink-2);font-weight:500;letter-spacing:0}
-.status{display:inline-flex;align-items:center;gap:.35rem;font-size:.8rem;color:var(--ink-2);margin-top:.35rem}.status i{width:.6rem;height:.6rem;border-radius:2px}
+.status{display:inline-flex;align-items:center;gap:.35rem;font-size:.75rem;font-weight:600;margin-top:.5rem;padding:.15rem .55rem .15rem .4rem;border-radius:999px;background:color-mix(in oklab,var(--lv) 12%,white);color:color-mix(in oklab,var(--lv) 70%,black)}.status i{width:.5rem;height:.5rem;border-radius:50%;background:var(--lv)}
+/* Donut, gauge and heatmap layouts */
+.dwrap{display:flex;gap:1.1rem;align-items:center;flex-wrap:wrap}.donut{position:relative;flex:0 0 150px}.donut svg{width:150px;height:150px;transform:rotate(-90deg)}
+.dc{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}.dc b{font-size:1.4rem;letter-spacing:-.02em;line-height:1}.dc span{font-size:.72rem;color:var(--ink-2)}
+.dlist{list-style:none;margin:0;padding:0;font-size:.84rem;flex:1;min-width:150px}.dlist li{display:flex;gap:.5rem;align-items:center;padding:.25rem 0;border-bottom:1px solid var(--grid)}.dlist li:last-child{border:0}
+.dlist i{width:.7rem;height:.7rem;border-radius:2px;flex:none}.dlist b{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:600}.dlist span{color:var(--ink-2);width:3.2ch;text-align:right;font-variant-numeric:tabular-nums}
+.gauge{max-width:280px;margin-bottom:.6rem}.gauge svg{overflow:visible}
 .def{position:absolute;top:.65rem;right:.7rem;font-size:.75rem;color:var(--muted);background:none;border:1px solid var(--ring);border-radius:999px;width:1.35rem;height:1.35rem;cursor:pointer;line-height:1}
 .def:hover,.def:focus-visible{color:var(--ink);border-color:var(--axis);outline:none}
 .recipe{display:none;margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--grid);font-size:.78rem;color:var(--ink-2)}
@@ -68,26 +79,378 @@ svg .axis{stroke:var(--axis)}svg .gridl{stroke:var(--grid)}
 #cform{display:flex;gap:.5rem;padding:.75rem 1rem;border-top:1px solid var(--grid)}
 #cform input{flex:1;font:inherit;padding:.5rem .7rem;border:1px solid var(--axis);border-radius:8px;color:var(--ink)}
 #cform button{font:inherit;font-weight:600;background:var(--teal);color:#fff;border:0;border-radius:8px;padding:.5rem .9rem;cursor:pointer}
-@media (max-width:980px){#chat{width:100%}.shell{grid-template-columns:1fr}nav{position:static;height:auto}.c2,.c3,.c4,.c6,.c8{grid-column:span 12}.hero{grid-template-columns:1fr}}
+@media (max-width:980px){#chat{width:100%}.shell{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--grid)}.c2,.c3,.c4,.c6,.c8{grid-column:span 12}.hero{grid-template-columns:1fr}}
+
+/* ---- Shell: top bar with Dashboard | Resolve; dashboard sections as a horizontal strip. */
+.shell{display:block;min-height:100vh}
+.topbar{position:sticky;top:0;z-index:7;display:flex;align-items:center;gap:1.2rem;padding:.55rem 1.6rem;background:var(--surface);border-bottom:1px solid var(--grid)}
+.topbar .brand{margin:0}
+.topbar nav.tabs-top{position:static;height:auto;border:0;padding:0;background:none;display:flex;flex-direction:row;gap:.2rem;margin-left:.6rem}
+.topbar .tabs-top a{text-decoration:none;color:var(--ink-2);font-weight:600;font-size:.92rem;padding:.45rem .9rem;border-radius:8px}
+.topbar .tabs-top a:hover{background:rgba(18,33,58,.04);color:var(--ink)}.topbar .tabs-top a.on{background:var(--navy);color:#fff}
+.topbar .when{margin-left:auto;font-size:.78rem;color:var(--muted)}
+.topbar .ask{margin:0;padding:.42rem .9rem;font-size:.86rem}
+.topbar .whoami{display:flex;align-items:center;gap:.5rem;font-size:.82rem;color:var(--ink-2);padding-left:1rem;border-left:1px solid var(--grid)}
+.topbar .whoami select{font:inherit;border:1px solid var(--axis);border-radius:6px;padding:.25rem .4rem;background:var(--surface);color:var(--ink);max-width:16rem}
+.avatar{width:26px;height:26px;border-radius:50%;background:var(--navy);color:#fff;display:inline-grid;place-items:center;font-size:.68rem;font-weight:700;flex:none}
+.subnav{display:flex;gap:.15rem;align-items:center;padding:.45rem 1.6rem;background:var(--surface);border-bottom:1px solid var(--grid);overflow-x:auto;white-space:nowrap}
+.subnav[hidden]{display:none}
+.subnav a{text-decoration:none;color:var(--ink-2);font-size:.84rem;padding:.35rem .7rem;border-radius:6px}
+.subnav a:hover{background:rgba(18,33,58,.04);color:var(--ink)}.subnav a.on{background:rgba(18,33,58,.07);color:var(--ink);font-weight:600}
+.subnav a .k{font-size:.74rem;color:var(--muted);margin-left:.35rem;font-variant-numeric:tabular-nums}
+.subnav .grp{font-size:.66rem;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;font-weight:600;margin:0 .3rem 0 .9rem}.subnav .grp:first-child{margin-left:0}
+main{max-width:1440px;margin:0 auto;padding:1.3rem 1.6rem 3rem;transition:padding-right .2s}
+.shell.chat-open main{padding-right:calc(400px + 1.6rem)}
+@media (max-width:1100px){.shell.chat-open main{padding-right:1.6rem}}
+
+/* ---- Resolve. Indigo marks anything the model or the rules produced; record data never uses it. */
+:root{--ai:#881E87;--ai-bg:#F6EAF6;--ai-ink:#6E176D;--warn:#b86e00;--warn-bg:#fff1dc;--crit:#d9452f;--crit-bg:#FDECE8;--teal-bg:#E3F1F2;--good-bg:#E2F6EF}
+#resolve[hidden],#dash[hidden]{display:none}
+.btn{border:1px solid var(--axis);background:var(--surface);color:var(--ink);border-radius:8px;padding:.42rem .8rem;font-size:.86rem;font-weight:500;font:inherit;cursor:pointer;text-decoration:none;display:inline-block}
+.btn:hover{border-color:var(--ink-2)}.btn[disabled]{opacity:.55;cursor:default}.btn[hidden]{display:none}
+.btn.p{background:var(--teal);border-color:var(--teal);color:#fff}.btn.p:hover{background:var(--teal-2)}
+.btn.ai{background:var(--ai-bg);border-color:transparent;color:var(--ai-ink)}.btn.ai:hover{background:#efdcef}
+.btn.sm{padding:.25rem .6rem;font-size:.78rem}
+.pill{display:inline-flex;align-items:center;gap:.3rem;font-size:.74rem;font-weight:600;padding:.12rem .5rem;border-radius:999px;background:var(--grid);color:var(--ink-2)}
+.pill.crit{background:var(--crit-bg);color:var(--crit)}.pill.warn{background:var(--warn-bg);color:#8a5800}.pill.good{background:var(--good-bg);color:#04704f}
+.ai-mark{display:inline-flex;align-items:center;gap:.35rem;color:var(--ai-ink);font-size:.76rem;font-weight:600}
+.ai-mark::before{content:"";width:.55rem;height:.55rem;border-radius:2px;background:var(--ai);transform:rotate(45deg);flex:none}
+.ev{font-size:.76rem;color:var(--ink-2);margin-top:.25rem}.ev a{color:var(--teal-2);text-decoration:none;border-bottom:1px dotted}.ev a:hover{border-bottom-style:solid}
+.ev code{font:.72rem ui-monospace,Consolas,monospace;color:var(--ink);overflow-wrap:anywhere}
+.muted{color:var(--muted)}
+.rtop{display:flex;align-items:flex-end;gap:1rem;margin-bottom:1.1rem;flex-wrap:wrap}
+.rtop h1{font-size:1.45rem;font-weight:600;margin:0;letter-spacing:-.015em}.rtop p{margin:.2rem 0 0;color:var(--ink-2);max-width:64ch}
+.rtop .r{margin-left:auto;display:flex;gap:.5rem;align-items:center}
+.rsub{display:flex;gap:.2rem;margin-bottom:1rem;align-items:center}
+.rsub a{text-decoration:none;color:var(--ink-2);font-size:.84rem;padding:.35rem .7rem;border-radius:6px}.rsub a.on{background:rgba(18,33,58,.07);color:var(--ink);font-weight:600}
+.banner{background:#fff8e6;border:1px solid #f3d98b;border-radius:8px;padding:.5rem .8rem;font-size:.82rem;margin-bottom:.9rem}
+.plan{display:grid;grid-template-columns:1.35fr .9fr;gap:.9rem;align-items:start}
+.qlist{list-style:none;margin:0;padding:0}
+.qlist>li{display:grid;grid-template-columns:2rem 1fr auto;gap:.8rem;align-items:start;padding:.75rem .5rem;border-top:1px solid var(--grid);cursor:pointer;border-radius:6px}
+.qlist>li:first-of-type{border-top:0}.qlist>li:hover{background:rgba(18,33,58,.03)}
+.qlist>li .rank{font-size:1.25rem;font-weight:600;color:var(--muted);line-height:1.2;text-align:right;font-variant-numeric:tabular-nums}
+.qlist>li .why{color:var(--ink-2);font-size:.82rem;margin-top:.15rem}.qlist>li .why b{color:var(--ink);font-weight:600}
+.qlist>li .num{font-weight:600;font-size:.86rem;color:var(--teal-2)}.qlist>li .sd{display:block;margin-top:.05rem}
+.qlist>li .side{text-align:right;font-size:.78rem;color:var(--ink-2);white-space:nowrap}
+.load{list-style:none;margin:.4rem 0 0;padding:0;font-size:.84rem}
+.load li{display:grid;grid-template-columns:1fr 3fr auto;gap:.6rem;align-items:center;padding:.3rem 0}
+.bar{height:8px;background:var(--grid);border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--teal)}.load li.me .bar i{background:var(--navy)}
+.changed{list-style:none;margin:.4rem 0 0;padding:0;font-size:.84rem}.changed li{padding:.35rem 0;border-top:1px solid var(--grid);display:flex;gap:.6rem}.changed li:first-child{border:0}
+.changed time{color:var(--muted);flex:none;width:5.5ch;font-variant-numeric:tabular-nums}
+.queues{border-top:1px solid var(--grid);padding-top:.9rem}
+/* Queue: one control, "Show me", whose segments are the day's numbers. Buttons look like buttons:
+   raised, a hover lift, and the chosen one fills Petrol. */
+.showme{display:grid;grid-template-columns:auto repeat(7,1fr);gap:.5rem;align-items:stretch;margin:0 0 1rem}
+.showme .cap{align-self:center;font-size:.86rem;color:var(--ink-2);padding-right:.4rem}
+.tile{background:var(--surface);border:1px solid var(--grid);border-radius:10px;text-align:left;padding:.7rem .85rem .65rem;cursor:pointer;font:inherit;color:var(--ink);display:flex;flex-direction:column;gap:.1rem;position:relative;box-shadow:0 1px 2px rgba(0,60,81,.05);transition:transform .12s,box-shadow .12s,border-color .12s}
+.tile:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,60,81,.12);border-color:var(--teal-l)}.tile:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+.tile .n{font-size:1.65rem;font-weight:600;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.tile .l{font-size:.78rem;color:var(--ink-2);line-height:1.25}
+.tile::after{content:"";position:absolute;right:.7rem;top:.8rem;width:.45rem;height:.45rem;border-right:2px solid var(--axis);border-bottom:2px solid var(--axis);transform:rotate(-45deg)}
+.tile:hover::after{border-color:var(--teal)}
+.tile.crit .n{color:var(--crit)}.tile.warn .n{color:var(--warn)}.tile.zero .n{color:var(--muted)}
+.tile.on,.tile.on:hover{background:var(--navy);border-color:var(--navy);color:#fff;transform:none;box-shadow:none}.tile.on .n,.tile.on .l{color:#fff}.tile.on::after{border-color:rgba(255,255,255,.7);transform:rotate(45deg)}
+.tile.start .n{font-size:1.05rem;font-weight:600;padding-top:.25rem}
+.qhead{display:flex;align-items:baseline;gap:.7rem;padding:.2rem .5rem .7rem;border-bottom:1px solid var(--grid)}
+.qhead h2{font-size:1rem;font-weight:600;margin:0}.qhead .ai-mark{font-weight:500}.qhead .x{margin-left:auto;font-size:.82rem;color:var(--teal-2);background:none;border:0;cursor:pointer;font:inherit}
+.chip{display:inline-block;font-size:.72rem;font-weight:500;padding:.08rem .45rem;border-radius:4px;background:var(--page);color:var(--ink-2);border:1px solid var(--grid);margin:.3rem .3rem 0 0}
+.chip.crit{background:var(--crit-bg);color:var(--crit);border-color:transparent}.chip.warn{background:var(--warn-bg);color:#8a5800;border-color:transparent}.chip.good{background:#e5f6e5;color:#0a7a0a;border-color:transparent}
+.qlist>li .pri{font-weight:600;color:var(--ink)}
+.status-dot{display:inline-flex;align-items:center;gap:.35rem;font-size:.76rem;color:var(--ink-2)}.status-dot i{width:.5rem;height:.5rem;border-radius:50%;background:var(--muted)}.status-dot.live i{background:var(--good)}
+@media (max-width:980px){.showme{grid-template-columns:repeat(2,1fr)}.showme .cap{grid-column:1/-1}}
+/* Ticket: one main column, one health card. Facts are a strip, agents live in one purple rail. */
+.ws{display:grid;grid-template-columns:1fr 320px;gap:.9rem;align-items:start}
+.back{font-size:.84rem;color:var(--teal);text-decoration:none;display:inline-block;margin-bottom:.4rem}.back:hover{text-decoration:underline}
+.facts{display:flex;flex-wrap:wrap;gap:.3rem 1.3rem;font-size:.82rem;margin:0 0 .8rem;padding-bottom:.7rem;border-bottom:1px solid var(--grid)}
+.facts div span{color:var(--muted);margin-right:.35rem}.facts div b{font-weight:500}
+.desc{font-size:.9rem;padding:0 0 .9rem;margin-bottom:.6rem;white-space:pre-wrap;line-height:1.5}.desc span{display:block;color:var(--muted);font-size:.74rem;margin-bottom:.1rem}
+.agents{display:flex;gap:.45rem;flex-wrap:wrap;align-items:center;background:var(--ai-bg);border-radius:10px;padding:.5rem .6rem;margin-bottom:.9rem}
+.agents .ai-mark{margin:0 .4rem 0 .2rem}.agents .btn{background:var(--surface);border-color:transparent;color:var(--ai-ink);font-weight:600;font-size:.82rem;padding:.35rem .7rem}.agents .btn:hover{background:#fff;box-shadow:0 1px 4px rgba(136,30,135,.25)}
+.health .row{display:flex;gap:.9rem;align-items:center;padding:.6rem 0;border-top:1px solid var(--grid)}.health .row:first-of-type{border-top:0;padding-top:.2rem}
+.health .row>div{min-width:0;flex:1}.health .row>.meter{flex:none}.health .k{font-size:.74rem;color:var(--muted);display:block}.health .v{font-size:.86rem}
+.health .sla{display:flex;align-items:center;gap:.5rem;padding:.2rem 0;font-size:.84rem}.health .sla .pill{margin-left:auto}
+.sim.compact li{padding:.35rem 0}
+.compose{margin-top:.8rem;padding-top:.8rem;border-top:1px solid var(--grid)}
+.compose textarea{width:100%;font:inherit;border:1px solid var(--axis);border-radius:8px;padding:.5rem;resize:vertical}
+.more{background:none;border:0;color:var(--teal);font:inherit;font-size:.8rem;cursor:pointer;padding:.2rem 0}.more:hover{text-decoration:underline}
+.ttabs{display:flex;gap:.2rem;border-bottom:1px solid var(--grid);margin:0 0 .8rem}
+.ttabs button{background:none;border:0;padding:.5rem .7rem;color:var(--ink-2);font-size:.86rem;border-bottom:2px solid transparent;margin-bottom:-1px;font:inherit;cursor:pointer}
+.ttabs button.on{color:var(--ink);font-weight:600;border-bottom-color:var(--navy)}
+.tabp{display:none}.tabp.on{display:block}
+.steps{list-style:none;margin:0;padding:0}
+.steps li{display:grid;grid-template-columns:1.4rem 1fr;gap:.6rem;padding:.6rem 0;border-top:1px solid var(--grid);align-items:start;font-size:.92rem}.steps li:first-child{border:0}
+.steps input{margin:.2rem 0 0;width:1.05rem;height:1.05rem;accent-color:var(--ai)}
+.steps li.done span.txt{color:var(--muted);text-decoration:line-through}.steps .txt{display:block}
+.readiness{display:flex;gap:.9rem;align-items:center}
+.meter{flex:none;width:64px;height:64px;border-radius:50%;background:conic-gradient(var(--mc) 0 var(--p),var(--grid) 0);display:grid;place-items:center}
+.meter b{width:50px;height:50px;border-radius:50%;background:var(--surface);display:grid;place-items:center;font-size:1rem}
+.missing{margin:.4rem 0 0;padding:0;list-style:none;font-size:.83rem}.missing li{padding:.15rem 0;color:var(--ink-2)}.missing li::before{content:"–";margin-right:.4rem;color:var(--warn)}
+.timeline{list-style:none;margin:0;padding:0;font-size:.84rem}
+.timeline li{display:grid;grid-template-columns:6.5rem 1fr;gap:.6rem;padding:.4rem 0;border-top:1px solid var(--grid)}.timeline li:first-child{border:0}
+.timeline time{color:var(--muted);font-variant-numeric:tabular-nums;font-size:.78rem}
+.timeline li.new{background:var(--ai-bg);margin:0 -.5rem;padding:.4rem .5rem;border-radius:6px;border-top:0}.timeline .by{color:var(--muted);font-size:.74rem}
+.sim{list-style:none;margin:0;padding:0;font-size:.84rem}.sim li{padding:.5rem 0;border-top:1px solid var(--grid)}.sim li:first-child{border:0}
+.sim .num{color:var(--teal-2);font-weight:600;text-decoration:none}.sim .out{color:var(--ink-2);margin-top:.15rem;white-space:pre-wrap}
+.who{list-style:none;margin:0;padding:0;font-size:.84rem}.who li{display:flex;gap:.6rem;align-items:center;padding:.45rem 0;border-top:1px solid var(--grid)}.who li:first-child{border:0}
+.who .btn{margin-left:auto}
+.draft{border:1px solid var(--ai);border-radius:10px;overflow:hidden;margin-top:.8rem}
+.draft header{display:flex;align-items:center;gap:.6rem;background:var(--ai-bg);padding:.55rem .9rem;font-size:.82rem;flex-wrap:wrap}.draft header .r{margin-left:auto;display:flex;gap:.4rem}
+.draft .body{padding:.8rem .9rem;font-size:.86rem;white-space:pre-wrap;line-height:1.5}
+.draft h4{margin:.5rem 0 .2rem;font-size:.8rem;color:var(--ink-2);font-weight:600}.draft h4:first-child{margin-top:0}
+mark.inf{background:var(--warn-bg);color:#6b4400;border-bottom:1px dashed var(--warn);padding:0 .1rem}
+mark.rec{background:var(--teal-bg);color:var(--teal-2);padding:0 .1rem}
+.dleg{display:flex;gap:1rem;font-size:.76rem;color:var(--ink-2);padding:0 .9rem .7rem}.dleg mark{padding:0 .3rem}
+.overlay{position:fixed;inset:0;background:rgba(18,33,58,.35);display:none;place-items:center;z-index:20}.overlay.on{display:grid}
+.confirm{width:min(600px,94vw);background:var(--surface);border-radius:14px;padding:1.3rem 1.4rem;box-shadow:0 24px 60px rgba(18,33,58,.25);max-height:90vh;overflow:auto}
+.confirm h3{font-size:1.1rem;margin:0 0 .2rem;font-weight:600}.confirm p{margin:.2rem 0 .8rem;color:var(--ink-2);font-size:.88rem}
+.writes{width:100%;border-collapse:collapse;font-size:.84rem;margin-bottom:.9rem}
+.writes td{padding:.4rem .5rem;border-top:1px solid var(--grid);vertical-align:top;overflow-wrap:anywhere}.writes td:first-child{color:var(--ink-2);width:9rem}.writes tr:first-child td{border-top:0}
+.writes textarea,.writes input,.writes select{font:inherit;width:100%;border:1px solid var(--axis);border-radius:6px;padding:.35rem .5rem;color:var(--ink)}
+.confirm .as{font-size:.8rem;color:var(--ink-2);display:flex;gap:.5rem;align-items:center;margin-bottom:.9rem}.confirm .row{display:flex;gap:.5rem;justify-content:flex-end}
+.toast{position:fixed;left:50%;bottom:1.4rem;transform:translateX(-50%);background:var(--navy);color:#fff;padding:.6rem 1rem;border-radius:10px;font-size:.86rem;display:none;z-index:30;box-shadow:0 10px 30px rgba(18,33,58,.3);max-width:70ch}.toast.on{display:block}
+.chips{display:flex;gap:.4rem;flex-wrap:wrap;padding:.5rem 1rem 0}
+.chips button{border:1px solid var(--axis);background:var(--surface);border-radius:999px;padding:.28rem .7rem;font-size:.78rem;color:var(--ink-2);font:inherit;cursor:pointer}.chips button:hover{border-color:var(--teal);color:var(--teal-2)}
+.msg.bot .ai-mark{display:flex;margin-bottom:.3rem}.msg .act{display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap}.msg .ev{margin-top:.35rem}
+.chead .ctx{font-size:.74rem;color:var(--ink-2);margin-left:auto;max-width:20ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chead .muted{margin-left:0}
+@media (max-width:1100px){.plan,.ws{grid-template-columns:1fr}.facts{grid-template-columns:repeat(2,1fr)}.topbar{flex-wrap:wrap}.topbar .when{display:none}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style></head><body>
-<div class="shell">
-<nav>
-  <div class="brand">NOW<b>OPS</b></div>
-  <div id="nav"></div>
-  <a class="ask" href="#" id="ask" title="Ask about articles or counts on this instance">Ask NowOps</a>
-</nav>
+<div class="shell" id="shell">
+<header class="topbar">
+  <div class="brand"><span>NOW<b>OPS</b></span></div>
+  <nav class="tabs-top" id="tabs"><a href="#overview" data-t="dash">Dashboard</a><a href="#resolve" data-t="resolve">Resolve<span class="k" id="kq"></span></a></nav>
+  <span class="when" id="when"></span>
+  <a class="ask" href="#" id="ask" title="Ask about what is on this page">Ask NowOps</a>
+  <span class="whoami"><span class="avatar" id="avatar">?</span><span><span class="muted" style="font-size:.72rem">Working as</span><br><select id="who" title="The OAuth user on this instance has no queue, so pick a person with open tickets"><option value="">choose a person…</option></select></span></span>
+</header>
+<div class="subnav" id="nav"></div>
 <aside id="chat" hidden>
-  <div class="chead"><b>NowOps Assistant</b><span id="cmode" class="muted"></span><button id="cclose" aria-label="Close">×</button></div>
+  <div class="chead"><b>NowOps Assistant</b><span id="cmode" class="muted"></span><span class="ctx" id="actx"></span><button id="cclose" aria-label="Close">×</button></div>
   <div id="clog"></div>
-  <form id="cform"><input id="cq" autocomplete="off" placeholder="Ask about an article, or how many…"><button>Send</button></form>
+  <div class="chips" id="chips"></div>
+  <form id="cform"><input id="cq" autocomplete="off" placeholder="Ask about an article, a count, or this ticket…"><button>Send</button></form>
 </aside>
-<main>
-  <div class="top"><div><h1 id="title"></h1><p id="lede"></p></div>
-    <div class="ctl"><span id="when" style="font-size:.8rem;color:var(--muted)"></span></div></div>
+
+
+<main><div id="dash">
+  <div class="top"><div><h1 id="title"></h1><p id="lede"></p></div></div>
   <div id="page"></div>
+
   <div class="foot" id="foot"></div>
+</div>
+<div id="resolve" hidden>
+  <div class="rsub" id="rsub"><a href="#resolve" data-v="queue">Your queue</a><a href="#resolve/audit" data-v="audit">Audit trail<span class="k" id="kaud" style="margin-left:.35rem;color:var(--muted);font-size:.74rem"></span></a><span class="muted" id="rmode" style="margin-left:auto;font-size:.76rem"></span></div>
+  <div id="queue"><div class="rtop"><div><h1 id="q-title">Your queue</h1><p id="q-lede"></p></div></div><div id="q-body"></div></div>
+  <div id="ticket" hidden>
+    <div class="rtop"><div><a class="back" href="#resolve">Your queue</a><h1 id="tk-title" style="font-size:1.3rem"></h1><p id="tk-sub"></p></div>
+      <div class="r"><button class="btn" onclick="confirmAction('claim')">Claim</button><button class="btn" onclick="confirmAction('hold')">Put on hold</button><button class="btn p" onclick="confirmAction('resolve')">Resolve…</button></div></div>
+    <div class="ws">
+      <div><div class="card">
+        <div class="facts" id="facts"></div>
+        <div class="desc" id="desc"></div>
+        <div class="agents"><span class="ai-mark">Agents</span><button class="btn" onclick="showDraft('close')">Close note</button><button class="btn" onclick="showDraft('kb')">Knowledge article</button><button class="btn" onclick="showDraft('message')">Message to caller</button><button class="btn" id="prb-btn" onclick="showDraft('problem')" hidden>Problem record</button></div>
+        <div id="draft"></div>
+        <div class="ttabs"><button class="on" data-t="steps">Suggested steps</button><button data-t="similar">Fixed before</button><button data-t="who">Who to bring in</button><button data-t="log">Timeline</button></div>
+        <div class="tabp on" id="t-steps">
+          <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.4rem"><span class="ai-mark" id="steps-src">Working out the steps…</span></div>
+          <ul class="steps" id="steps"></ul>
+        </div>
+        <div class="tabp" id="t-similar"><span class="ai-mark" id="sim-src"></span><ul class="sim" id="sim"></ul></div>
+        <div class="tabp" id="t-who"><span class="ai-mark">Ranked by who closed the similar tickets</span><ul class="who" id="who-list"></ul></div>
+        <div class="tabp" id="t-log"><ul class="timeline" id="tl"></ul>
+          <div class="compose"><textarea id="wn" rows="2" placeholder="Add a work note or a comment"></textarea>
+          <div style="display:flex;gap:.5rem;margin-top:.5rem"><button class="btn sm" onclick="addNote('work_note')">Work note</button><button class="btn sm" onclick="addNote('comment')">Comment to caller</button></div></div>
+        </div>
+      </div></div>
+      <div class="card health">
+        <div class="row"><div class="meter" id="meter"><b id="score"></b></div><div><span class="k" id="ready-t">Ready to work?</span><span class="ai-mark" id="miss-t"></span><ul class="missing" id="missing"></ul></div></div>
+        <div class="row"><div><span class="k">SLAs</span><div id="slas"></div></div></div>
+        <div class="row"><div><span class="k" id="same-k">Same title, open</span><ul class="sim compact" id="same"></ul></div></div>
+      </div>
+    </div>
+  </div>
+  <div id="raudit" hidden>
+    <div class="rtop"><div><h1>Audit trail</h1><p>Everything NowOps wrote, or would have written, on the instance since the server started, and every model call with what it saw.</p></div></div>
+    <div class="card"><table class="tbl" id="audit"><tr><th>When</th><th>Who</th><th>What</th><th>Record</th><th>Evidence</th></tr></table></div>
+  </div>
+</div>
 </main></div>
+<div class="overlay" id="ov" onclick="if(event.target===this)closeConfirm()"><div class="confirm" id="cf"></div></div>
+<div class="toast" id="toast"></div>
 <div id="tip"></div>
+<script>
+/* ---- Shell routing, the live Resolve page, and the assistant drawer. Classic script so inline handlers work. */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const ev=(t)=>`<div class="ev">${t}</div>`;
+const api=(m,p,b)=>fetch(p,{method:m,headers:{'content-type':'application/json'},body:b?JSON.stringify(b):undefined}).then(async r=>{const j=await r.json().catch(()=>({error:r.statusText}));if(!r.ok)throw new Error(j.error||r.statusText);return j});
+const when=s=>s?s.slice(0,16).replace('T',' '):'';
+const day=s=>s?s.slice(5,10):'';
+let view='dash', ticket=null, cur=null, me=null, meta={rules:[],writes:false,llm:'stub'}, queueData=null, stepsCache={};
+const shell=$('#shell'), chat=$('#chat'), clog=$('#clog');
+
+/* ---- who am I working as (the OAuth user has no queue on this instance) */
+async function loadPeople(){
+  meta=await api('GET','/api/resolve/rules').catch(()=>meta);
+  $('#rmode').innerHTML=`<span class="status-dot${meta.writes?' live':''}" title="${meta.writes?'Actions change the instance':'Actions are shown, nothing is written'}"><i></i>${meta.writes?'Writes on':'Dry run'}</span> &nbsp; <span class="status-dot${meta.llm==='stub'?'':' live'}" title="${meta.llm==='stub'?'Drafts come from rules':'Drafts come from the model, rules as fallback'}"><i></i>${meta.llm==='stub'?'Model off':'Model on'}</span>`;
+  const people=await api('GET','/api/resolve/people').catch(()=>[]);
+  const sel=$('#who');sel.innerHTML='<option value="">choose a person…</option>'+people.map(p=>`<option value="${p.id}">${esc(p.name)} · ${p.open} open</option>`).join('');
+  // ?as=<sys_id> in the URL picks a person, so a queue can be shared as a link; otherwise the last choice is remembered.
+  const fromUrl=new URLSearchParams(location.search).get('as');const saved=fromUrl||localStorage.getItem('nowops.as');if(saved&&people.some(p=>p.id===saved)){sel.value=saved;localStorage.setItem('nowops.as',saved)}
+  if(location.hash.startsWith('#resolve')&&!location.hash.includes('/'))loadQueue();
+  sel.onchange=()=>{localStorage.setItem('nowops.as',sel.value);queueData=null;if(view!=='dash')route()};
+  setAvatar();
+}
+function setAvatar(){const o=$('#who').selectedOptions[0];const name=o&&o.value?o.textContent.split(' · ')[0]:'';$('#avatar').textContent=name?name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase():'?';return name}
+
+/* route(): the dashboard module calls this on every hash change; true means Resolve owns the hash. */
+window.route=function(){
+  const h=location.hash.slice(1);const isRes=h.startsWith('resolve');
+  document.querySelectorAll('#tabs a').forEach(a=>a.classList.toggle('on',(a.dataset.t==='resolve')===isRes));
+  $('#dash').hidden=isRes;$('#resolve').hidden=!isRes;$('#nav').hidden=isRes;
+  if(!isRes){view='dash';ticket=null;cur=null;setCtx();return false}
+  const part=h.split('/')[1]||'';
+  $('#queue').hidden=$('#ticket').hidden=$('#raudit').hidden=true;
+  document.querySelectorAll('#rsub a').forEach(a=>a.classList.toggle('on',a.dataset.v===(part==='audit'?'audit':'queue')));
+  if(part==='audit'){view='audit';ticket=null;cur=null;$('#raudit').hidden=false;loadAudit()}
+  else if(/^INC\d+$/i.test(part)){view='ticket';$('#ticket').hidden=false;showTicket(part.toUpperCase())}
+  else{view='queue';$('#queue').hidden=false;loadQueue()}
+  setCtx();return true};
+
+/* ---- the queue */
+async function loadQueue(){
+  const as=$('#who').value;const name=setAvatar();
+  if(!as){$('#q-title').textContent='Your queue';$('#q-lede').textContent='';$('#q-body').innerHTML='<div class="card" style="color:var(--ink-2)">Choose who you are working as, top right, and the queue loads from the instance.</div>';return}
+  const h=new Date().getHours();$('#q-title').textContent=`Good ${h<12?'morning':h<17?'afternoon':'evening'}, ${name.split(' ')[0]}`;$('#q-lede').textContent='';
+  $('#q-body').innerHTML='<div class="card" style="color:var(--ink-2)">Reading tickets, SLAs and journals…</div>';
+  try{queueData=await api('GET','/api/resolve/queue?as='+as)}catch(e){$('#q-body').innerHTML=`<div class="card" style="color:var(--critical)">${esc(e.message)}</div>`;return}
+  const q=queueData;$('#kq').textContent=q.counts.mine+q.counts.group_unassigned;
+  $('#q-lede').textContent=q.me.groups.map(g=>g.name).join(', ');
+  $('#q-body').innerHTML=`<div class="showme" id="q-tiles"></div><div class="card" style="padding:.6rem .6rem .3rem"><div class="qhead" id="q-head"></div><ol class="qlist" id="q-list"></ol></div>`;
+  showQueueView('ranked');
+}
+/* "Show me" segments: key, label, tone when non-zero. The first segment is the ranked view; the rest filter. */
+const TILES=[['mine','Assigned to me',''],['group','Unassigned in my groups',''],['sla','SLA breached or under 2 h','crit'],['waiting','Waiting on my reply','warn'],['reopened','Reopened',''],['changed','Changed in last 4 h','']];
+const CHIP={priority:r=>['crit',r.text],sla:r=>['crit',/breached/.test(r.text)?'SLA breached':r.text.replace(/,.*/,'')],reply_owed:()=>['warn','Reply owed'],fixed_open:()=>['good','Fix reported, still open'],knowledge:r=>['good','Article: '+r.text.split(' ')[0]],unassigned:()=>['','Unassigned'],recurring:()=>null,age:()=>null};
+function showQueueView(v){const q=queueData;if(!q)return;
+  const n=k=>(q.browse[k]||[]).length;
+  $('#q-tiles').innerHTML=`<span class="cap">Show me</span><button class="tile start${v==='ranked'?' on':''}" onclick="showQueueView('ranked')" aria-pressed="${v==='ranked'}"><span class="n">Start here</span><span class="l">${q.queue.length} ranked for you</span></button>`+TILES.map(([k,l,tone])=>`<button class="tile${k===v?' on':''}${n(k)?(tone?' '+tone:''):' zero'}" onclick="showQueueView('${k===v?'ranked':k}')" aria-pressed="${k===v}"><span class="n">${n(k)}</span><span class="l">${l}</span></button>`).join('');
+  const items=v==='ranked'?q.queue:(q.browse[v]||[]);
+  const label=Object.fromEntries(TILES.map(([k,l])=>[k,l]))[v];
+  $('#q-head').innerHTML=v==='ranked'?`<h2>Start here</h2><span class="ai-mark">Ranked by urgency, SLA, waiting callers and what is already fixed</span>`:`<h2>${label}</h2><span class="muted" style="font-size:.82rem">${items.length}, latest change first</span><button class="x" onclick="showQueueView('ranked')">Show ranked list</button>`;
+  const chips=t=>{const c=(t.reasons||[]).map(r=>(CHIP[r.rule]||(()=>null))(r)).filter(Boolean);if(t.also&&t.also.length)c.push(['',`+${t.also.length} same title`]);return c.map(([k,l])=>`<span class="chip ${k}">${esc(l)}</span>`).join('')};
+  const row=(t,i)=>`<li onclick="location.hash='resolve/${t.number}'"><span class="rank">${i+1}</span><div><span class="num">${t.number}</span><span class="sd">${esc(t.title)}</span>${v==='ranked'?chips(t):`<div class="why">${esc(t.group)}${t.caller?' · '+esc(t.caller):''}</div>`}</div><div class="side"><span class="pri">${esc(t.state)}</span><br><span class="muted">${t.assigned_to?esc(t.assigned_to.split(' ')[0]):'Unassigned'} · ${t.days} d</span></div></li>`;
+  const empty={ranked:'Nothing open for you or your groups.',mine:'Nothing assigned to you.',group:'No unassigned tickets in your groups.',sla:'No SLA breached or breaching in the next two hours.',waiting:'Nobody is waiting on you.',reopened:'No reopened tickets.',changed:'Nothing changed in the last four hours.'}[v];
+  $('#q-list').innerHTML=items.length?items.map(row).join(''):`<li style="grid-template-columns:1fr;color:var(--ink-2)">${empty}</li>`;
+}
+
+/* ---- one ticket */
+async function showTicket(n){
+  const fresh=ticket!==n;ticket=n;
+  $('#tk-title').textContent=n;$('#tk-sub').textContent='Reading the record, journal, SLAs, similar tickets and knowledge…';
+  try{cur=await api('GET','/api/resolve/ticket/'+n)}catch(e){$('#tk-sub').textContent=e.message;return}
+  const f=cur.fields;
+  $('#tk-title').textContent=cur.title;
+  $('#tk-sub').innerHTML=`${n} · opened ${when(f.opened_at)} · <a href="${cur.url}" target="_blank" rel="noopener" style="color:var(--teal)">Open in ServiceNow</a>`;
+  const miss=v=>v?esc(v):'<span class="muted">not recorded</span>';
+  $('#facts').innerHTML=[['State',f.state],['Priority',f.priority],['Group',f.assignment_group],['Assigned to',f.assigned_to||''],['Caller',f.caller_id||''],['Category',f.category||''],['Configuration item',f.cmdb_ci||'']].map(([k,v])=>`<div><span>${k}</span><b>${miss(v)}</b></div>`).join('');
+  $('#desc').innerHTML=`<span>What ${esc(f.caller_id?f.caller_id.split(' ')[0]:'the caller')} wrote</span>${f.description?esc(f.description):'<span class="muted">Nothing. Only the title was filled in.</span>'}`;
+  $('#sim-src').textContent=cur.similar.length?`${cur.similar.length} resolved ticket${cur.similar.length===1?'':'s'} read the same way`:'No resolved ticket on this instance has a usable close note for this.';
+  const kbStrong=cur.kb.filter(k=>k.match),kbWeak=cur.kb.filter(k=>!k.match);
+  const kbLine=k=>`<a href="${k.url}" target="_blank" rel="noopener" style="color:var(--teal)">${esc(k.number)}</a> ${esc(k.title)}`;
+  $('#sim').innerHTML=cur.similar.map(s=>`<li><a class="num" href="${s.url}" target="_blank" rel="noopener">${s.number}</a> · ${esc(s.title)}<div class="out">Closed ${day(s.resolved_at)}${s.resolved_by?' by '+esc(s.resolved_by):''}${s.close_code?' · '+esc(s.close_code):''}\n${esc(s.close_notes.replace(/\s+/g,' ').slice(0,280))}${s.close_notes.length>280?'…':''}</div></li>`).join('')+(cur.kb.length?`<li><span class="num">Knowledge</span><div class="out">${kbStrong.map(kbLine).join('<br>')||'<span class="muted">No article matches this title.</span>'}${kbWeak.length?`<div id="kb-weak" hidden>${kbWeak.map(kbLine).join('<br>')}</div><button class="more" onclick="$('#kb-weak').hidden=false;this.remove()">Show ${kbWeak.length} weaker match${kbWeak.length===1?'':'es'}</button>`:''}</div></li>`:'');
+  $('#who-list').innerHTML=(cur.who.length?cur.who.map(w=>`<li><span class="avatar" style="background:${w.kind==='person'?'var(--teal)':'#6b7a90'}">${esc(w.name.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase())}</span><div><b>${esc(w.name)}</b> <span class="muted">${w.kind}</span>${ev(`Closed ${w.n} similar: ${w.tickets.join(', ')}`)}</div><button class="btn sm" onclick="confirmAction('reassign',{${w.kind}:${JSON.stringify(w.name)}})">Hand over</button></li>`).join(''):'<li class="muted">Nobody on this instance has closed a similar ticket with a usable note.</li>')+(f.assigned_to?`<li><span class="avatar" style="background:#6b7a90">${esc(f.assigned_to.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase())}</span><div><b>${esc(f.assigned_to)}</b> <span class="muted">current owner</span></div><button class="btn sm" disabled>Current</button></li>`:'');
+  $('#tl').innerHTML=`<li><time>${when(f.opened_at)}</time><div>Opened${f.caller_id?' by '+esc(f.caller_id):''}. ${esc(f.description||'(no description)')}<div class="by">${esc(f.assignment_group)}</div></div></li>`+cur.journal.map(j=>`<li><time>${when(j.at)}</time><div>${esc(j.text)}<div class="by">${esc(j.by)} · ${j.kind==='comments'?'comment, caller sees it':'work note'}</div></div></li>`).join('');
+  $('#slas').innerHTML=cur.slas.length?cur.slas.map(s=>`<div class="sla" title="${esc(s.stage)}"><span>${esc(s.name.replace(/\s*\(.*\)/,''))}</span><span class="pill ${s.breached?'crit':s.pct>80?'warn':'good'}">${s.breached?'breached'+(s.breach_time?' '+esc(day(s.breach_time)):''):Math.round(s.pct)+'%'}</span></div>`).join(''):'<div class="muted" style="font-size:.84rem">No active SLA.</div>';
+  $('#same-k').textContent=cur.sameTitle.length?`${cur.sameTitle.length} more open with this title`:'Same title, open';
+  $('#same').innerHTML=cur.sameTitle.length?cur.sameTitle.slice(0,4).map(s=>`<li><a class="num" href="#resolve/${s.number}">${s.number}</a> <span class="muted" style="font-size:.78rem">${esc(s.caller||'no caller')} · ${day(s.opened_at)}</span></li>`).join('')+(cur.sameTitle.length>4?`<li class="muted" style="font-size:.78rem">and ${cur.sameTitle.length-4} more</li>`:''):'<li class="muted" style="font-size:.84rem">None, this title is unique.</li>';
+  $('#prb-btn').hidden=cur.sameTitle.length<2;
+  const isOpen=!['6','7','8'].includes(cur.raw.state);
+  $('#ready-t').textContent=isOpen?'Ready to work?':'Already '+f.state.toLowerCase();
+  $('#meter').style.setProperty('--p',cur.readiness*10+'%');$('#meter').style.setProperty('--mc',cur.readiness>=7?'var(--good)':cur.readiness>=4?'var(--warn)':'var(--crit)');$('#score').innerHTML=`${cur.readiness}<small style="font-size:.6rem;color:var(--muted)">/10</small>`;
+  $('#miss-t').textContent=cur.missing.length?`${cur.missing.length} thing${cur.missing.length===1?'':'s'} missing`:'Record is complete';
+  $('#missing').innerHTML=cur.missing.map(m=>`<li>${esc(m)}</li>`).join('');
+  document.querySelector('.ttabs button').click();$('#draft').innerHTML='';
+  // steps: one call, cached per ticket for the page's life
+  $('#steps').innerHTML='';$('#steps-src').textContent='Working out the steps…';
+  const st=stepsCache[n]||(stepsCache[n]=await api('POST','/api/resolve/steps/'+n).catch(e=>({source:'error',steps:[],error:e.message})));
+  if(ticket!==n)return;
+  const srcBits=[cur.similar.length?`${cur.similar.length} resolved ticket${cur.similar.length===1?'':'s'}`:'',cur.kb.filter(k=>k.match).length?`${cur.kb.filter(k=>k.match).length} article${cur.kb.filter(k=>k.match).length===1?'':'s'}`:'','the journal'].filter(Boolean).join(' and ');
+  $('#steps-src').textContent=st.source==='model'?`Suggested from ${srcBits}. Tick a step to log it as a work note.`:st.source==='rules'?`Built by rules from ${srcBits}. Tick a step to log it as a work note.`:'Could not produce steps: '+st.error;
+  $('#steps').innerHTML=st.steps.map(s=>`<li><input type="checkbox" title="Logs this step as a work note" onchange="tick(this,${JSON.stringify(s.text).replace(/"/g,'&quot;')})"><div title="${esc(s.source)}"><span class="txt">${esc(s.text)}</span></div></li>`).join('');
+  if(fresh){openChat();say(`You opened <b>${n}</b>: ${esc(cur.title)}. ${cur.missing.length?`The record is missing ${cur.missing.length} thing${cur.missing.length===1?'':'s'}, listed on the right.`:'The record is complete.'} ${cur.similar.length?`${cur.similar.length} resolved ticket${cur.similar.length===1?'':'s'} read the same way; the steps borrow from ${cur.similar[0].number}.`:'No resolved ticket on this instance matches.'}<div class="act"><button class="btn sm" onclick="showDraft('message')">Draft a message to the caller</button><button class="btn sm" onclick="showDraft('close')">Draft close note</button></div>`)}
+}
+document.querySelectorAll('.ttabs button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.ttabs button').forEach(x=>x.classList.toggle('on',x===b));document.querySelectorAll('.tabp').forEach(p=>p.classList.toggle('on',p.id==='t-'+b.dataset.t))});
+
+/* ---- writes: every one goes through /api/resolve/write and shows what happened */
+const who=()=>setAvatar()||'nowops-mockup';
+async function write(action,payload,label){
+  try{const r=await api('POST','/api/resolve/write',{number:ticket,action,payload,as:who()});
+    toast((r.dryRun?'Dry run, nothing written. Would have set: ':'Written to the instance: ')+Object.keys(r.body).join(', ')+' on '+(r.number||ticket));
+    if(!r.dryRun){delete stepsCache[ticket];}
+    return r}catch(e){toast('Failed: '+e.message);return null}}
+function addTl(text,by){const li=document.createElement('li');li.className='new';li.innerHTML=`<li><time>now</time><div>${esc(text)}<div class="by">${esc(by)}</div></div>`;li.innerHTML=`<time>now</time><div>${esc(text)}<div class="by">${esc(by)}</div></div>`;$('#tl').appendChild(li)}
+async function tick(cb,note){if(!cb.checked)return;cb.parentElement.classList.add('done');const r=await write('work_note',{text:note},'Work note');if(r)addTl(note,who()+' · work note'+(r.dryRun?' (dry run)':''))}
+async function addNote(kind){const v=$('#wn').value.trim();if(!v)return toast('Type the note first.');const r=await write(kind,{text:v});if(r){addTl(v,who()+(kind==='comment'?' · comment, caller sees it':' · work note')+(r.dryRun?' (dry run)':''));$('#wn').value=''}}
+
+async function showDraft(kind){const d=$('#draft');d.innerHTML='<div class="draft"><header><span class="ai-mark">Drafting…</span></header></div>';
+  let r;try{r=await api('POST','/api/resolve/draft/'+ticket,{kind})}catch(e){d.innerHTML=`<div class="draft"><header><span class="ai-mark">Could not draft: ${esc(e.message)}</span></header></div>`;return}
+  const src=r.source==='rules'?'by rules':'by the model';
+  let code='';const html=r.html.replace(/\n?CLOSE_CODE:\s*(.+)$/m,(m,c)=>{code=c.trim();return ''}).replace(/\n?UPDATE_INSTEAD:\s*(.+)$/m,(m,k)=>`\n<div class="ev">Suggests updating <b>${esc(k.trim())}</b> instead of creating a new article.</div>`);
+  const hdr={close:'Close note, drafted '+src,kb:'Knowledge article, drafted '+src+'. Saved as Draft for review.',message:'Message to the caller, drafted '+src,problem:'Problem record, drafted '+src}[kind];
+  const acts={close:`<button class="btn sm p" onclick="confirmAction('resolve',{close_code:${JSON.stringify(code)}})">Use and resolve…</button>`,kb:`<button class="btn sm p" onclick="confirmAction('kb_draft')">Create as Draft in ServiceNow…</button>`,message:`<button class="btn sm p" onclick="confirmAction('comment_hold')">Post as comment and hold…</button>`,problem:`<button class="btn sm p" onclick="confirmAction('problem')">Raise problem record…</button>`}[kind];
+  window._draft={kind,html,text:html.replace(/<h4>(.*?)<\/h4>/g,'\n$1:\n').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').trim(),code,title:r.title};
+  d.innerHTML=`<div class="draft"><header><span class="ai-mark">${hdr}</span><div class="r">${acts}<button class="btn sm" onclick="$('#draft').innerHTML=''">Discard</button></div></header><div class="body">${r.title&&kind!=='close'?`<b>${esc(r.title)}</b>\n`:''}${html}</div>${kind==='close'||kind==='kb'?'<div class="dleg"><mark class="rec">From the work notes on this ticket</mark><mark class="inf">Inferred from similar tickets or not yet confirmed. Check before you send</mark></div>':''}</div>`;
+  d.scrollIntoView({behavior:'smooth',block:'nearest'})}
+
+function confirmAction(kind,arg={}){const cf=$('#cf');const f=cur.fields;const as=`<div class="as"><span class="avatar">${$('#avatar').textContent}</span> ${meta.writes?'Written to the instance through the service credential, recorded as done by':'Dry run: nothing is written, the audit trail records what would have been, as'} <b>${esc(who())}</b>.</div>`;
+  const row=(k,v)=>`<tr><td>${k}</td><td>${v}</td></tr>`;let h='';
+  if(kind==='resolve')h=`<h3>Resolve ${ticket}</h3><p>This is exactly what will be written. Nothing else changes.</p><table class="writes">${row('State',esc(f.state)+' → Resolved')}${row('Resolution code',`<select id="cf-code">${[...new Set([arg.close_code,'Solved (Permanently)','Solved (Workaround/Temporarily)','Solved Remotely (Permanently)','Not Solved (Not Reproducible)','Closed/Resolved by Caller','Duplicate'].filter(Boolean))].map(c=>`<option ${c===(arg.close_code||'')?'selected':''}>${esc(c)}</option>`).join('')}</select>`)}${row('Close notes',`<textarea id="cf-notes" rows="7">${esc(window._draft&&window._draft.kind==='close'?window._draft.text:'')}</textarea>`)}${row('Work note','Resolved via NowOps.')}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('resolve',{close_code:$('#cf-code').value,close_notes:$('#cf-notes').value})">Resolve</button></div>`;
+  if(kind==='claim')h=`<h3>Claim ${ticket}</h3><p>Assign it to ${esc(who())}${cur.raw.state==='1'?' and move it to In progress':''}.</p><table class="writes">${row('Assigned to',esc(f.assigned_to||'Nobody')+' → '+esc(who()))}${cur.raw.state==='1'?row('State','New → In progress'):''}${row('Work note','Picked up via NowOps.')}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('claim',{user:$('#who').value})">Claim</button></div>`;
+  if(kind==='hold')h=`<h3>Put ${ticket} on hold</h3><p>Pick the reason. SLAs that pause on hold stop counting.</p><table class="writes">${row('State',esc(f.state)+' → On hold')}${row('Reason','<select id="cf-reason"><option>Awaiting Caller</option><option>Awaiting Vendor</option><option>Awaiting Change</option><option>Awaiting Problem</option></select>')}${row('Work note','<input id="cf-wn" value="Waiting for the caller to reply.">')}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('hold',{reason:$('#cf-reason').value,note:$('#cf-wn').value})">Put on hold</button></div>`;
+  if(kind==='reassign'){const target=arg.group||arg.person;h=`<h3>Hand ${ticket} to ${esc(target)}</h3><p>Only the assignment changes.</p><table class="writes">${row(arg.group?'Assignment group':'Assigned to',esc(arg.group?f.assignment_group:(f.assigned_to||'Nobody'))+' → '+esc(target))}${arg.group?row('Assigned to','cleared, so their queue picks it up'):''}${row('Work note',`Handed over via NowOps: closed the matching tickets on this instance.`)}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('reassign',${esc(JSON.stringify(arg.group?{group:arg.group}:{user:arg.person}))})">Hand over</button></div>`}
+  if(kind==='comment_hold')h=`<h3>Comment to the caller and hold</h3><p>The caller sees the comment and gets the usual notification. The ticket goes On hold, Awaiting Caller.</p><table class="writes">${row('Comment',`<textarea id="cf-c" rows="5">${esc(window._draft?window._draft.text:'')}</textarea>`)}${row('State',esc(f.state)+' → On hold, Awaiting Caller')}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('comment_hold',{text:$('#cf-c').value})">Post and hold</button></div>`;
+  if(kind==='kb_draft')h=`<h3>Create a Draft knowledge article</h3><p>One record in the client's knowledge base, state Draft, not published. Their knowledge review takes it from here.</p><table class="writes">${row('Table','kb_knowledge')}${row('State','Draft')}${row('Title',`<input id="cf-t" value="${esc(window._draft?.title||cur.title)}">`)}${row('Body',`<textarea id="cf-b" rows="7">${esc(window._draft?window._draft.text:'')}</textarea>`)}${row('Description',`Drafted by NowOps from ${ticket}. Review before publishing.`)}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('kb_draft',{title:$('#cf-t').value,text:$('#cf-b').value})">Create draft</button></div>`;
+  if(kind==='problem')h=`<h3>Raise a problem record</h3><p>One problem record, first reported by ${ticket}. Linking the other open incidents to it is a follow-up in ServiceNow.</p><table class="writes">${row('Table','problem')}${row('Title',`<input id="cf-t" value="${esc(window._draft?.title||cur.title)}">`)}${row('Description',`<textarea id="cf-b" rows="5">${esc(window._draft?window._draft.text:'')}</textarea>`)}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('problem',{title:$('#cf-t').value,text:$('#cf-b').value})">Raise</button></div>`;
+  cf.innerHTML=h;$('#ov').classList.add('on')}
+function closeConfirm(){$('#ov').classList.remove('on')}
+async function commit(action,payload){closeConfirm();
+  if(action==='comment_hold'){const a=await write('comment',{text:payload.text});if(a){addTl(payload.text,who()+' · comment'+(a.dryRun?' (dry run)':''));const b=await write('hold',{reason:'Awaiting Caller',note:'Waiting for the caller to reply.'});if(b)addTl('Put on hold, Awaiting Caller.',who()+(b.dryRun?' (dry run)':''))}return}
+  const r=await write(action,payload);if(!r)return;
+  addTl({resolve:'Resolved with the close note above.',claim:'Claimed.',hold:'Put on hold: '+payload.reason,reassign:'Handed over.',kb_draft:'Draft knowledge article created'+(r.number?' '+r.number:'')+'.',problem:'Problem record raised'+(r.number?' '+r.number:'')+'.'}[action]||action,who()+(r.dryRun?' (dry run)':''));
+  if(!r.dryRun&&['resolve','claim','hold','reassign'].includes(action)){stepsCache={};setTimeout(()=>showTicket(ticket),800)}}
+let tt;function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('on'),4200)}
+
+async function loadAudit(){const a=await api('GET','/api/resolve/audit').catch(()=>({entries:[]}));$('#kaud').textContent=a.entries.length||'';
+  $('#audit').innerHTML='<tr><th>When</th><th>Who</th><th>What</th><th>Record</th><th>Evidence</th></tr>'+(a.entries.length?a.entries.map(e=>`<tr><td>${when(e.at.replace('T',' '))}</td><td>${esc(e.who)}</td><td>${esc(e.what)}${e.dryRun?' <span class="pill warn">dry run</span>':''}</td><td>${esc(e.record)}</td><td class="muted">${esc(e.evidence)}</td></tr>`).join(''):'<tr><td colspan="5" class="muted">Nothing yet. Open a ticket, tick a step or draft something.</td></tr>')}
+
+/* ---- Assistant: the real chatbot for knowledge and counts, plus ticket actions when a ticket is open. */
+const conversationId=crypto.randomUUID();
+function setCtx(){const dp=(location.hash.slice(1).split('&')[0]||'overview');const DASH={overview:'the service overview',operational:'operational metrics',sla:'SLA performance',backlog:'backlog and aging',change:'change and approvals',security:'security',cmdb:'CMDB and assets',knowledge:'knowledge and CSAT',estate:'Application 360'};
+  $('#actx').textContent=view==='dash'?'Looking at '+(DASH[dp]||'the dashboard'):view==='ticket'?'Looking at '+ticket:view==='queue'?'Looking at the queue':'Audit trail';
+  const chips=view==='ticket'?[['Draft close note',()=>showDraft('close')],['Message the caller',()=>showDraft('message')],['Who fixed this before?',whoFixed],['How many open tickets have this title?',sameCount],['How do I fix this?',()=>askChat('How do I fix: '+(cur?cur.title:''))]]:view==='queue'?[['Why is the first one first?',whyFirst],['Which have a knowledge article?',withKb],['How many open P1 incidents are there?',()=>askChat('How many open P1 incidents are there?')]]:[['How many open P1 incidents are there?',()=>askChat('How many open P1 incidents are there?')],['How many SLAs are breached?',()=>askChat('How many breached SLAs are there?')],['How many incidents are unassigned?',()=>askChat('How many active incidents have no assignee?')]];
+  window._chips=chips;$('#chips').innerHTML=chips.map((c,i)=>`<button onclick="window._chips[${i}][1]()">${esc(c[0])}</button>`).join('')}
+function openChat(){if(chat.hidden){chat.hidden=false;shell.classList.add('chat-open');if(!clog.children.length){api('GET','/api/health').then(h=>{$('#cmode').textContent=h?.llmMode==='stub'?'stub mode: canned answers, live data':(h?.model??'')}).catch(()=>{});say('Ask how to do something from the knowledge base, or how many of something there are on this instance. On a ticket, the buttons below act on it.')}}}
+function closeChat(){chat.hidden=true;shell.classList.remove('chat-open')}
+$('#ask').onclick=e=>{e.preventDefault();chat.hidden?openChat():closeChat();if(!chat.hidden)$('#cq').focus()};
+$('#cclose').onclick=closeChat;
+function say(html,user){const d=document.createElement('div');d.className='msg '+(user?'user':'bot');d.innerHTML=user?html:`<span class="ai-mark">Assistant</span>${html}`;clog.appendChild(d);clog.scrollTop=1e9;return d}
+$('#cform').onsubmit=e=>{e.preventDefault();const q=$('#cq').value.trim();if(!q)return;$('#cq').value='';askChat(q)};
+async function askChat(message){openChat();say(esc(message),true);const p=say('Working…');
+  try{const r=await fetch('/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message,conversationId})});const data=await r.json();
+    if(data.kind==='metric'&&data.metric){const m=data.metric;p.innerHTML=`<span class="ai-mark">Assistant</span><div class="big">${esc(data.answer)}</div><div class="src">${m.table} · ${m.aggregate}${m.field?`(${m.field})`:''}<code>${esc(m.filter||'(no filter)')}</code><a href="${m.url}" target="_blank" rel="noopener">Open these records in ServiceNow</a></div>`}
+    else if(data.kind==='article'){p.innerHTML=`<span class="ai-mark">Assistant</span>${esc(data.answer)}<div class="src">Sources: ${(data.sources||[]).map(s=>`<a href="${s.url}" target="_blank" rel="noopener" title="${esc(s.title)}">${esc(s.label||s.title)}</a>`).join(' · ')}</div>`}
+    else p.innerHTML=`<span class="ai-mark">Assistant</span>${esc(data.answer??data.error??'No response.')}<div class="src">${data.gateReason==='servicenow_unavailable'?'Knowledge base unreachable':data.gateReason==='metric_unavailable'?'Could not run that query':'No knowledge base match'}</div>`}
+  catch{p.textContent='Request failed.'}}
+/* answers from data already on the page, no model call */
+function whoFixed(){openChat();say('Who fixed this before?',true);if(!cur)return say('Open a ticket first.');say(cur.who.length?cur.who.map(w=>`<b>${esc(w.name)}</b> (${w.kind}) closed ${w.n}: ${w.tickets.join(', ')}`).join('<br>'):'Nobody on this instance has closed a similar ticket with a usable close note.')}
+function sameCount(){openChat();say('How many open tickets have this title?',true);if(!cur)return say('Open a ticket first.');say(`<div class="big">${cur.sameTitle.length+1}</div>including this one${cur.sameTitle.length?': '+cur.sameTitle.map(s=>s.number).join(', '):''}`)}
+function whyFirst(){openChat();say('Why is the first one first?',true);const t=queueData?.queue?.[0];if(!t)return say('The queue is empty or not loaded.');say(`<b>${t.number}</b>: ${t.reasons.map(r=>esc(r.text)).join('; ')||'nothing stands out, it is simply the oldest'}.`)}
+function withKb(){openChat();say('Which have a knowledge article?',true);const l=(queueData?.queue||[]).filter(t=>t.kb);say(l.length?l.map(t=>`<b>${t.number}</b> → <a href="${t.kb.url}" target="_blank" rel="noopener" style="color:var(--teal-2)">${esc(t.kb.number)}</a> ${esc(t.kb.title)}`).join('<br>'):'None of the top ten has a published article whose title matches.')}
+
+loadPeople();
+</script>
 <script type="module">
 const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
 const api = (p) => fetch(p).then((r) => r.json())
@@ -97,6 +460,8 @@ const tip = document.getElementById('tip')
 const showTip = (e, html) => { tip.innerHTML = html; tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 12, innerWidth - 320) + 'px'; tip.style.top = (e.clientY + 12) + 'px' }
 const hideTip = () => tip.style.display = 'none'
 const P = ['P1', 'P2', 'P3', 'P4'], PC = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)']
+const PRI = ['1 - Critical', '2 - High', '3 - Moderate', '4 - Low', '5 - Planning'] // priority display labels on this instance
+const PRIC = Object.fromEntries(PRI.map((k, i) => [k, PC[i] ?? 'var(--muted)']))
 const hrs = (h) => h == null ? '—' : h >= 48 ? `${(h / 24).toFixed(1)} d` : `${h.toFixed(1)} h`
 const grp = () => ''
 
@@ -121,22 +486,84 @@ function grouped(months, a, b, ca, cb, { w = 560, h = 170 } = {}) {
     <line x1="${pad.l}" x2="${w}" y1="${pad.t + ph}" y2="${pad.t + ph}" class="axis"/></svg>`
 }
 const legend = (items) => `<div class="legend">${items.map(([n, c]) => `<span><i style="background:${c}"></i>${n}</span>`).join('')}</div>`
+// Line trend: 2px lines, 8px markers with a surface ring, recessive grid, optional dashed target.
+function lines(months, series, { w = 560, h = 180, fmtv = (v) => fmt(Math.round(v)), fmta = fmtv, max, target, xsub, labels = false } = {}) {
+  const pad = { l: 44, r: 14, b: xsub ? 36 : 22, t: labels ? 18 : 12 }, n = months.length
+  const m = max ?? (Math.max(...months.flatMap((x) => series.map((s) => x[s.k] ?? 0))) || 1)
+  const pw = w - pad.l - pad.r, ph = h - pad.b - pad.t
+  const X = (i) => pad.l + (n === 1 ? pw / 2 : i * pw / (n - 1)), Y = (v) => pad.t + ph - (Math.min(v ?? 0, m) / m) * ph
+  const grid = [0, .5, 1].map((f) => `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(m * f)}" y2="${Y(m * f)}" class="gridl"/><text x="${pad.l - 6}" y="${Y(m * f) + 4}" text-anchor="end">${fmta(m * f)}</text>`).join('')
+  const tgt = target == null ? '' : `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(target)}" y2="${Y(target)}" stroke="var(--ink-2)" stroke-dasharray="4 4"/><text x="${pad.l + 4}" y="${Y(target) - 5}">target ${fmta(target)}</text>`
+  // Months with no value leave a gap rather than drawing a false zero.
+  const paths = series.map((s) => { const pts = months.map((x, i) => x[s.k] == null ? null : [X(i), Y(x[s.k])])
+    let d = '', pen = false; pts.forEach((p) => { if (!p) { pen = false; return } d += (pen ? 'L' : 'M') + p.join(','); pen = true })
+    return `<path d="${d}" fill="none" stroke="${s.c}" stroke-width="2" stroke-linejoin="round"/>` + pts.map((p, i) => p ? `<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="${s.c}" stroke="var(--surface)" stroke-width="2" data-tip="${months[i].label} · ${s.n}: ${fmtv(months[i][s.k])}${s.q && months[i][s.q] ? `<code>${esc(months[i][s.q])}</code>` : ''}"/>${labels ? `<text x="${p[0]}" y="${p[1] - 9}" text-anchor="middle" class="lbl" style="font-size:11px">${fmtv(months[i][s.k])}</text>` : ''}` :`<text x="${X(i)}" y="${pad.t + ph - 6}" text-anchor="middle" style="fill:var(--muted)">no data</text>`).join('') }).join('')
+  return `<svg viewBox="0 0 ${w} ${h}">${grid}${tgt}<line x1="${pad.l}" x2="${w - pad.r}" y1="${pad.t + ph}" y2="${pad.t + ph}" class="axis"/>${paths}${months.map((x, i) => `<text x="${X(i)}" y="${h - (xsub ? 20 : 6)}" text-anchor="middle">${x.label}</text>${xsub ? `<text x="${X(i)}" y="${h - 6}" text-anchor="middle" style="fill:var(--muted);font-size:11px">${esc(xsub(x))}</text>` : ''}`).join('')}</svg>`
+}
+// Donut: part-to-whole for at most five parts; 2px surface gaps between segments; total in the centre.
+function donut(rows, { size = 150, thick = 22, fmtv = fmt } = {}) {
+  const total = rows.reduce((a, r) => a + (r.v ?? 0), 0) || 1, R = size / 2, r = R - thick / 2, C = 2 * Math.PI * r
+  let off = 0
+  return `<svg viewBox="0 0 ${size} ${size}">${rows.map((x) => { const f = (x.v ?? 0) / total, len = Math.max(0, f * C - 2)
+    const s = `<circle r="${r}" cx="${R}" cy="${R}" fill="none" stroke="${x.c}" stroke-width="${thick}" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" data-tip="${esc(x.k)}: ${fmtv(x.v)} (${(100 * f).toFixed(1)}%)${x.q ? `<code>${esc(x.q)}</code>` : ''}"/>`; off += f * C; return s }).join('')}</svg>`
+}
+// Gauge: one value against a target. Colour is the status palette, so it always ships with the label under it.
+function gauge(pct, { target = 80, w = 280 } = {}) {
+  const r = w / 2 - 16, cx = w / 2, cy = w / 2 - 4
+  const pt = (p, rr = r) => { const a = Math.PI * (1 - p / 100); return [cx + rr * Math.cos(a), cy - rr * Math.sin(a)] }
+  const arc = (a, b, col, sw) => { const [x1, y1] = pt(a), [x2, y2] = pt(b); return `<path d="M${x1},${y1}A${r},${r} 0 0 1 ${x2},${y2}" fill="none" stroke="${col}" stroke-width="${sw}" stroke-linecap="round"/>` }
+  const col = pct == null ? 'var(--muted)' : pct >= target ? 'var(--good)' : pct >= target - 10 ? 'var(--warning)' : 'var(--critical)'
+  const [tx1, ty1] = pt(target, r - 13), [tx2, ty2] = pt(target, r + 13)
+  return `<div class="gauge"><svg viewBox="0 0 ${w} ${w / 2 + 8}">${arc(0, 100, 'var(--grid)', 16)}${pct == null ? '' : arc(0, Math.min(99.9, Math.max(.6, pct)), col, 16)}<line x1="${tx1}" y1="${ty1}" x2="${tx2}" y2="${ty2}" stroke="var(--ink)" stroke-width="2"/>
+    <text x="${cx}" y="${cy - 6}" text-anchor="middle" class="lbl" style="font-size:38px;font-weight:600;letter-spacing:-.03em">${pct == null ? '—' : pct.toFixed(1) + '%'}</text><text x="${cx}" y="${cy + 14}" text-anchor="middle">target ${target}%</text><text x="${cx - r}" y="${cy + 18}" text-anchor="middle">0</text><text x="${cx + r}" y="${cy + 18}" text-anchor="middle">100</text></svg></div>`
+}
+// Heatmap: one hue, light to dark, value printed in every cell so colour is never the only channel.
+function heatmap(rowsK, colsK, cells, { w = 560, rh = 26, lw = 150, fmtv = fmt } = {}) {
+  const cw = (w - lw) / colsK.length, m = Math.max(...cells.flat().map((c) => c?.v ?? 0)) || 1, h = rowsK.length * rh + 22
+  const col = (v) => !v ? 'var(--page)' : `color-mix(in oklab, var(--seq) ${Math.round(12 + 88 * v / m)}%, white)`
+  const head = colsK.map((c, j) => `<text x="${lw + j * cw + cw / 2}" y="14" text-anchor="middle">${esc(c)}</text>`).join('')
+  const body = rowsK.map((r, i) => `<text x="0" y="${22 + i * rh + rh / 2 + 4}" class="lbl"><title>${esc(r)}</title>${esc(r.length > 22 ? r.slice(0, 21) + '…' : r)}</text>` + colsK.map((c, j) => { const x = cells[i][j], v = x?.v ?? 0
+    return `<rect x="${lw + j * cw + 1}" y="${22 + i * rh + 1}" width="${cw - 2}" height="${rh - 2}" rx="3" fill="${col(v)}" data-tip="${esc(r)} · ${esc(c)}: ${fmtv(v)}${x?.q ? `<code>${esc(x.q)}</code>` : ''}"/><text x="${lw + j * cw + cw / 2}" y="${22 + i * rh + rh / 2 + 4}" text-anchor="middle" style="pointer-events:none;fill:${v / m > .55 ? '#fff' : 'var(--ink)'}">${v ? fmtv(v) : ''}</text>` }).join('')).join('')
+  return `<svg viewBox="0 0 ${w} ${h}">${head}${body}</svg>`
+}
 
 // ---- cards
 const level = (v, warn, bad) => v == null ? null : v >= bad ? ['critical', 'Needs attention'] : v >= warn ? ['warning', 'Watch'] : ['good', 'Healthy']
-const badge = (lv) => lv ? `<div class="status"><i style="background:var(--${lv[0]})"></i>${lv[1]}</div>` : ''
+const badge = (lv) => lv ? `<div class="status" style="--lv:var(--${lv[0]})"><i></i>${lv[1]}</div>` : ''
 function stat(d, span = 3, extra = '') {
   if (!d) return ''
   const live = d.status === 'available'
   const v = !live ? (d.status === 'no data yet' ? 'no data yet' : `not available`) : d.kind === 'ratio' ? d.value : fmt(d.value)
   return `<div class="card c${span}${live ? '' : ' off'}"><button class="def" aria-label="Show definition">?</button><p class="t">${d.name}</p><div class="n">${v}</div>${live ? extra : `<div class="sub">${d.reason ?? ''}</div>`}
-    <div class="recipe">${d.meaning}<code>${d.kind === 'ratio' ? (d.detail ?? '') + '<br>' + esc(d.filter_resolved ?? '') : `${d.table} · ${d.aggregate}${d.field ? `(${d.field})` : ''} · ${esc(d.filter_resolved || 'no filter')}`}</code>${live && d.url ? `<a href="${d.url}" target="_blank" rel="noopener">Open these records in ServiceNow</a>` : ''}</div></div>`
+    <div class="recipe">${d.meaning}<code>${d.kind === 'ratio' ? esc(d.filter_resolved ?? '') :`${d.table} · ${d.aggregate}${d.field ? `(${d.field})` : ''} · ${esc(d.filter_resolved || 'no filter')}`}</code>${live && d.url ? `<a href="${d.url}" target="_blank" rel="noopener">Open these records in ServiceNow</a>` : ''}</div></div>`
 }
 const chart = (title, svg, span = 6, note = '', leg = '') => `<div class="card c${span}"><button class="def" aria-label="Show definition">?</button><p class="t">${title}</p>${svg}${leg}<div class="recipe">${note}</div></div>`
+// A failed read says so and offers a retry; it never masquerades as "no rows".
+const retryNote = (err) => `<p class="sub" style="color:var(--critical)">Could not load: ${esc(err)}. <a href="#" onclick="location.reload();return false" style="color:var(--teal-2)">Retry</a></p>`
 async function breakdown(title, table, q, by, { span = 6, top = 8, color, fmtv } = {}) {
   const b = await api(`/api/breakdown?table=${table}&by=${by}&top=${top}&q=${encodeURIComponent(q)}`)
   const rows = (b.rows ?? []).map((r) => ({ k: r.k, v: r.v, c: color, tip: `${r.k}: ${fmt(r.v)}<code>${esc(b.q ? b.q + '^' : '')}${by}=${esc(r.raw)}</code>` }))
-  return chart(title, rows.length ? hbars(rows, { fmtv, lw: 110, w: 560 }) : '<p class="sub">no rows</p>', span, `<code>${table}</code> where <code>${b.q || 'no filter'}</code>, counted by <code>${by}</code>. Top ${top}, rest folded into Other.`)
+  return chart(title, b.error ? retryNote(b.error) : rows.length ? hbars(rows, { fmtv, lw: 110, w: 560 }) : '<p class="sub">no rows</p>', span, `<code>${table}</code> where <code>${b.q || 'no filter'}</code>, counted by <code>${by}</code>. Top ${top}, rest folded into Other.`)
+}
+// Donut for a short part-to-whole split; anything past `top` is folded into Other by the server.
+// `colors` is an array assigned in row order, or a map from label to colour so a colour follows its entity, not its rank.
+async function donutBreakdown(title, table, q, by, { span = 4, top = 5, colors = [...PC, 'var(--muted)'], note = '' } = {}) {
+  const b = await api(`/api/breakdown?table=${table}&by=${by}&top=${top}&q=${encodeURIComponent(q)}`)
+  const colorOf = (k, i) => Array.isArray(colors) ? colors[i % colors.length] : (colors[k] ?? 'var(--muted)')
+  const rows = (b.rows ?? []).map((r, i) => ({ k: r.k, v: r.v, c: colorOf(r.k, i), q: r.raw ? `${b.q ? b.q + '^' : ''}${by}=${r.raw}` : '' }))
+  const total = rows.reduce((a, r) => a + r.v, 0)
+  const body = b.error ? retryNote(b.error) : rows.length ? `<div class="dwrap"><div class="donut">${donut(rows)}<div class="dc"><b>${fmt(total)}</b><span>total</span></div></div><ul class="dlist">${rows.map((r) => `<li><i style="background:${r.c}"></i>${esc(r.k)}<b>${fmt(r.v)}</b><span>${(100 * r.v / (total || 1)).toFixed(0)}%</span></li>`).join('')}</ul></div>` : '<p class="sub">no rows</p>'
+  return chart(title, body, span, note || `<code>${table}</code> where <code>${b.q || 'no filter'}</code>, counted by <code>${by}</code>.`)
+}
+// Heatmap from a two-field breakdown: first field = rows (top N by total), second field = columns.
+async function heatmapBreakdown(title, table, q, by, cols, { span = 8, top = 8, note = '', lw = 150 } = {}) {
+  const b = await api(`/api/breakdown?table=${table}&by=${by}&top=400&q=${encodeURIComponent(q)}`)
+  const rows = {}
+  for (const r of b.rows ?? []) { if (!r.keys || r.keys.length < 2) continue; const c = r.keys.find((k) => cols.includes(k)); if (!c) continue; const rk = r.keys.find((k) => k !== c) ?? r.keys[0]
+    rows[rk] ??= { cells: {}, total: 0, raw: r.raw }; rows[rk].cells[c] = { v: (rows[rk].cells[c]?.v ?? 0) + r.v, q: `${b.q ? b.q + '^' : ''}${by.split(',')[0]}=${r.raw}` }; rows[rk].total += r.v }
+  const list = Object.entries(rows).sort((a, c) => c[1].total - a[1].total).slice(0, top)
+  const used = cols.filter((c) => list.some(([, r]) => r.cells[c]))
+  return chart(title, b.error ? retryNote(b.error) : list.length ? heatmap(list.map(([k]) => k), used, list.map(([, r]) => used.map((c) => r.cells[c])), { lw }) : '<p class="sub">no rows</p>', span, note || `<code>${table}</code> where <code>${b.q || 'no filter'}</code>, counted by <code>${by}</code>. Darker is more; top ${top} rows.`)
 }
 // Pivot a two-field breakdown into stacked rows: first field = row, second field = segment.
 async function stackedBreakdown(title, table, q, by, keys, colors, { span = 6, top = 10, note = '' } = {}) {
@@ -145,7 +572,7 @@ async function stackedBreakdown(title, table, q, by, keys, colors, { span = 6, t
   // ServiceNow returns group-by fields in its own order, so find the segment key by membership.
   for (const r of b.rows ?? []) { if (!r.keys || r.keys.length < 2) continue; const seg = r.keys.find((k) => keys.includes(k)) ?? r.keys[1]; const row = r.keys.find((k) => k !== seg) ?? r.keys[0]; rows[row] ??= { bucket: row.length > 22 ? row.slice(0, 21) + '…' : row, q: `${b.q ? b.q + '^' : ''}${by.split(',')[0]}=${r.raw}` }; rows[row][seg] = (rows[row][seg] ?? 0) + r.v }
   const list = Object.values(rows).sort((a, c) => keys.reduce((t, k) => t + (c[k] ?? 0), 0) - keys.reduce((t, k) => t + (a[k] ?? 0), 0)).slice(0, top)
-  return chart(title, list.length ? stacked(list, keys, colors, { rowH: 26, w: 560, lw: 150 }) : '<p class="sub">no rows</p>', span, note || `<code>${table}</code> counted by <code>${by}</code>, top ${top} rows.`, legend(keys.map((k, i) => [k, colors[i]])))
+  return chart(title, b.error ? retryNote(b.error) : list.length ? stacked(list, keys, colors, { rowH: 26, w: 560, lw: 150 }) : '<p class="sub">no rows</p>', span, note || `<code>${table}</code> counted by <code>${by}</code>, top ${top} rows.`, legend(keys.map((k, i) => [k, colors[i]])))
 }
 async function listTable(title, table, fields, labels, order, { span = 12, limit = 10 } = {}) {
   const r = await api(`/api/list?table=${table}&fields=${fields.join(',')}&order=${order}&limit=${limit}`)
@@ -159,7 +586,7 @@ const sect = (h, p = '') => `<div class="sect c12"><h2>${h}</h2><p>${p}</p></div
 
 // ---- pages: the overview holds what an SDM checks first; each group holds the rest.
 const PAGES = {
-  overview: { title: 'Service overview', lede: 'What a service delivery manager checks first. Every number opens its recipe and its records; the groups on the left hold the rest.' },
+  overview: { title: 'Service overview', lede: 'What a service delivery manager checks first. Every number opens its recipe and its records; the sections along the top hold the rest.' },
   operational: { title: 'Operational metrics', lede: 'The live ticket picture across incidents, requests, changes and problems.' },
   sla: { title: 'SLA performance', lede: 'Attainment as ServiceNow measured it, breaches, and what is about to breach.' },
   backlog: { title: 'Backlog and aging', lede: 'Opened against resolved, how long open work has waited, and how fast it resolves.' },
@@ -180,12 +607,13 @@ async function load() {
   document.getElementById('page').innerHTML = '<div class="card c12" style="color:var(--ink-2)">Working…</div>'
   const [rows, s] = await Promise.all([api(`/api/dashboard?group=${encodeURIComponent(grp())}`), api('/api/series')])
   cache = { rows, s, d: Object.fromEntries(rows.map((r) => [r.id, r])) }
-  document.getElementById('when').textContent = `live · ${new Date().toLocaleTimeString()}${grp() ? ` · ${grp()}` : ''}`
+  document.getElementById('when').textContent = `live from abhrademo4 · ${new Date().toLocaleTimeString()}`
   document.getElementById('nav').innerHTML = NAV.map(([id, n, k]) => `${LENS[id] ? `<div class="grp">${LENS[id]}</div>` : ''}<a href="#${id}" data-p="${id}">${n}<span class="k">${short(cache.d[k])}</span></a>`).join('')
 }
 
 async function render() {
   if (!cache) await load()
+  if (window.route()) return
   const { rows, s, d } = cache
   const page = (location.hash.slice(1).split('&')[0] || 'overview'); const meta = PAGES[page] ?? PAGES.overview
   document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.p === page))
@@ -194,12 +622,13 @@ async function render() {
   const add = (h) => grid.insertAdjacentHTML('beforeend', h)
   const addAll = async (...ps) => add((await Promise.all(ps)).join(''))
   const att = d.sla_attainment, attPct = att?.status === 'available' ? parseFloat(att.value) : null
-  const heroCard = () => `<div class="card c12"><button class="def" aria-label="Show definition">?</button><div class="hero"><div><p class="t">SLA attainment, resolution</p><div class="big">${attPct == null ? '—' : attPct.toFixed(1)}<small>%</small></div><div class="sub">${att?.detail ?? ''} incident SLAs met · target 80%</div>${badge(attPct == null ? null : attPct >= 80 ? ['good', 'On target'] : attPct >= 70 ? ['warning', 'Below target'] : ['critical', 'Well below target'])}</div>
-    <div><p class="t">By priority</p>${hbars(s.attainment.map((a) => ({ k: a.priority, v: a.pct, tip: `${a.priority}: ${fmt(a.met)} of ${fmt(a.all)} met<code>${esc(a.q)}</code>` })), { max: 100, fmtv: (v) => v == null ? '—' : v.toFixed(1) + '%', rowH: 26 })}</div></div><div class="recipe">${att?.meaning ?? ''}<code>${esc(att?.filter_resolved)}</code></div></div>`
+  const pct = (v) => v == null ? '—' : v.toFixed(0) + '%'
+  const heroCard = () => `<div class="card c12"><button class="def" aria-label="Show definition">?</button><div class="hero"><div><p class="t">SLA attainment, resolution</p>${gauge(attPct)}<div class="sub">incident resolution SLAs met</div>${badge(attPct == null ? null : attPct >= 80 ? ['good', 'On target'] : attPct >= 70 ? ['warning', 'Below target'] : ['critical', 'Well below target'])}</div>
+    <div><p class="t">By priority</p>${hbars(s.attainment.map((a, i) => ({ k: a.priority, v: a.pct, c: PC[i], tip: `${a.priority}: ${fmt(a.met)} of ${fmt(a.all)} met<code>${esc(a.q)}</code>` })), { max: 100, fmtv: (v) => v == null ? '—' : v.toFixed(1) + '%', rowH: 26 })}<p class="t" style="margin-top:.9rem">Attainment per month, by SLA created month · volume shown under each month</p>${lines(s.months.map((x) => ({ ...x, n: (x.met ?? 0) + (x.breached ?? 0), pct: x.met != null && (x.met + x.breached) ? 100 * x.met / (x.met + x.breached) : null, pct_q: `${fmt(x.met)} met of ${fmt((x.met ?? 0) + (x.breached ?? 0))} completed` })), [{ k: 'pct', n: 'attainment', c: 'var(--s1)', q: 'pct_q' }], { max: 100, target: 80, fmtv: (v) => v == null ? '—' : v.toFixed(1) + '%', fmta: (v) => v.toFixed(0) + '%', h: 160, labels: true, xsub: (x) => `${fmt(x.n)} SLAs` })}</div></div><div class="recipe">${att?.meaning ?? ''}<code>${esc(att?.filter_resolved)}</code></div></div>`
   const agingChart = () => chart('Open incidents by age and priority', stacked(s.aging, P, PC), 6, 'Open incidents (states counted as open for this client) bucketed on <code>opened_at</code>, split by priority.', legend(P.map((p, i) => [p, PC[i]])))
-  const flowChart = () => chart('Opened vs resolved, per month', grouped(s.months, { k: 'opened', n: 'opened', q: 'opened_q' }, { k: 'resolved', n: 'resolved', q: 'resolved_q' }, 'var(--s1)', 'var(--s3)'), 6, 'Incidents by <code>opened_at</code> and <code>resolved_at</code>, calendar months.', legend([['Opened', 'var(--s1)'], ['Resolved', 'var(--s3)']]))
-  const mttrChart = () => chart('Mean time to resolve, by priority', hbars(s.mttr.map((m) => ({ k: m.priority, v: m.hours, tip: `${m.priority}: ${m.raw} over ${fmt(m.n)} incidents<code>${esc(m.q)}</code>` })), { fmtv: hrs }), 6, 'Average <code>calendar_duration</code> on resolved or closed incidents, one window for every priority. P1 is dominated by incidents opened in 2015–2018.')
-  const slaTrend = () => chart('SLAs met vs breached, per month', grouped(s.months, { k: 'met', n: 'met' }, { k: 'breached', n: 'breached' }, 'var(--s1)', 'var(--s2)'), 6, 'Completed incident resolution SLAs by created month.', legend([['Met', 'var(--s1)'], ['Breached', 'var(--s2)']]))
+  const flowChart = () => chart('Opened vs resolved, per month', lines(s.months, [{ k: 'opened', n: 'opened', c: 'var(--s1)', q: 'opened_q' }, { k: 'resolved', n: 'resolved', c: 'var(--s3)', q: 'resolved_q' }]), 6, 'Incidents by <code>opened_at</code> and <code>resolved_at</code>, calendar months.', legend([['Opened', 'var(--s1)'], ['Resolved', 'var(--s3)']]))
+  const mttrChart = () => chart('Mean time to resolve, by priority', hbars(s.mttr.map((m, i) => ({ k: m.priority, v: m.hours, c: PC[i], tip: `${m.priority}: ${m.raw} over ${fmt(m.n)} incidents<code>${esc(m.q)}</code>` })), { fmtv: hrs }), 6, 'Average <code>calendar_duration</code> on resolved or closed incidents, one window for every priority. P1 is dominated by incidents opened in 2015–2018.')
+  const slaTrend = () => chart('SLAs met vs breached, per month', lines(s.months, [{ k: 'met', n: 'met', c: 'var(--s1)' }, { k: 'breached', n: 'breached', c: 'var(--s2)' }]), 6, 'Completed incident resolution SLAs by created month.', legend([['Met', 'var(--s1)'], ['Breached', 'var(--s2)']]))
 
   if (page === 'overview') {
     add(heroCard())
@@ -213,7 +642,7 @@ async function render() {
   if (page === 'operational') {
     add(stat(d.open_incidents, 2) + stat(d.open_p1, 2) + stat(d.active_major, 2) + stat(d.on_hold, 2) + stat(d.open_changes, 2) + stat(d.open_problems, 2))
     add(sect('Where the open incidents are'))
-    await addAll(breakdown('Open incidents by priority', 'incident', 'stateIN{{open_states}}', 'priority', { top: 5 }), breakdown('Open incidents by support group', 'incident', 'stateIN{{open_states}}', 'assignment_group'))
+    await addAll(donutBreakdown('Open incidents by priority', 'incident', 'stateIN{{open_states}}', 'priority', { top: 5, colors: PRIC }), heatmapBreakdown('Open incidents by support group and priority', 'incident', 'stateIN{{open_states}}^assignment_groupISNOTEMPTY', 'assignment_group,priority', PRI, { top: 8 }))
     await addAll(breakdown('Open incidents by state', 'incident', 'stateIN{{open_states}}', 'state', { top: 6 }), breakdown('Open incidents by location', 'incident', 'stateIN{{open_states}}^locationISNOTEMPTY', 'location'))
     add(sect('Requests, changes, problems'))
     await addAll(breakdown('Requests by state', 'sc_request', '', 'state', { top: 6, color: 'var(--s3)' }), breakdown('Problems by state', 'problem', '', 'state', { top: 8, color: 'var(--s3)' }))
@@ -222,11 +651,11 @@ async function render() {
     add(heroCard())
     add(stat(d.sla_breached, 3) + stat(d.approaching_breach, 3, badge(level(d.approaching_breach?.value, 50, 200))) + stat(d.due_72h, 3) + stat(d.sla_p1_attainment, 3))
     add(sect('Trend and where breaches land'))
-    add(slaTrend(), breakdown('Breached SLAs by support group', 'task_sla', 'has_breached=true^task.sys_class_name=incident', 'task.assignment_group', { color: 'var(--s2)' }))
+    await addAll(slaTrend(), heatmapBreakdown('Breached SLAs by support group and priority', 'task_sla', 'has_breached=true^task.sys_class_name=incident^task.assignment_groupISNOTEMPTY', 'task.assignment_group,task.priority', PRI, { span: 6, top: 8 }))
     await addAll(breakdown('SLA stage, all incident SLAs', 'task_sla', 'task.sys_class_name=incident', 'stage', { top: 6 }), breakdown('Breached SLAs by priority', 'task_sla', 'has_breached=true^task.sys_class_name=incident', 'task.priority', { top: 5, color: 'var(--s2)' }))
   }
   if (page === 'backlog') {
-    add(stat(d.backlog, 3, '<div class="sub">in progress, assigned, P2–P4</div>') + stat(d.aged_90, 3, badge(level(d.aged_90?.value, 500, 2000))) + stat(d.oldest_open_p1, 3, '<div class="sub">opened</div>') + stat(d.reassignment_rate, 3, `<div class="sub">${d.reassignment_rate?.detail ?? ''}</div>`))
+    add(stat(d.backlog, 3, '<div class="sub">in progress, assigned, P2–P4</div>') + stat(d.aged_90, 3, badge(level(d.aged_90?.value, 500, 2000))) + stat(d.oldest_open_p1, 3, '<div class="sub">opened</div>') + stat(d.reassignment_rate, 3))
     add(sect('Flow and age'))
     add(flowChart() + agingChart())
     add(sect('Speed'))
@@ -234,9 +663,9 @@ async function render() {
     await addAll(breakdown('Open incidents by assignee', 'incident', 'stateIN{{open_states}}^assigned_toISNOTEMPTY', 'assigned_to', { top: 10 }))
   }
   if (page === 'change') {
-    add(stat(d.change_success_rate, 3, `<div class="sub">${d.change_success_rate?.detail ?? ''} with a close code</div>`) + stat(d.emergency_change_pct, 3, `<div class="sub">${d.emergency_change_pct?.detail ?? ''}</div>`) + stat(d.approvals_pending, 3) + stat(d.approval_time, 3, '<div class="sub">ServiceNow metric</div>'))
+    add(stat(d.change_success_rate, 3, '<div class="sub">of changes with a close code</div>') + stat(d.emergency_change_pct, 3, '<div class="sub">of all changes</div>') + stat(d.approvals_pending, 3) + stat(d.approval_time, 3, '<div class="sub">ServiceNow metric</div>'))
     add(sect('Change mix and outcomes'))
-    await addAll(breakdown('Changes by type', 'change_request', '', 'type', { top: 6 }), breakdown('Changes by close code', 'change_request', '', 'close_code', { top: 6 }))
+    await addAll(donutBreakdown('Changes by type', 'change_request', '', 'type', { top: 4 }), breakdown('Changes by close code', 'change_request', '', 'close_code', { top: 6, span: 8 }))
     await addAll(breakdown('Open changes by priority', 'change_request', 'active=true', 'priority', { top: 5 }), breakdown('Approvals by state', 'sysapproval_approver', '', 'state', { top: 6, color: 'var(--s3)' }))
   }
   if (page === 'security') {
@@ -265,7 +694,7 @@ async function render() {
     await addAll(breakdown('Servers by class', 'cmdb_ci_server', '', 'sys_class_name', { top: 6 }), breakdown('CIs by class', 'cmdb_ci', '', 'sys_class_name', { top: 10 }))
     add(sect('Unified software view', 'Software entitlements from Software Asset Management.'))
     add(stat(d.entitlements_total, 3) + stat(d.entitlements_in_use, 3) + stat(d.entitlements_in_stock, 3) + stat(d.perpetual_licences, 3))
-    await addAll(stackedBreakdown('Software entitlement by state, per product', 'alm_license', '', 'model.display_name,install_status', ['In use', 'In stock'], ['var(--s1)', 'var(--s3)'], { top: 12, note: 'Entitlements grouped by software product model and install status — the house "Software Entitlement by State – License Metric" chart.' }), stackedBreakdown('Entitlements by vendor and acquisition', 'alm_license', '', 'model.manufacturer,acquisition_method', ['Purchase', 'Lease', 'Rental', 'Device as a Service', 'Loan'], ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--muted)'], { top: 8, note: 'The house "Entitlements with active maintenance" heatmap is vendor × acquisition method.' }))
+    await addAll(stackedBreakdown('Software entitlement by state, per product', 'alm_license', '', 'model.display_name,install_status', ['In use', 'In stock'], ['var(--s1)', 'var(--s3)'], { top: 12, note: 'Entitlements grouped by software product model and install status — the house "Software Entitlement by State – License Metric" chart.' }), heatmapBreakdown('Entitlements by vendor and acquisition', 'alm_license', '', 'model.manufacturer,acquisition_method', ['Purchase', 'Lease', 'Rental', 'Device as a Service', 'Loan'], { span: 6, top: 8, note: 'The house "Entitlements with active maintenance" heatmap: vendor × acquisition method, darker is more.' }))
     await addAll(listTable('Active v/s purchase rights — top entitlements by cost', 'alm_license', ['display_name', 'install_status', 'rights', 'cost'], ['Entitlement', 'State', 'Rights', 'Cost'], '-cost', { limit: 10 }))
     add(sect('Security', 'Shown only where Security Operations is installed.'))
     add(stat(d.security_open, 3) + stat(d.vulnerable_items, 3) + stat(d.critical_vulns, 3) + stat(d.alerts_active, 3))
@@ -290,31 +719,6 @@ async function render() {
   document.getElementById('foot').innerHTML = `Every number can show its recipe (the ? on each card) and opens the exact records in ServiceNow. ${off.length ? `Not shown on this instance: ${off.map((r) => `${r.name} (${r.status}: ${r.reason})`).join(' · ')}` : ''}`
   document.querySelectorAll('.def').forEach((b) => b.onclick = (e) => { e.preventDefault(); b.closest('.card').classList.toggle('open') })
   document.querySelectorAll('[data-tip]').forEach((m) => { m.addEventListener('mousemove', (e) => showTip(e, m.dataset.tip)); m.addEventListener('mouseleave', hideTip) })
-}
-// ---- Ask NowOps: the real chatbot (/api/chat), rendered as a drawer beside the dashboard.
-const chat = document.getElementById('chat'), clog = document.getElementById('clog'), cq = document.getElementById('cq')
-const conversationId = crypto.randomUUID()
-const bubble = (cls, html) => { const m = el(`<div class="msg ${cls}">${html}</div>`); clog.appendChild(m); clog.scrollTop = clog.scrollHeight; return m }
-document.getElementById('ask').onclick = async (e) => {
-  e.preventDefault(); chat.hidden = !chat.hidden
-  if (!chat.hidden) { cq.focus(); if (!clog.children.length) { const h = await api('/api/health').catch(() => null); document.getElementById('cmode').textContent = h?.llmMode === 'stub' ? 'stub mode — canned answers, live data' : (h?.model ?? ''); bubble('bot', 'Ask me how to do something from the knowledge base, or how many of something there are on this instance.') } }
-}
-document.getElementById('cclose').onclick = () => { chat.hidden = true }
-document.getElementById('cform').onsubmit = async (e) => {
-  e.preventDefault(); const message = cq.value.trim(); if (!message) return; cq.value = ''
-  bubble('user', esc(message)); const pending = bubble('bot', 'Working…')
-  try {
-    const r = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, conversationId }) })
-    const data = await r.json()
-    if (data.kind === 'metric' && data.metric) {
-      const m = data.metric
-      pending.innerHTML = `<div class="big">${esc(data.answer)}</div><div class="src">${m.table} · ${m.aggregate}${m.field ? `(${m.field})` : ''}<code>${esc(m.filter || '(no filter)')}</code><a href="${m.url}" target="_blank" rel="noopener">Open these records in ServiceNow</a></div>`
-    } else if (data.kind === 'article') {
-      pending.innerHTML = `${esc(data.answer)}<div class="src">Sources: ${(data.sources || []).map((s) => `<a href="${s.url}" target="_blank" rel="noopener" title="${esc(s.title)}">${esc(s.label || s.title)}</a>`).join(' · ')}</div>`
-    } else {
-      pending.innerHTML = `${esc(data.answer ?? data.error ?? 'No response.')}<div class="src">${data.gateReason === 'servicenow_unavailable' ? 'Knowledge base unreachable' : data.gateReason === 'metric_unavailable' ? 'Could not run that query' : 'No knowledge base match'}</div>`
-    }
-  } catch { pending.textContent = 'Request failed.' }
 }
 
 // A mockup should fail loudly: any script error is written into the page, not lost in a console.

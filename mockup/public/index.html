@@ -99,7 +99,7 @@ function validate(confirmed) {
   const n = definitions.filter((d) => d.status === 'available').length
   show($(`<section><h2>5 · Validate definitions</h2><p class="muted">${n} of ${definitions.length} definitions available on this instance${confirmed ? '' : '. Using what the scan suggested for SLA records and custom states; you can confirm them in step 4 at any time'}. Unavailable ones are hidden from the dashboard and listed in the onboarding report with the reason. A tile whose table exists but holds no records shows "no data yet", never a zero.</p>
   <table><tr><th>Definition</th><th>Table</th><th>Filter (resolved)</th><th>Status</th></tr>${rows}</table>
-  <p><button id="b5">Render dashboard live</button> <a href="/app.html" style="margin-left:.8rem;color:var(--accent)">or open the NowOps app view →</a></p></section>`))
+  <p><button id="b5">Render dashboard live</button> <a href="/app.html" style="margin-left:.8rem;color:var(--accent)">or open the NowOps app: Dashboard and Resolve →</a></p></section>`))
   document.getElementById('b5').onclick = dashboard
 }
 

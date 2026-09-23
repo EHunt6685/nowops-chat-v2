@@ -158,6 +158,11 @@ export function makeStubLlm() {
       log('llm.STUB_MODE', { warning: 'No real model. Answers are canned. Do not demo as real.' })
     },
 
+    /** No model in stub mode: callers fall back to their rule-based text. */
+    async draft(_system: string, _user: string): Promise<string | null> {
+      return null
+    },
+
     // Same signature as the live client so makeLlm returns one shape; history is unused here.
     async decide(opts: { question: string; articles: Article[]; history: Turn[] }): Promise<Reply> {
       log('llm.STUB_MODE.decide', { q: opts.question })
@@ -222,6 +227,20 @@ export function makeLlm(cfg: Config) {
             `(key ${mask(cfg.anthropicApiKey)}). The gateway renames model ids — check the exact ` +
             `id with the platform team. Cause: ${e instanceof Error ? e.message : String(e)}`,
         )
+      }
+    },
+
+    /**
+     * Plain completion for Resolve's drafts (steps, close note, article, message). The
+     * caller supplies every fact in `user`; the model only arranges it. Returns null on
+     * any failure so the caller can fall back to its rule-based text instead of erroring.
+     */
+    async draft(system: string, user: string): Promise<string | null> {
+      try {
+        return await complete(system, [{ role: 'user', content: user }], 1200)
+      } catch (e) {
+        log('llm.draft.failed', { detail: e instanceof Error ? e.message : String(e) })
+        return null
       }
     },
 

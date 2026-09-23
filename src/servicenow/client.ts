@@ -11,6 +11,8 @@ export interface SnClient {
   instanceUrl: string
   /** Authenticated GET. Throws ServiceNowUnavailableError for anything but a 2xx JSON body. */
   get<T>(path: string): Promise<T>
+  /** Authenticated PATCH or POST with a JSON body. Same error contract as get. Used only by Resolve's write path. */
+  send<T>(method: 'PATCH' | 'POST', path: string, body: unknown): Promise<T>
 }
 
 export function makeSnClient(cfg: Config, fetchImpl: typeof fetch = fetch): SnClient {
@@ -86,6 +88,28 @@ export function makeSnClient(cfg: Config, fetchImpl: typeof fetch = fetch): SnCl
         const detail = await res.text().catch(() => '')
         throw new ServiceNowUnavailableError(
           `ServiceNow request failed (HTTP ${res.status}). ${detail.slice(0, 200)}`,
+        )
+      }
+      return (await res.json()) as T
+    },
+
+    async send<T>(method: 'PATCH' | 'POST', path: string, body: unknown): Promise<T> {
+      const bearer = await getToken()
+      let res: Response
+      try {
+        res = await fetchImpl(`${cfg.sn.instanceUrl}${path}`, {
+          method,
+          headers: { authorization: `Bearer ${bearer}`, accept: 'application/json', 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        })
+      } catch (e) {
+        throw new ServiceNowUnavailableError(`Cannot reach ${cfg.sn.instanceUrl}.`, e)
+      }
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '')
+        throw new ServiceNowUnavailableError(
+          `ServiceNow ${method} failed (HTTP ${res.status}). ${detail.slice(0, 200)}`,
         )
       }
       return (await res.json()) as T
