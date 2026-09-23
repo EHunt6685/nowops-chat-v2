@@ -8,3 +8,7 @@ node_modules/
 # Build output
 dist/
 
+# Local mockup server logs
+mockup-server.log
+mockup-server.err.log
+

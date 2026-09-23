@@ -118,10 +118,15 @@ async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
 /** Short-lived cache (D-003): live values drift by the minute and a dashboard tolerates that. */
 const CACHE_MS = 3 * 60_000
 const cache = new Map<string, { at: number; value: unknown }>()
+// Identical requests that arrive while one is still computing share that computation (the page
+// prefetches a queue while the user may already be opening it).
+const inflight = new Map<string, Promise<unknown>>()
 const cached = async <T,>(key: string, make: () => Promise<T>): Promise<T> => {
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.value as T
-  const value = await make(); cache.set(key, { at: Date.now(), value }); return value
+  const pending = inflight.get(key); if (pending) return pending as Promise<T>
+  const p = make().then((value) => { cache.set(key, { at: Date.now(), value }); return value }).finally(() => inflight.delete(key))
+  inflight.set(key, p); return p
 }
 
 app.get('/api/dashboard', async (req, res) => {
@@ -310,8 +315,7 @@ app.get('/api/resolve/people', async (_req, res) => {
 })
 
 async function userOf(id: string) {
-  const u = (await rows('sys_user', `sys_id=${id}`, 'sys_id,name,user_name,email', 1))[0]
-  const gm = await rows('sys_user_grmember', `user=${id}`, 'group', 50)
+  const [[u], gm] = await Promise.all([rows('sys_user', `sys_id=${id}`, 'sys_id,name,user_name,email', 1), rows('sys_user_grmember', `user=${id}`, 'group', 50)])
   return { id, name: dv(u, 'name'), user_name: vv(u, 'user_name'), groups: gm.map((g) => ({ id: vv(g, 'group'), name: dv(g, 'group') })) }
 }
 
@@ -319,27 +323,32 @@ app.get('/api/resolve/queue', async (req, res) => {
   const as = String(req.query.as ?? '')
   if (!ID.test(as)) return res.status(400).json({ error: 'pick a person: ?as=<sys_user sys_id>' })
   res.json(await cached(`queue:${as}:${openStates()}`, async () => {
-    const me = await userOf(as)
     const open = openStates()
-    const mine = await rows('incident', `stateIN${open}^assigned_to=${as}`, INC_FIELDS, 100, 'ORDERBYpriority^ORDERBYopened_at')
+    // The person's own tickets do not depend on their groups, so both reads start at once.
+    const [me, mine] = await Promise.all([userOf(as), rows('incident', `stateIN${open}^assigned_to=${as}`, INC_FIELDS, 100, 'ORDERBYpriority^ORDERBYopened_at')])
     const gq = me.groups.length ? await rows('incident', `stateIN${open}^assignment_groupIN${me.groups.map((g) => g.id).join(',')}^assigned_toISEMPTY`, INC_FIELDS, 200, 'ORDERBYpriority^ORDERBYopened_at') : []
     // The dashboard counts unconfirmed custom states as open (D-005, the safe default for a
     // count). A work queue must not hand someone a ticket whose state label says it is finished.
     const all = [...mine, ...gq].filter((r) => !/cancel|closed|resolved/i.test(dv(r, 'state')))
     const ids = all.map((r) => vv(r, 'sys_id'))
-    // SLA and journal state for every candidate, fetched in chunks of 50 ids.
+    // SLA and journal state for every candidate, in chunks of 50 ids. Every chunk is fetched in
+    // parallel; the chunks hold disjoint ids, so merge order does not matter, and within a chunk
+    // the journal comes newest first so the first entry seen per ticket is the latest.
     const sla: Record<string, { breached: boolean; pct: number; breach_time: string; breach_raw: string }> = {}
     const journal: Record<string, { lastComment?: string; lastNote?: string; lastNoteText?: string }> = {}
-    for (const c of chunk(ids, 50)) {
-      for (const s of await rows('task_sla', `active=true^taskIN${c.join(',')}`, 'task,has_breached,business_percentage,breach_time', 200)) {
-        const t = vv(s, 'task'), pct = Number(vv(s, 'business_percentage')) || 0, b = vv(s, 'has_breached') === 'true'
-        const cur = sla[t]; if (!cur || b || pct > cur.pct) sla[t] = { breached: b || !!cur?.breached, pct: Math.max(pct, cur?.pct ?? 0), breach_time: dv(s, 'breach_time'), breach_raw: vv(s, 'breach_time') }
-      }
-      for (const j of await rows('sys_journal_field', `element_idIN${c.join(',')}^elementINcomments,work_notes`, 'element_id,element,value,sys_created_on', 500, 'ORDERBYDESCsys_created_on')) {
-        const t = vv(j, 'element_id'); journal[t] ??= {}
-        if (vv(j, 'element') === 'comments' && !journal[t]!.lastComment) journal[t]!.lastComment = vv(j, 'sys_created_on')
-        if (vv(j, 'element') === 'work_notes' && !journal[t]!.lastNote) { journal[t]!.lastNote = vv(j, 'sys_created_on'); journal[t]!.lastNoteText = vv(j, 'value') }
-      }
+    const chunks = chunk(ids, 50)
+    const [slaRows, jRows] = await Promise.all([
+      Promise.all(chunks.map((c) => rows('task_sla', `active=true^taskIN${c.join(',')}`, 'task,has_breached,business_percentage,breach_time', 200))),
+      Promise.all(chunks.map((c) => rows('sys_journal_field', `element_idIN${c.join(',')}^elementINcomments,work_notes`, 'element_id,element,value,sys_created_on', 500, 'ORDERBYDESCsys_created_on'))),
+    ])
+    for (const s of slaRows.flat()) {
+      const t = vv(s, 'task'), pct = Number(vv(s, 'business_percentage')) || 0, b = vv(s, 'has_breached') === 'true'
+      const cur = sla[t]; if (!cur || b || pct > cur.pct) sla[t] = { breached: b || !!cur?.breached, pct: Math.max(pct, cur?.pct ?? 0), breach_time: dv(s, 'breach_time'), breach_raw: vv(s, 'breach_time') }
+    }
+    for (const j of jRows.flat()) {
+      const t = vv(j, 'element_id'); journal[t] ??= {}
+      if (vv(j, 'element') === 'comments' && !journal[t]!.lastComment) journal[t]!.lastComment = vv(j, 'sys_created_on')
+      if (vv(j, 'element') === 'work_notes' && !journal[t]!.lastNote) { journal[t]!.lastNote = vv(j, 'sys_created_on'); journal[t]!.lastNoteText = vv(j, 'value') }
     }
     const titleCount: Record<string, number> = {}
     for (const r of all) { const t = norm(vv(r, 'short_description')); titleCount[t] = (titleCount[t] ?? 0) + 1 }
@@ -364,7 +373,7 @@ app.get('/api/resolve/queue', async (req, res) => {
     const top: typeof scored = [], seen: Record<string, (typeof scored)[number]> = {}
     for (const t of scored) { const k = norm(t.title); if (seen[k]) { seen[k]!.also.push(t.number); continue } seen[k] = t; if (top.length < 10) top.push(t) }
     // Knowledge match for the top ten only: one text search each.
-    await pool(top, 4, async (t) => {
+    await pool(top, 10, async (t) => {
       const hits = await search.search(t.title).catch(() => [])
       const h = hits.find((a) => overlap(t.title, a.title) >= 2)
       if (h) { t.kb = { number: h.label ?? '', title: h.title, url: h.url }; t.score += 10; t.reasons.push({ rule: 'knowledge', text: `${h.label} "${first(h.title, 60)}" may answer it` }) }
@@ -428,18 +437,22 @@ async function ticketDetail(number: string) {
     const fields: Record<string, string> = {}
     for (const f of INC_FIELDS.split(',')) fields[f] = dv(r, f)
     const raw: Record<string, string> = {}; for (const f of ['state', 'priority', 'assigned_to', 'assignment_group', 'caller_id', 'sys_updated_by', 'reopen_count']) raw[f] = vv(r, f)
-    const journal = (await rows('sys_journal_field', `element_id=${id}^elementINcomments,work_notes`, 'element,value,sys_created_on,sys_created_by', 40, 'ORDERBYsys_created_on'))
-      .map((j) => ({ kind: vv(j, 'element'), text: vv(j, 'value'), at: vv(j, 'sys_created_on'), by: vv(j, 'sys_created_by') }))
-    const slas = (await rows('task_sla', `task=${id}^active=true`, 'sla,has_breached,business_percentage,breach_time,stage', 10))
-      .map((s) => ({ name: dv(s, 'sla'), breached: vv(s, 'has_breached') === 'true', pct: Number(vv(s, 'business_percentage')) || 0, breach_time: dv(s, 'breach_time'), stage: dv(s, 'stage') }))
+    // Everything below depends only on the record just read, so the five reads go out together.
     const simQ = `stateIN6,7^close_notesISNOTEMPTY^sys_id!=${id}^123TEXTQUERY321=${title.replace(/[\^=&]/g, ' ').slice(0, 150)}`
-    const similar = (await rows('incident', simQ, 'sys_id,number,short_description,close_notes,close_code,resolved_by,assignment_group,resolved_at,opened_at,category', 8))
-      .filter((s) => !JUNK_NOTE.test(vv(s, 'close_notes'))).slice(0, 4)
-      .map((s) => ({ number: vv(s, 'number'), title: vv(s, 'short_description'), close_notes: vv(s, 'close_notes'), close_code: dv(s, 'close_code'), resolved_by: dv(s, 'resolved_by'), resolved_by_id: vv(s, 'resolved_by'), group: dv(s, 'assignment_group'), group_id: vv(s, 'assignment_group'), category: vv(s, 'category'), category_label: dv(s, 'category'), resolved_at: vv(s, 'resolved_at'), opened_at: vv(s, 'opened_at'), url: `${cfg.sn.instanceUrl}/incident.do?sys_id=${vv(s, 'sys_id')}` }))
     const sameQ = `active=true^short_description=${title}^sys_id!=${id}`
-    const sameTitle = (await rows('incident', sameQ, 'sys_id,number,caller_id,assignment_group,assigned_to,opened_at,state', 10))
-      .map((s) => ({ number: vv(s, 'number'), caller: dv(s, 'caller_id'), group: dv(s, 'assignment_group'), assigned_to: dv(s, 'assigned_to'), opened_at: vv(s, 'opened_at'), state: dv(s, 'state') }))
-    const kb = (await search.search(title).catch(() => [])).slice(0, 3).map((a) => ({ number: a.label ?? '', title: a.title, url: a.url, excerpt: a.body.slice(0, 220), match: overlap(title, a.title) >= 2 }))
+    const [jRaw, slaRaw, simRaw, sameRaw, kbRaw] = await Promise.all([
+      rows('sys_journal_field', `element_id=${id}^elementINcomments,work_notes`, 'element,value,sys_created_on,sys_created_by', 40, 'ORDERBYsys_created_on'),
+      rows('task_sla', `task=${id}^active=true`, 'sla,has_breached,business_percentage,breach_time,stage', 10),
+      rows('incident', simQ, 'sys_id,number,short_description,close_notes,close_code,resolved_by,assignment_group,resolved_at,opened_at,category', 8),
+      rows('incident', sameQ, 'sys_id,number,caller_id,assignment_group,assigned_to,opened_at,state', 10),
+      search.search(title).catch(() => []),
+    ])
+    const journal = jRaw.map((j) => ({ kind: vv(j, 'element'), text: vv(j, 'value'), at: vv(j, 'sys_created_on'), by: vv(j, 'sys_created_by') }))
+    const slas = slaRaw.map((s) => ({ name: dv(s, 'sla'), breached: vv(s, 'has_breached') === 'true', pct: Number(vv(s, 'business_percentage')) || 0, breach_time: dv(s, 'breach_time'), stage: dv(s, 'stage') }))
+    const similar = simRaw.filter((s) => !JUNK_NOTE.test(vv(s, 'close_notes'))).slice(0, 4)
+      .map((s) => ({ number: vv(s, 'number'), title: vv(s, 'short_description'), close_notes: vv(s, 'close_notes'), close_code: dv(s, 'close_code'), resolved_by: dv(s, 'resolved_by'), resolved_by_id: vv(s, 'resolved_by'), group: dv(s, 'assignment_group'), group_id: vv(s, 'assignment_group'), category: vv(s, 'category'), category_label: dv(s, 'category'), resolved_at: vv(s, 'resolved_at'), opened_at: vv(s, 'opened_at'), url: `${cfg.sn.instanceUrl}/incident.do?sys_id=${vv(s, 'sys_id')}` }))
+    const sameTitle = sameRaw.map((s) => ({ number: vv(s, 'number'), caller: dv(s, 'caller_id'), group: dv(s, 'assignment_group'), assigned_to: dv(s, 'assigned_to'), opened_at: vv(s, 'opened_at'), state: dv(s, 'state') }))
+    const kb = kbRaw.slice(0, 3).map((a) => ({ number: a.label ?? '', title: a.title, url: a.url, excerpt: a.body.slice(0, 220), match: overlap(title, a.title) >= 2 }))
     // Who to bring in: people and groups who actually closed the similar tickets.
     const tally: Record<string, { name: string; kind: 'person' | 'group'; n: number; tickets: string[] }> = {}
     for (const s of similar) for (const [name, kind] of [[s.resolved_by, 'person'], [s.group, 'group']] as const) if (name) { tally[kind + name] ??= { name, kind, n: 0, tickets: [] }; tally[kind + name]!.n++; tally[kind + name]!.tickets.push(s.number) }
@@ -614,4 +627,14 @@ app.post('/api/resolve/write', async (req, res) => {
 })
 app.get('/api/resolve/audit', (_req, res) => res.json({ writes: WRITES, entries: audit }))
 
-app.listen(3100, () => console.log('mockup at http://localhost:3100'))
+// On Windows a second bind to a port that another Node process already serves does not fail: the
+// new process prints its banner and exits with code 0, which reads as "it turned off instantly".
+// Probe the port first so a running copy is named, and treat any listen error as fatal and loud.
+const PORT = Number(process.env.MOCKUP_PORT) || 3100
+fetch(`http://localhost:${PORT}/api/health`, { signal: AbortSignal.timeout(1500) }).then(
+  () => { console.error(`Another NowOps mockup is already serving http://localhost:${PORT}. Use that one, or stop it and start again.`); process.exit(1) },
+  () => {
+    const srv = app.listen(PORT, () => console.log(`mockup at http://localhost:${PORT}`))
+    srv.on('error', (e: Error) => { console.error(`Cannot listen on port ${PORT}: ${e.message}`); process.exit(1) })
+  },
+)
