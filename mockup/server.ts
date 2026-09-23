@@ -34,6 +34,8 @@ const TABLES: Record<string, string[]> = {}
 for (const d of DEFINITIONS) if (d.kind !== 'ratio') TABLES[d.table] = [...new Set([...(TABLES[d.table] ?? []), ...fieldsOf(d)])]
 
 app.post('/api/signin', (req, res) => { state.user = String(req.body.user || 'sdm@ust.com'); res.json({ user: state.user, tenant: 'Acme (demo tenant)' }) })
+// Who is signed in, for the app header. Null until /api/signin has run; the page falls back to its own default.
+app.get('/api/me', (_req, res) => res.json({ user: state.user ?? null, tenant: 'Acme (demo tenant)' }))
 
 app.get('/api/connection', (_req, res) => res.json({
   instance_url: cfg.sn.instanceUrl, client_id: mask(cfg.sn.clientId), credential: 'held in secrets store (prefilled from .env)',
