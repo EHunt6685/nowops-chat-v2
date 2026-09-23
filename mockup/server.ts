@@ -275,7 +275,7 @@ const rows = async (table: string, q: string, fields: string, limit = 100, order
 }
 const chunk = <T,>(a: T[], n: number) => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n))
 const daysSince = (s: string) => s ? Math.max(0, (Date.now() - new Date(s.replace(' ', 'T') + 'Z').getTime()) / 86_400_000) : 0
-const INC_FIELDS = 'sys_id,number,short_description,description,priority,state,assignment_group,assigned_to,caller_id,category,cmdb_ci,opened_at,sys_updated_on,sys_updated_by,reopen_count,close_code,close_notes,hold_reason'
+const INC_FIELDS = 'sys_id,number,short_description,description,priority,impact,urgency,state,assignment_group,assigned_to,caller_id,category,cmdb_ci,opened_at,sys_updated_on,sys_updated_by,reopen_count,close_code,close_notes,hold_reason'
 /** Close notes that teach nothing. Measured on abhrademo4: bulk clean-ups and scripts. */
 const JUNK_NOTE = /demo data|remediation for Memorial|closed via script|data cleanup|not available from (the )?provided information/i
 const FIXED = /work(?:ing|s|ed) (?:fine|now|again|ok)|(?:issue|problem) (?:is |was |has been )?(?:resolved|fixed)|resolved the issue|is resolved|fixed the/i
@@ -379,6 +379,47 @@ app.get('/api/resolve/queue', async (req, res) => {
 })
 
 /** Everything about one ticket, from the instance. Cached briefly; drafts read from this cache. */
+type Fix = { fields: Record<string, string>; value: string; evidence: string }
+type Check = { key: string; label: string; ok: boolean; current: string; fix?: Fix; ask?: string; alt?: { label: string; action: string } }
+const majority = <T,>(xs: T[]): [T, number] | null => { const c = new Map<T, number>(); for (const x of xs) c.set(x, (c.get(x) ?? 0) + 1); const top = [...c].sort((a, b) => b[1] - a[1])[0]; return top ? [top[0], top[1]] : null }
+// A configuration item matters when the fault is about a thing, not an account or a request.
+const CI_CATEGORY = /hardware|network|software|database|server|infrastructure/i
+const CI_WORDS = /\b(laptop|desktop|pc|mac|printer|monitor|phone|wifi|wi-fi|vpn|network|server|database|outlook|teams|application|app|website|portal)\b/i
+async function ticketChecks(r: Rec, journal: { kind: string; text: string }[], similar: { number: string; group: string; group_id: string; category: string; category_label: string }[], who: { name: string; kind: string; n: number }[]): Promise<Check[]> {
+  const caller = vv(r, 'caller_id'), callerName = dv(r, 'caller_id'), first = callerName.split(' ')[0] || 'the caller'
+  const out: Check[] = []
+  out.push({ key: 'caller', label: 'Caller', ok: !!caller, current: callerName, ask: caller ? undefined : 'Find out who reported it' })
+  const desc = vv(r, 'description').trim()
+  out.push({ key: 'description', label: 'What happened', ok: desc.length >= 20, current: desc ? first_(desc, 60) : 'empty', ask: desc.length >= 20 ? undefined : `Ask ${first} what happens, since when, on which device` })
+  // Configuration item, only where one is expected: the CI on the caller's recent tickets, else the hardware assigned to them.
+  const ciExpected = !!vv(r, 'cmdb_ci') || CI_CATEGORY.test(dv(r, 'category') + ' ' + dv(r, 'assignment_group')) || CI_WORDS.test(vv(r, 'short_description') + ' ' + desc)
+  let ciFix: Fix | undefined
+  if (ciExpected && !vv(r, 'cmdb_ci') && caller) {
+    const prev = await rows('incident', `caller_id=${caller}^cmdb_ciISNOTEMPTY^sys_id!=${vv(r, 'sys_id')}`, 'cmdb_ci', 6, 'ORDERBYDESCopened_at').catch(() => [] as Rec[])
+    const m = majority(prev.map((p) => vv(p, 'cmdb_ci')))
+    if (m && m[1] >= 2) ciFix = { fields: { cmdb_ci: m[0] }, value: dv(prev.find((p) => vv(p, 'cmdb_ci') === m[0])!, 'cmdb_ci'), evidence: `on ${m[1]} of ${first}'s last ${prev.length} tickets` }
+    else { const hw = (await rows('alm_hardware', `assigned_to=${caller}^ciISNOTEMPTY`, 'ci', 1).catch(() => [] as Rec[]))[0]; if (hw) ciFix = { fields: { cmdb_ci: vv(hw, 'ci') }, value: dv(hw, 'ci'), evidence: `hardware assigned to ${first}` } }
+  }
+  if (ciExpected) out.push({ key: 'cmdb_ci', label: 'Configuration item', ok: !!vv(r, 'cmdb_ci'), current: dv(r, 'cmdb_ci') || 'empty', fix: ciFix, ask: vv(r, 'cmdb_ci') || ciFix ? undefined : `Ask ${first} which device or service` })
+  // Category: what the resolved look-alikes were filed under.
+  const cat = majority(similar.filter((s) => s.category).map((s) => s.category))
+  const catOk = !!vv(r, 'category') && !(cat && cat[1] >= 2 && cat[1] === similar.filter((s) => s.category).length && cat[0] !== vv(r, 'category'))
+  const catFix = cat && (!vv(r, 'category') || !catOk) ? { fields: { category: cat[0] }, value: similar.find((s) => s.category === cat[0])!.category_label, evidence: `${cat[1]} of ${similar.length} resolved look-alikes` } : undefined
+  out.push({ key: 'category', label: 'Category', ok: catOk, current: dv(r, 'category') || 'empty', fix: catFix })
+  // Priority: ServiceNow sets it from impact and urgency, so a populated value is the agent's call and stays as it is.
+  out.push({ key: 'priority', label: 'Priority', ok: !!vv(r, 'priority'), current: dv(r, 'priority') || 'empty', ask: vv(r, 'priority') ? undefined : 'Set impact and urgency on the record' })
+  // Assignment group: who actually closed the look-alikes, only when the field is empty.
+  const g = who.find((w) => w.kind === 'group'), gid = g ? similar.find((s) => s.group === g.name)?.group_id : undefined
+  out.push({ key: 'assignment_group', label: 'Assignment group', ok: !!vv(r, 'assignment_group'), current: dv(r, 'assignment_group') || 'empty', fix: !vv(r, 'assignment_group') && g && gid ? { fields: { assignment_group: gid }, value: g.name, evidence: `closed ${g.n} similar ticket${g.n === 1 ? '' : 's'}` } : undefined })
+  // Assigned to: the person who closed the look-alikes, or the agent takes it themselves.
+  const p = who.find((w) => w.kind === 'person'), pid = p ? similar.find((s) => s.resolved_by === p.name)?.resolved_by_id : undefined
+  out.push({ key: 'assigned_to', label: 'Assigned to', ok: !!vv(r, 'assigned_to'), current: dv(r, 'assigned_to') || 'nobody', fix: !vv(r, 'assigned_to') && p && pid && ID.test(pid) ? { fields: { assigned_to: pid }, value: p.name, evidence: `closed ${p.n} similar ticket${p.n === 1 ? '' : 's'}` } : undefined, alt: vv(r, 'assigned_to') ? undefined : { label: 'Assign to me', action: 'claim' } })
+  const lastNote = [...journal].reverse().find((j) => j.kind === 'work_notes')
+  if (lastNote && FIXED.test(lastNote.text)) out.push({ key: 'confirm', label: 'Caller confirmation', ok: false, current: 'last work note says it works', ask: `Ask ${first} to confirm it is fixed` })
+  return out
+}
+const first_ = (s: string, n: number) => s.length > n ? s.slice(0, n - 1) + '…' : s
+
 async function ticketDetail(number: string) {
   return cached(`ticket:${number}`, async () => {
     const r = (await rows('incident', `number=${number}`, INC_FIELDS, 1))[0]
@@ -386,15 +427,15 @@ async function ticketDetail(number: string) {
     const id = vv(r, 'sys_id'), title = vv(r, 'short_description')
     const fields: Record<string, string> = {}
     for (const f of INC_FIELDS.split(',')) fields[f] = dv(r, f)
-    const raw: Record<string, string> = {}; for (const f of ['state', 'priority', 'assigned_to', 'assignment_group', 'caller_id', 'sys_updated_by']) raw[f] = vv(r, f)
+    const raw: Record<string, string> = {}; for (const f of ['state', 'priority', 'assigned_to', 'assignment_group', 'caller_id', 'sys_updated_by', 'reopen_count']) raw[f] = vv(r, f)
     const journal = (await rows('sys_journal_field', `element_id=${id}^elementINcomments,work_notes`, 'element,value,sys_created_on,sys_created_by', 40, 'ORDERBYsys_created_on'))
       .map((j) => ({ kind: vv(j, 'element'), text: vv(j, 'value'), at: vv(j, 'sys_created_on'), by: vv(j, 'sys_created_by') }))
     const slas = (await rows('task_sla', `task=${id}^active=true`, 'sla,has_breached,business_percentage,breach_time,stage', 10))
       .map((s) => ({ name: dv(s, 'sla'), breached: vv(s, 'has_breached') === 'true', pct: Number(vv(s, 'business_percentage')) || 0, breach_time: dv(s, 'breach_time'), stage: dv(s, 'stage') }))
     const simQ = `stateIN6,7^close_notesISNOTEMPTY^sys_id!=${id}^123TEXTQUERY321=${title.replace(/[\^=&]/g, ' ').slice(0, 150)}`
-    const similar = (await rows('incident', simQ, 'sys_id,number,short_description,close_notes,close_code,resolved_by,assignment_group,resolved_at,opened_at', 8))
+    const similar = (await rows('incident', simQ, 'sys_id,number,short_description,close_notes,close_code,resolved_by,assignment_group,resolved_at,opened_at,category', 8))
       .filter((s) => !JUNK_NOTE.test(vv(s, 'close_notes'))).slice(0, 4)
-      .map((s) => ({ number: vv(s, 'number'), title: vv(s, 'short_description'), close_notes: vv(s, 'close_notes'), close_code: dv(s, 'close_code'), resolved_by: dv(s, 'resolved_by'), group: dv(s, 'assignment_group'), resolved_at: vv(s, 'resolved_at'), opened_at: vv(s, 'opened_at'), url: `${cfg.sn.instanceUrl}/incident.do?sys_id=${vv(s, 'sys_id')}` }))
+      .map((s) => ({ number: vv(s, 'number'), title: vv(s, 'short_description'), close_notes: vv(s, 'close_notes'), close_code: dv(s, 'close_code'), resolved_by: dv(s, 'resolved_by'), resolved_by_id: vv(s, 'resolved_by'), group: dv(s, 'assignment_group'), group_id: vv(s, 'assignment_group'), category: vv(s, 'category'), category_label: dv(s, 'category'), resolved_at: vv(s, 'resolved_at'), opened_at: vv(s, 'opened_at'), url: `${cfg.sn.instanceUrl}/incident.do?sys_id=${vv(s, 'sys_id')}` }))
     const sameQ = `active=true^short_description=${title}^sys_id!=${id}`
     const sameTitle = (await rows('incident', sameQ, 'sys_id,number,caller_id,assignment_group,assigned_to,opened_at,state', 10))
       .map((s) => ({ number: vv(s, 'number'), caller: dv(s, 'caller_id'), group: dv(s, 'assignment_group'), assigned_to: dv(s, 'assigned_to'), opened_at: vv(s, 'opened_at'), state: dv(s, 'state') }))
@@ -412,7 +453,10 @@ async function ticketDetail(number: string) {
     const lastNote = [...journal].reverse().find((j) => j.kind === 'work_notes')
     if (lastNote && FIXED.test(lastNote.text)) missing.push('Caller confirmation: the last work note says it works, the caller has not said so')
     const readiness = Math.max(1, 10 - missing.length * 2)
-    return { number, sys_id: id, title, fields, raw, journal, slas, similar, sameTitle, kb, who, missing, readiness, url: `${cfg.sn.instanceUrl}/incident.do?sys_id=${id}`,
+    // Ticket check: one line per thing a workable record has. A gap carries a proposed value with its
+    // evidence where the instance can supply one, otherwise the fix is to ask the caller.
+    const checks = await ticketChecks(r, journal, similar, who)
+    return { number, sys_id: id, title, fields, raw, journal, slas, similar, sameTitle, kb, who, missing, readiness, checks, url: `${cfg.sn.instanceUrl}/incident.do?sys_id=${id}`,
       queries: { similar: simQ, sameTitle: sameQ, kb: `kb_knowledge: workflow_state=published^123TEXTQUERY321=${title}` } }
   })
 }
@@ -436,9 +480,14 @@ function stepsByRules(d: Detail) {
   const lastNote = [...d.journal].reverse().find((j) => j.kind === 'work_notes')
   if (lastNote && FIXED.test(lastNote.text)) steps.push({ text: `Ask ${caller} whether it has stayed fixed since ${lastNote.at.slice(0, 10)}. The last work note says it works but nobody confirmed with the caller.`, source: `work note of ${lastNote.at.slice(0, 10)}` })
   if (d.missing.some((m) => m.startsWith('Who reported') || m.startsWith('What happened'))) steps.push({ text: `Ask ${caller} what exactly happens, since when, and which device: the ticket does not say.`, source: 'empty caller or description on the record' })
-  for (const s of d.similar.slice(0, 2)) {
-    const res = section(s.close_notes, 'Resolution') || section(s.close_notes, 'Actions Taken') || s.close_notes
-    steps.push({ text: `Try what closed ${s.number}: ${first(res.replace(/\s+/g, ' '), 200)}`, source: `${s.number}, closed ${s.resolved_at.slice(0, 10)}${s.resolved_by ? ' by ' + s.resolved_by : ''}` })
+  // One step per distinct fix: two look-alikes closed with the same note are one step, citing both.
+  const seenFix = new Map<string, { text: string; source: string }>()
+  for (const s of d.similar) {
+    const res = first((section(s.close_notes, 'Resolution') || section(s.close_notes, 'Actions Taken') || s.close_notes).replace(/\s+/g, ' '), 200)
+    const k = norm(res); const cite = `${s.number}, closed ${s.resolved_at.slice(0, 10)}${s.resolved_by ? ' by ' + s.resolved_by : ''}`
+    if (seenFix.has(k)) { seenFix.get(k)!.source += `; also ${s.number}`; continue }
+    if (seenFix.size >= 2) continue
+    const st = { text: `Try what closed ${s.number}: ${res}`, source: cite }; seenFix.set(k, st); steps.push(st)
   }
   for (const k of d.kb.filter((k) => k.match).slice(0, 1)) steps.push({ text: `Follow ${k.number} "${k.title}".`, source: `${k.number}, published knowledge` })
   if (d.sameTitle.length >= 2) steps.push({ text: `Raise one problem record and link the ${d.sameTitle.length + 1} open tickets with this exact title, so one fix closes them all.`, source: `${d.sameTitle.length} other open incidents with the same short description` })
@@ -453,7 +502,7 @@ function facts(d: Detail) {
     `Description: ${d.fields.description || '(empty)'}`, `Journal:\n${d.journal.map((j) => `[${j.at}] ${j.kind} by ${j.by}: ${first(j.text.replace(/\s+/g, ' '), 300)}`).join('\n') || '(none)'}`,
     `Similar resolved tickets:\n${d.similar.map((s) => `${s.number} (${s.resolved_at.slice(0, 10)}, ${s.resolved_by || s.group}): ${first(s.close_notes.replace(/\s+/g, ' '), 500)}`).join('\n') || '(none)'}`,
     `Knowledge articles:\n${d.kb.map((k) => `${k.number} "${k.title}": ${k.excerpt}`).join('\n') || '(none)'}`,
-    `Open tickets with the same title: ${d.sameTitle.map((s) => s.number).join(', ') || 'none'}`, `Missing on the record: ${d.missing.join('; ') || 'nothing'}`].join('\n\n')
+    `Open tickets with the same title: ${d.sameTitle.map((s) => s.number).join(', ') || 'none'}`, `Ticket check, open lines: ${d.checks.filter((c) => !c.ok).map((c) => `${c.label} is ${c.current}${c.fix ? ` (proposed: ${c.fix.value})` : ''}`).join('; ') || 'none, the record is complete'}`].join('\n\n')
 }
 const audit: { at: string; who: string; what: string; record: string; evidence: string; dryRun?: boolean }[] = []
 const logAudit = (who: string, what: string, record: string, evidence: string, dryRun?: boolean) => { audit.unshift({ at: new Date().toISOString(), who, what, record, evidence, dryRun }); if (audit.length > 200) audit.pop() }
@@ -470,6 +519,19 @@ app.post('/api/resolve/steps/:number', async (req, res) => {
   const raw = await model('suggested steps', d, STEPS_SYSTEM, facts(d))
   if (raw) { try { const j = JSON.parse(raw.replace(/```json|```/g, '').trim()); if (Array.isArray(j.steps) && j.steps.length) return res.json({ source: 'model', steps: j.steps.slice(0, 7) }) } catch { /* fall through to rules */ } }
   res.json({ source: 'rules', steps: stepsByRules(d) })
+})
+
+// "Where this stands": two sentences, model only, and only when there is more to read than fits on
+// screen. A one-line ticket gets nothing; the description is already in view.
+const BRIEF_SYSTEM = `You brief an IT service desk agent who is about to work a ticket. Use ONLY the supplied facts. Write at most two plain sentences: what is wrong, what has been done so far, and what is blocking or what happens next. Every claim must be traceable to a supplied field, journal entry or SLA. Do not restate the ticket number, state or priority. Do not say more review is needed. If the facts do not support a sentence, leave it out. Plain text.`
+app.post('/api/resolve/brief/:number', async (req, res) => {
+  const d = await ticketDetail(String(req.params.number).toUpperCase()); if (!d) return res.status(404).json({ error: 'not found' })
+  const enough = (d.fields.description || '').length > 300 || d.journal.length >= 3 || Number(d.raw.reopen_count) > 0
+  if (!enough) return res.json({ text: null, reason: 'short ticket, the record speaks for itself' })
+  if (cfg.llmMode === 'stub') return res.json({ text: null, reason: 'model off' })
+  const slaLine = d.slas.map((s) => `${s.name}: ${s.breached ? 'breached' : Math.round(s.pct) + '% used'}`).join('; ') || 'none'
+  const out = await model('brief', d, BRIEF_SYSTEM, `${facts(d)}\n\nSLAs: ${slaLine}\nReopened: ${d.raw.reopen_count || 0} times`)
+  res.json({ text: out ? out.trim().split(/\n+/).slice(0, 2).join(' ') : null, reason: out ? undefined : 'model gave no answer' })
 })
 
 app.post('/api/resolve/draft/:number', async (req, res) => {
@@ -499,9 +561,12 @@ app.post('/api/resolve/draft/:number', async (req, res) => {
       html = `<h4>Symptom</h4>${esc(d.fields.description || d.title)}\n<h4>Cause</h4><mark class="inf">${esc(first((sim && section(sim.close_notes, 'Root Cause')) || 'To be confirmed from the resolution.', 240))}</mark>\n<h4>Fix</h4><mark class="inf">${esc(first(fix.replace(/\s+/g, ' ') || 'To be written once the ticket is resolved.', 400))}</mark>\n<h4>Prevention</h4><mark class="inf">To be added by the reviewer.</mark>${d.kb[0]?.match ? `\n\nUPDATE_INSTEAD: ${d.kb[0].number}` : ''}`
     }
   } else if (kind === 'message') {
-    const asks = d.missing.filter((x) => !x.startsWith('Nothing from')).map((x) => x.split(':')[0]!.toLowerCase())
-    const m = await model('message to caller', d, DRAFT_SYSTEM, `${facts(d)}\n\nWrite a short, friendly comment to ${caller} from the agent. If the record says it may already be fixed, ask them to confirm. Otherwise ask only for the missing items: ${asks.join(', ') || 'a quick confirmation'}. Under 80 words. Plain text, no markup.`)
-    html = m ? esc(m) : `Hi ${esc(caller.split(' ')[0]!)}, I am picking up your ticket "${esc(d.title)}"${d.fields.opened_at ? ` from ${d.fields.opened_at.slice(0, 10)}` : ''}. ${d.missing.some((x) => x.startsWith('Caller confirmation')) ? 'The notes suggest it was fixed. Can you confirm it is still working? If yes, I will close the ticket.' : asks.length ? `To move it forward I need: ${asks.join('; ')}.` : 'Could you confirm it is still happening?'} Thanks.`
+    // Only what the caller can answer, taken from Ticket check: an open line with no proposed value.
+    const gaps = d.checks.filter((c) => !c.ok && !c.fix && c.ask && ['description', 'cmdb_ci', 'caller'].includes(c.key))
+    const asks = gaps.map((c) => c.ask!.replace(/^Ask \S+ /, ''))
+    const confirm = d.checks.some((c) => c.key === 'confirm' && !c.ok)
+    const m = await model('message to caller', d, DRAFT_SYSTEM, `${facts(d)}\n\nWrite a short, friendly comment to ${caller} from the agent. ${confirm ? 'The last work note says it works: ask them to confirm it is fixed, and say the ticket closes on their yes.' : asks.length ? `Ask only for: ${asks.join('; ')}.` : 'Ask them to confirm it is still happening.'} The comments in the journal are the caller's own replies: never ask for anything they have already given there, and acknowledge what they did give. Under 80 words. Plain text, no markup.`)
+    html = m ? esc(m) : `Hi ${esc(caller.split(' ')[0]!)}, I am picking up your ticket "${esc(d.title)}"${d.fields.opened_at ? ` from ${d.fields.opened_at.slice(0, 10)}` : ''}. ${confirm ? 'The notes suggest it was fixed. Can you confirm it is still working? If yes, I will close the ticket.' : asks.length ? `To move it forward I need: ${asks.join('; ')}.` : 'Could you confirm it is still happening?'} Thanks.`
   } else if (kind === 'problem') {
     html = `${esc(d.title)}\n\n${d.sameTitle.length + 1} open incidents share this exact title: ${[d.number, ...d.sameTitle.map((s) => s.number)].join(', ')}.${sim ? ` ${d.similar.length} earlier one${d.similar.length > 1 ? 's were' : ' was'} closed (${d.similar.map((s) => s.number).join(', ')}); the recorded resolution on ${sim.number} was: ${esc(first((section(sim.close_notes, 'Resolution') || sim.close_notes).replace(/\s+/g, ' '), 300))}` : ''}`
     title = `Recurring: ${d.title}`
@@ -529,6 +594,13 @@ app.post('/api/resolve/write', async (req, res) => {
     case 'resolve': body = { state: '6', close_code: text(payload.close_code || 'Solved (Permanently)'), close_notes: text(payload.close_notes), work_notes: 'Resolved via NowOps.' }; what = 'Resolved'; break
     case 'kb_draft': table = 'kb_knowledge'; method = 'POST'; path = '/api/now/table/kb_knowledge'; body = { short_description: text(payload.title || d.title), text: text(payload.text), workflow_state: 'draft', description: `Drafted by NowOps from ${d.number}. Review before publishing.` }; what = 'Created Draft knowledge article'; break
     case 'problem': table = 'problem'; method = 'POST'; path = '/api/now/table/problem'; body = { short_description: text(payload.title || d.title), description: text(payload.text), first_reported_by_task: d.sys_id }; what = 'Raised problem record'; break
+    case 'fields': {
+      // Ticket check fixes: only these fields, reference fields must be sys_ids, choice fields short values.
+      const allowed: Record<string, RegExp> = { cmdb_ci: ID, assignment_group: ID, assigned_to: ID, category: /^[\w .\-/]{1,40}$/ }
+      const f = (payload.fields ?? {}) as Record<string, unknown>, labels: string[] = []
+      for (const [k, v] of Object.entries(f)) { if (!(k in allowed)) return res.status(400).json({ error: `field ${k} not allowed` }); if (!allowed[k]!.test(String(v))) return res.status(400).json({ error: `bad value for ${k}` }); body[k] = String(v); labels.push(k.replace('_', ' ')) }
+      if (!labels.length) return res.status(400).json({ error: 'no fields' })
+      body.work_notes = `Record completed via NowOps: ${labels.join(', ')}.`; what = `Completed ${labels.join(', ')}`; break }
     default: return res.status(400).json({ error: 'unknown action' })
   }
   const evidence = `${method} ${table} · ${Object.keys(body).join(', ')}`

@@ -181,6 +181,22 @@ main{max-width:1440px;margin:0 auto;padding:1.3rem 1.6rem 3rem;transition:paddin
 .steps li{display:grid;grid-template-columns:1.4rem 1fr;gap:.6rem;padding:.6rem 0;border-top:1px solid var(--grid);align-items:start;font-size:.92rem}.steps li:first-child{border:0}
 .steps input{margin:.2rem 0 0;width:1.05rem;height:1.05rem;accent-color:var(--ai)}
 .steps li.done span.txt{color:var(--muted);text-decoration:line-through}.steps .txt{display:block}
+.one,#ticket .rtop{max-width:1080px}#tk-sub{max-width:none}
+.rtop .pill{border:0;cursor:pointer;font:inherit;font-size:.74rem;font-weight:600;vertical-align:middle}.rtop .pill:hover{filter:brightness(.95)}
+.brief{background:var(--page);border-radius:10px;padding:.7rem .9rem;margin-bottom:.9rem}.brief p{margin:.3rem 0 0;font-size:.92rem;line-height:1.5}
+.agents .btn.gap{background:var(--ai);color:#fff}.agents .btn.gap:hover{background:#6E176D}.draft header .pill{font-size:.72rem}
+/* Ticket check: one line per thing a workable record has. Gaps carry a proposed value and one button. */
+.chk-head{display:flex;align-items:center;gap:.6rem;margin-bottom:.4rem}.chk-head .pill{margin-left:auto}
+.checks{list-style:none;margin:0;padding:0;font-size:.84rem}
+.checks li{display:grid;grid-template-columns:1rem 1fr;gap:.55rem;padding:.4rem 0;align-items:start}
+.checks li::before{content:"";width:.8rem;height:.8rem;border-radius:50%;margin-top:.22rem;border:2px solid var(--axis);box-sizing:border-box}
+.checks li.ok::before{border-color:var(--good);background:var(--good) center/70% no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.2 2.2L9.8 3.6' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
+.checks li.gap::before{border-color:var(--warn)}
+.checks li.ok{color:var(--ink-2)}.checks li.ok b{font-weight:500;color:var(--ink)}
+.checks .lbl{display:flex;gap:.4rem;flex-wrap:wrap;align-items:baseline}.checks .lbl b{font-weight:600}
+.checks .fix{display:grid;grid-template-columns:1fr auto;gap:.05rem .6rem;align-items:center;margin-top:.25rem}
+.checks .fix .val{color:var(--ai-ink);font-weight:600}.checks .fix .why{color:var(--muted);font-size:.76rem;grid-column:1}
+.checks .fix .btn,.checks .fix .acts{grid-column:2;grid-row:1/3;align-self:center}.checks .fix .acts{display:flex;gap:.35rem}
 .readiness{display:flex;gap:.9rem;align-items:center}
 .meter{flex:none;width:64px;height:64px;border-radius:50%;background:conic-gradient(var(--mc) 0 var(--p),var(--grid) 0);display:grid;place-items:center}
 .meter b{width:50px;height:50px;border-radius:50%;background:var(--surface);display:grid;place-items:center;font-size:1rem}
@@ -243,13 +259,14 @@ mark.rec{background:var(--teal-bg);color:var(--teal-2);padding:0 .1rem}
   <div class="rsub" id="rsub"><a href="#resolve" data-v="queue">Your queue</a><a href="#resolve/audit" data-v="audit">Audit trail<span class="k" id="kaud" style="margin-left:.35rem;color:var(--muted);font-size:.74rem"></span></a><span class="muted" id="rmode" style="margin-left:auto;font-size:.76rem"></span></div>
   <div id="queue"><div class="rtop"><div><h1 id="q-title">Your queue</h1><p id="q-lede"></p></div></div><div id="q-body"></div></div>
   <div id="ticket" hidden>
-    <div class="rtop"><div><a class="back" href="#resolve">Your queue</a><h1 id="tk-title" style="font-size:1.3rem"></h1><p id="tk-sub"></p></div>
-      <div class="r"><button class="btn" onclick="confirmAction('claim')">Claim</button><button class="btn" onclick="confirmAction('hold')">Put on hold</button><button class="btn p" onclick="confirmAction('resolve')">Resolve…</button></div></div>
-    <div class="ws">
+    <div class="rtop"><div><h1 id="tk-title" style="font-size:1.3rem"></h1><p id="tk-sub"></p></div>
+      <div class="r"><button class="btn" onclick="openChat();$('#cq').focus()">Ask about this ticket</button><button class="btn" onclick="confirmAction('claim')">Claim</button><button class="btn" onclick="confirmAction('hold')">Put on hold</button><button class="btn p" onclick="confirmAction('resolve')">Resolve…</button></div></div>
+    <div class="one">
       <div><div class="card">
         <div class="facts" id="facts"></div>
         <div class="desc" id="desc"></div>
-        <div class="agents"><span class="ai-mark">Agents</span><button class="btn" onclick="showDraft('close')">Close note</button><button class="btn" onclick="showDraft('kb')">Knowledge article</button><button class="btn" onclick="showDraft('message')">Message to caller</button><button class="btn" id="prb-btn" onclick="showDraft('problem')" hidden>Problem record</button></div>
+        <div class="brief" id="brief" hidden><span class="ai-mark">Where this stands</span><p id="brief-t"></p></div>
+        <div class="agents"><span class="ai-mark">Agents</span><button class="btn" id="chk-btn" onclick="showChecks()">Ticket check</button><button class="btn" onclick="showDraft('close')">Close note</button><button class="btn" onclick="showDraft('kb')">Knowledge article</button><button class="btn" onclick="showDraft('message')">Message to caller</button><button class="btn" id="prb-btn" onclick="showDraft('problem')" hidden>Problem record</button></div>
         <div id="draft"></div>
         <div class="ttabs"><button class="on" data-t="steps">Suggested steps</button><button data-t="similar">Fixed before</button><button data-t="who">Who to bring in</button><button data-t="log">Timeline</button></div>
         <div class="tabp on" id="t-steps">
@@ -263,11 +280,6 @@ mark.rec{background:var(--teal-bg);color:var(--teal-2);padding:0 .1rem}
           <div style="display:flex;gap:.5rem;margin-top:.5rem"><button class="btn sm" onclick="addNote('work_note')">Work note</button><button class="btn sm" onclick="addNote('comment')">Comment to caller</button></div></div>
         </div>
       </div></div>
-      <div class="card health">
-        <div class="row"><div class="meter" id="meter"><b id="score"></b></div><div><span class="k" id="ready-t">Ready to work?</span><span class="ai-mark" id="miss-t"></span><ul class="missing" id="missing"></ul></div></div>
-        <div class="row"><div><span class="k">SLAs</span><div id="slas"></div></div></div>
-        <div class="row"><div><span class="k" id="same-k">Same title, open</span><ul class="sim compact" id="same"></ul></div></div>
-      </div>
     </div>
   </div>
   <div id="raudit" hidden>
@@ -352,7 +364,11 @@ async function showTicket(n){
   try{cur=await api('GET','/api/resolve/ticket/'+n)}catch(e){$('#tk-sub').textContent=e.message;return}
   const f=cur.fields;
   $('#tk-title').textContent=cur.title;
-  $('#tk-sub').innerHTML=`${n} · opened ${when(f.opened_at)} · <a href="${cur.url}" target="_blank" rel="noopener" style="color:var(--teal)">Open in ServiceNow</a>`;
+  // Header signals: one pill each, the detail lives in the assistant.
+  const breached=cur.slas.filter(s=>s.breached).length, warm=cur.slas.filter(s=>!s.breached&&s.pct>80).length;
+  const sig=(breached?`<button class="pill crit" onclick="askSla()">${breached===1?'SLA breached':breached+' SLAs breached'}</button>`:warm?`<button class="pill warn" onclick="askSla()">SLA at ${Math.round(Math.max(...cur.slas.map(s=>s.pct)))}%</button>`:'')+(cur.sameTitle.length?`<button class="pill" onclick="sameCount()">${cur.sameTitle.length} more with this title</button>`:'');
+  $('#tk-sub').innerHTML=`${n} · ${esc(f.caller_id||'no caller')} · ${esc(f.assignment_group||'no group')} · opened ${when(f.opened_at)} · <a href="${cur.url}" target="_blank" rel="noopener" style="color:var(--teal)">Open in ServiceNow</a>${sig?' &nbsp;'+sig:''}`;
+  $('#brief').hidden=true;api('POST','/api/resolve/brief/'+n).then(b=>{if(ticket===n&&b.text){$('#brief-t').textContent=b.text;$('#brief').hidden=false}}).catch(()=>{});
   const miss=v=>v?esc(v):'<span class="muted">not recorded</span>';
   $('#facts').innerHTML=[['State',f.state],['Priority',f.priority],['Group',f.assignment_group],['Assigned to',f.assigned_to||''],['Caller',f.caller_id||''],['Category',f.category||''],['Configuration item',f.cmdb_ci||'']].map(([k,v])=>`<div><span>${k}</span><b>${miss(v)}</b></div>`).join('');
   $('#desc').innerHTML=`<span>What ${esc(f.caller_id?f.caller_id.split(' ')[0]:'the caller')} wrote</span>${f.description?esc(f.description):'<span class="muted">Nothing. Only the title was filled in.</span>'}`;
@@ -360,17 +376,10 @@ async function showTicket(n){
   const kbStrong=cur.kb.filter(k=>k.match),kbWeak=cur.kb.filter(k=>!k.match);
   const kbLine=k=>`<a href="${k.url}" target="_blank" rel="noopener" style="color:var(--teal)">${esc(k.number)}</a> ${esc(k.title)}`;
   $('#sim').innerHTML=cur.similar.map(s=>`<li><a class="num" href="${s.url}" target="_blank" rel="noopener">${s.number}</a> · ${esc(s.title)}<div class="out">Closed ${day(s.resolved_at)}${s.resolved_by?' by '+esc(s.resolved_by):''}${s.close_code?' · '+esc(s.close_code):''}\n${esc(s.close_notes.replace(/\s+/g,' ').slice(0,280))}${s.close_notes.length>280?'…':''}</div></li>`).join('')+(cur.kb.length?`<li><span class="num">Knowledge</span><div class="out">${kbStrong.map(kbLine).join('<br>')||'<span class="muted">No article matches this title.</span>'}${kbWeak.length?`<div id="kb-weak" hidden>${kbWeak.map(kbLine).join('<br>')}</div><button class="more" onclick="$('#kb-weak').hidden=false;this.remove()">Show ${kbWeak.length} weaker match${kbWeak.length===1?'':'es'}</button>`:''}</div></li>`:'');
-  $('#who-list').innerHTML=(cur.who.length?cur.who.map(w=>`<li><span class="avatar" style="background:${w.kind==='person'?'var(--teal)':'#6b7a90'}">${esc(w.name.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase())}</span><div><b>${esc(w.name)}</b> <span class="muted">${w.kind}</span>${ev(`Closed ${w.n} similar: ${w.tickets.join(', ')}`)}</div><button class="btn sm" onclick="confirmAction('reassign',{${w.kind}:${JSON.stringify(w.name)}})">Hand over</button></li>`).join(''):'<li class="muted">Nobody on this instance has closed a similar ticket with a usable note.</li>')+(f.assigned_to?`<li><span class="avatar" style="background:#6b7a90">${esc(f.assigned_to.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase())}</span><div><b>${esc(f.assigned_to)}</b> <span class="muted">current owner</span></div><button class="btn sm" disabled>Current</button></li>`:'');
+  $('#who-list').innerHTML=(cur.who.length?cur.who.map(w=>`<li><span class="avatar" style="background:${w.kind==='person'?'var(--teal)':'#6b7a90'}">${esc(w.name.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase())}</span><div><b>${esc(w.name)}</b> <span class="muted">${w.kind}</span>${ev(`Closed ${w.n} similar: ${w.tickets.join(', ')}`)}</div><button class="btn sm" onclick="confirmAction('reassign',{${w.kind}:${JSON.stringify(w.name).replace(/"/g,'&quot;')}})">Hand over</button></li>`).join(''):'<li class="muted">Nobody on this instance has closed a similar ticket with a usable note.</li>')+(f.assigned_to?`<li><span class="avatar" style="background:#6b7a90">${esc(f.assigned_to.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase())}</span><div><b>${esc(f.assigned_to)}</b> <span class="muted">current owner</span></div><button class="btn sm" disabled>Current</button></li>`:'');
   $('#tl').innerHTML=`<li><time>${when(f.opened_at)}</time><div>Opened${f.caller_id?' by '+esc(f.caller_id):''}. ${esc(f.description||'(no description)')}<div class="by">${esc(f.assignment_group)}</div></div></li>`+cur.journal.map(j=>`<li><time>${when(j.at)}</time><div>${esc(j.text)}<div class="by">${esc(j.by)} · ${j.kind==='comments'?'comment, caller sees it':'work note'}</div></div></li>`).join('');
-  $('#slas').innerHTML=cur.slas.length?cur.slas.map(s=>`<div class="sla" title="${esc(s.stage)}"><span>${esc(s.name.replace(/\s*\(.*\)/,''))}</span><span class="pill ${s.breached?'crit':s.pct>80?'warn':'good'}">${s.breached?'breached'+(s.breach_time?' '+esc(day(s.breach_time)):''):Math.round(s.pct)+'%'}</span></div>`).join(''):'<div class="muted" style="font-size:.84rem">No active SLA.</div>';
-  $('#same-k').textContent=cur.sameTitle.length?`${cur.sameTitle.length} more open with this title`:'Same title, open';
-  $('#same').innerHTML=cur.sameTitle.length?cur.sameTitle.slice(0,4).map(s=>`<li><a class="num" href="#resolve/${s.number}">${s.number}</a> <span class="muted" style="font-size:.78rem">${esc(s.caller||'no caller')} · ${day(s.opened_at)}</span></li>`).join('')+(cur.sameTitle.length>4?`<li class="muted" style="font-size:.78rem">and ${cur.sameTitle.length-4} more</li>`:''):'<li class="muted" style="font-size:.84rem">None, this title is unique.</li>';
   $('#prb-btn').hidden=cur.sameTitle.length<2;
-  const isOpen=!['6','7','8'].includes(cur.raw.state);
-  $('#ready-t').textContent=isOpen?'Ready to work?':'Already '+f.state.toLowerCase();
-  $('#meter').style.setProperty('--p',cur.readiness*10+'%');$('#meter').style.setProperty('--mc',cur.readiness>=7?'var(--good)':cur.readiness>=4?'var(--warn)':'var(--crit)');$('#score').innerHTML=`${cur.readiness}<small style="font-size:.6rem;color:var(--muted)">/10</small>`;
-  $('#miss-t').textContent=cur.missing.length?`${cur.missing.length} thing${cur.missing.length===1?'':'s'} missing`:'Record is complete';
-  $('#missing').innerHTML=cur.missing.map(m=>`<li>${esc(m)}</li>`).join('');
+  renderChecks();
   document.querySelector('.ttabs button').click();$('#draft').innerHTML='';
   // steps: one call, cached per ticket for the page's life
   $('#steps').innerHTML='';$('#steps-src').textContent='Working out the steps…';
@@ -379,8 +388,23 @@ async function showTicket(n){
   const srcBits=[cur.similar.length?`${cur.similar.length} resolved ticket${cur.similar.length===1?'':'s'}`:'',cur.kb.filter(k=>k.match).length?`${cur.kb.filter(k=>k.match).length} article${cur.kb.filter(k=>k.match).length===1?'':'s'}`:'','the journal'].filter(Boolean).join(' and ');
   $('#steps-src').textContent=st.source==='model'?`Suggested from ${srcBits}. Tick a step to log it as a work note.`:st.source==='rules'?`Built by rules from ${srcBits}. Tick a step to log it as a work note.`:'Could not produce steps: '+st.error;
   $('#steps').innerHTML=st.steps.map(s=>`<li><input type="checkbox" title="Logs this step as a work note" onchange="tick(this,${JSON.stringify(s.text).replace(/"/g,'&quot;')})"><div title="${esc(s.source)}"><span class="txt">${esc(s.text)}</span></div></li>`).join('');
-  if(fresh){openChat();say(`You opened <b>${n}</b>: ${esc(cur.title)}. ${cur.missing.length?`The record is missing ${cur.missing.length} thing${cur.missing.length===1?'':'s'}, listed on the right.`:'The record is complete.'} ${cur.similar.length?`${cur.similar.length} resolved ticket${cur.similar.length===1?'':'s'} read the same way; the steps borrow from ${cur.similar[0].number}.`:'No resolved ticket on this instance matches.'}<div class="act"><button class="btn sm" onclick="showDraft('message')">Draft a message to the caller</button><button class="btn sm" onclick="showDraft('close')">Draft close note</button></div>`)}
 }
+/* Ticket check is an agent in the rail. The button carries the count; the checklist opens where drafts open.
+   Complete lines are quiet; a gap shows the proposed value, why, and one button. */
+function renderChecks(){const gaps=(cur.checks||[]).filter(c=>!c.ok);const b=$('#chk-btn');
+  b.textContent=gaps.length?`Ticket check · ${gaps.length} to fix`:`Ticket check · ${(cur.checks||[]).length} of ${(cur.checks||[]).length} in place`;b.classList.toggle('gap',gaps.length>0);
+  if($('#draft .checks'))showChecks()}
+function showChecks(){const cs=cur.checks||[];const gaps=cs.filter(c=>!c.ok);const fixes=gaps.filter(c=>c.fix);
+  const line=(c,i)=>c.ok?`<li class="ok"><span class="lbl">${esc(c.label)} <b>${esc(c.current)}</b></span></li>`
+    :`<li class="gap"><div><span class="lbl"><b>${esc(c.label)}</b> <span class="muted">${esc(c.current)}</span></span>
+      ${c.fix?`<div class="fix"><span class="val">${esc(c.fix.value)}</span><span class="why">${esc(c.fix.evidence)}</span><span class="acts"><button class="btn sm" onclick="applyFix(${i})">Apply</button>${c.alt?`<button class="btn sm" onclick="confirmAction('${c.alt.action}')">${esc(c.alt.label)}</button>`:''}</span></div>`
+      :c.ask?`<div class="fix"><span class="why">${esc(c.ask)}</span><button class="btn sm" onclick="showDraft('message')">Ask caller</button></div>`
+      :c.alt?`<div class="fix"><span class="why">Nobody has closed a look-alike, so there is no one to propose.</span><button class="btn sm" onclick="confirmAction('${c.alt.action}')">${esc(c.alt.label)}</button></div>`:''}</div></li>`;
+  $('#draft').innerHTML=`<div class="draft"><header><span class="ai-mark">Ticket check</span><span class="pill ${gaps.length?'warn':'good'}">${gaps.length?gaps.length+' to fix':'All in place'}</span><span class="muted" style="font-size:.78rem">${gaps.length?'Green lines are on the record. Open lines show a proposed value or what to ask.':'Everything a workable ticket needs is on the record. Nothing to fix.'}</span><div class="r">${fixes.length>1?`<button class="btn sm p" onclick="applyFix()">Fix all ${fixes.length}</button>`:''}<button class="btn sm" onclick="$('#draft').innerHTML=''">Close</button></div></header><div class="body"><ul class="checks">${cs.map(line).join('')}</ul></div></div>`}
+function askSla(){openChat();say('What SLAs are on this ticket?',true);if(!cur)return say('Open a ticket first.');say(cur.slas.length?cur.slas.map(s=>`<b>${esc(s.name)}</b>: ${s.breached?'breached'+(s.breach_time?' on '+esc(day(s.breach_time)):''):Math.round(s.pct)+'% of the time used, breaches '+esc(s.breach_time)}, stage ${esc(s.stage)}`).join('<br>'):'No active SLA on this ticket.')}
+function applyFix(i){const cs=(cur.checks||[]).filter(c=>!c.ok&&c.fix);const list=i==null?cs:[cur.checks[i]];const fields={};const rows=[];
+  for(const c of list){Object.assign(fields,c.fix.fields);rows.push([c.label,c.current,c.fix.value,c.fix.evidence])}
+  confirmAction('fields',{fields,rows})}
 document.querySelectorAll('.ttabs button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.ttabs button').forEach(x=>x.classList.toggle('on',x===b));document.querySelectorAll('.tabp').forEach(p=>p.classList.toggle('on',p.id==='t-'+b.dataset.t))});
 
 /* ---- writes: every one goes through /api/resolve/write and shows what happened */
@@ -399,27 +423,30 @@ async function showDraft(kind){const d=$('#draft');d.innerHTML='<div class="draf
   const src=r.source==='rules'?'by rules':'by the model';
   let code='';const html=r.html.replace(/\n?CLOSE_CODE:\s*(.+)$/m,(m,c)=>{code=c.trim();return ''}).replace(/\n?UPDATE_INSTEAD:\s*(.+)$/m,(m,k)=>`\n<div class="ev">Suggests updating <b>${esc(k.trim())}</b> instead of creating a new article.</div>`);
   const hdr={close:'Close note, drafted '+src,kb:'Knowledge article, drafted '+src+'. Saved as Draft for review.',message:'Message to the caller, drafted '+src,problem:'Problem record, drafted '+src}[kind];
-  const acts={close:`<button class="btn sm p" onclick="confirmAction('resolve',{close_code:${JSON.stringify(code)}})">Use and resolve…</button>`,kb:`<button class="btn sm p" onclick="confirmAction('kb_draft')">Create as Draft in ServiceNow…</button>`,message:`<button class="btn sm p" onclick="confirmAction('comment_hold')">Post as comment and hold…</button>`,problem:`<button class="btn sm p" onclick="confirmAction('problem')">Raise problem record…</button>`}[kind];
+  const acts={close:`<button class="btn sm p" onclick="confirmAction('resolve',{close_code:${JSON.stringify(code).replace(/"/g,'&quot;')}})">Use and resolve…</button>`,kb:`<button class="btn sm p" onclick="confirmAction('kb_draft')">Create as Draft in ServiceNow…</button>`,message:`<button class="btn sm p" onclick="confirmAction('comment_hold')">Post as comment and hold…</button>`,problem:`<button class="btn sm p" onclick="confirmAction('problem')">Raise problem record…</button>`}[kind];
   window._draft={kind,html,text:html.replace(/<h4>(.*?)<\/h4>/g,'\n$1:\n').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').trim(),code,title:r.title};
   d.innerHTML=`<div class="draft"><header><span class="ai-mark">${hdr}</span><div class="r">${acts}<button class="btn sm" onclick="$('#draft').innerHTML=''">Discard</button></div></header><div class="body">${r.title&&kind!=='close'?`<b>${esc(r.title)}</b>\n`:''}${html}</div>${kind==='close'||kind==='kb'?'<div class="dleg"><mark class="rec">From the work notes on this ticket</mark><mark class="inf">Inferred from similar tickets or not yet confirmed. Check before you send</mark></div>':''}</div>`;
   d.scrollIntoView({behavior:'smooth',block:'nearest'})}
 
 function confirmAction(kind,arg={}){const cf=$('#cf');const f=cur.fields;const as=`<div class="as"><span class="avatar">${$('#avatar').textContent}</span> ${meta.writes?'Written to the instance through the service credential, recorded as done by':'Dry run: nothing is written, the audit trail records what would have been, as'} <b>${esc(who())}</b>.</div>`;
   const row=(k,v)=>`<tr><td>${k}</td><td>${v}</td></tr>`;let h='';
+  // Payloads with quotes cannot ride inside an inline handler; the confirm button reads this instead.
+  window._pending=kind==='fields'?{fields:arg.fields}:kind==='reassign'?(arg.group?{group:arg.group}:{user:arg.person}):null;
   if(kind==='resolve')h=`<h3>Resolve ${ticket}</h3><p>This is exactly what will be written. Nothing else changes.</p><table class="writes">${row('State',esc(f.state)+' → Resolved')}${row('Resolution code',`<select id="cf-code">${[...new Set([arg.close_code,'Solved (Permanently)','Solved (Workaround/Temporarily)','Solved Remotely (Permanently)','Not Solved (Not Reproducible)','Closed/Resolved by Caller','Duplicate'].filter(Boolean))].map(c=>`<option ${c===(arg.close_code||'')?'selected':''}>${esc(c)}</option>`).join('')}</select>`)}${row('Close notes',`<textarea id="cf-notes" rows="7">${esc(window._draft&&window._draft.kind==='close'?window._draft.text:'')}</textarea>`)}${row('Work note','Resolved via NowOps.')}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('resolve',{close_code:$('#cf-code').value,close_notes:$('#cf-notes').value})">Resolve</button></div>`;
   if(kind==='claim')h=`<h3>Claim ${ticket}</h3><p>Assign it to ${esc(who())}${cur.raw.state==='1'?' and move it to In progress':''}.</p><table class="writes">${row('Assigned to',esc(f.assigned_to||'Nobody')+' → '+esc(who()))}${cur.raw.state==='1'?row('State','New → In progress'):''}${row('Work note','Picked up via NowOps.')}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('claim',{user:$('#who').value})">Claim</button></div>`;
   if(kind==='hold')h=`<h3>Put ${ticket} on hold</h3><p>Pick the reason. SLAs that pause on hold stop counting.</p><table class="writes">${row('State',esc(f.state)+' → On hold')}${row('Reason','<select id="cf-reason"><option>Awaiting Caller</option><option>Awaiting Vendor</option><option>Awaiting Change</option><option>Awaiting Problem</option></select>')}${row('Work note','<input id="cf-wn" value="Waiting for the caller to reply.">')}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('hold',{reason:$('#cf-reason').value,note:$('#cf-wn').value})">Put on hold</button></div>`;
-  if(kind==='reassign'){const target=arg.group||arg.person;h=`<h3>Hand ${ticket} to ${esc(target)}</h3><p>Only the assignment changes.</p><table class="writes">${row(arg.group?'Assignment group':'Assigned to',esc(arg.group?f.assignment_group:(f.assigned_to||'Nobody'))+' → '+esc(target))}${arg.group?row('Assigned to','cleared, so their queue picks it up'):''}${row('Work note',`Handed over via NowOps: closed the matching tickets on this instance.`)}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('reassign',${esc(JSON.stringify(arg.group?{group:arg.group}:{user:arg.person}))})">Hand over</button></div>`}
+  if(kind==='reassign'){const target=arg.group||arg.person;h=`<h3>Hand ${ticket} to ${esc(target)}</h3><p>Only the assignment changes.</p><table class="writes">${row(arg.group?'Assignment group':'Assigned to',esc(arg.group?f.assignment_group:(f.assigned_to||'Nobody'))+' → '+esc(target))}${arg.group?row('Assigned to','cleared, so their queue picks it up'):''}${row('Work note',`Handed over via NowOps: closed the matching tickets on this instance.`)}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('reassign',window._pending)">Hand over</button></div>`}
   if(kind==='comment_hold')h=`<h3>Comment to the caller and hold</h3><p>The caller sees the comment and gets the usual notification. The ticket goes On hold, Awaiting Caller.</p><table class="writes">${row('Comment',`<textarea id="cf-c" rows="5">${esc(window._draft?window._draft.text:'')}</textarea>`)}${row('State',esc(f.state)+' → On hold, Awaiting Caller')}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('comment_hold',{text:$('#cf-c').value})">Post and hold</button></div>`;
   if(kind==='kb_draft')h=`<h3>Create a Draft knowledge article</h3><p>One record in the client's knowledge base, state Draft, not published. Their knowledge review takes it from here.</p><table class="writes">${row('Table','kb_knowledge')}${row('State','Draft')}${row('Title',`<input id="cf-t" value="${esc(window._draft?.title||cur.title)}">`)}${row('Body',`<textarea id="cf-b" rows="7">${esc(window._draft?window._draft.text:'')}</textarea>`)}${row('Description',`Drafted by NowOps from ${ticket}. Review before publishing.`)}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('kb_draft',{title:$('#cf-t').value,text:$('#cf-b').value})">Create draft</button></div>`;
+  if(kind==='fields')h=`<h3>Complete the record on ${ticket}</h3><p>Only these fields change. Each value comes from this instance.</p><table class="writes">${arg.rows.map(([k,from,to,why])=>row(esc(k),`${esc(from)} → <b>${esc(to)}</b><div class="ev">${esc(why)}</div>`)).join('')}${row('Work note','Record completed via NowOps.')}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('fields',window._pending)">Apply</button></div>`;
   if(kind==='problem')h=`<h3>Raise a problem record</h3><p>One problem record, first reported by ${ticket}. Linking the other open incidents to it is a follow-up in ServiceNow.</p><table class="writes">${row('Table','problem')}${row('Title',`<input id="cf-t" value="${esc(window._draft?.title||cur.title)}">`)}${row('Description',`<textarea id="cf-b" rows="5">${esc(window._draft?window._draft.text:'')}</textarea>`)}</table>${as}<div class="row"><button class="btn" onclick="closeConfirm()">Cancel</button><button class="btn p" onclick="commit('problem',{title:$('#cf-t').value,text:$('#cf-b').value})">Raise</button></div>`;
   cf.innerHTML=h;$('#ov').classList.add('on')}
 function closeConfirm(){$('#ov').classList.remove('on')}
 async function commit(action,payload){closeConfirm();
   if(action==='comment_hold'){const a=await write('comment',{text:payload.text});if(a){addTl(payload.text,who()+' · comment'+(a.dryRun?' (dry run)':''));const b=await write('hold',{reason:'Awaiting Caller',note:'Waiting for the caller to reply.'});if(b)addTl('Put on hold, Awaiting Caller.',who()+(b.dryRun?' (dry run)':''))}return}
   const r=await write(action,payload);if(!r)return;
-  addTl({resolve:'Resolved with the close note above.',claim:'Claimed.',hold:'Put on hold: '+payload.reason,reassign:'Handed over.',kb_draft:'Draft knowledge article created'+(r.number?' '+r.number:'')+'.',problem:'Problem record raised'+(r.number?' '+r.number:'')+'.'}[action]||action,who()+(r.dryRun?' (dry run)':''));
-  if(!r.dryRun&&['resolve','claim','hold','reassign'].includes(action)){stepsCache={};setTimeout(()=>showTicket(ticket),800)}}
+  addTl({resolve:'Resolved with the close note above.',claim:'Claimed.',hold:'Put on hold: '+payload.reason,reassign:'Handed over.',fields:'Record completed: '+Object.keys(payload.fields||{}).join(', ').replace(/_/g,' ')+'.',kb_draft:'Draft knowledge article created'+(r.number?' '+r.number:'')+'.',problem:'Problem record raised'+(r.number?' '+r.number:'')+'.'}[action]||action,who()+(r.dryRun?' (dry run)':''));
+  if(!r.dryRun&&['resolve','claim','hold','reassign','fields'].includes(action)){stepsCache={};setTimeout(()=>showTicket(ticket),800)}}
 let tt;function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('on'),4200)}
 
 async function loadAudit(){const a=await api('GET','/api/resolve/audit').catch(()=>({entries:[]}));$('#kaud').textContent=a.entries.length||'';
