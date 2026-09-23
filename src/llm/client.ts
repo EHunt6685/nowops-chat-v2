@@ -197,8 +197,10 @@ export function makeStubLlm() {
         if (!u) return { kind: 'no_answer' }
         return { kind: 'metric', request: { table: 'incident', filter: `active=true^assigned_to=${u.id}`, aggregate: 'count', label: 'open incidents assigned to you' } }
       }
+      // Only nouns the fixture recognises. Anything else declines: a wrong number is worse than none.
       if (/how many|count of|number of/i.test(q)) {
-        const t = /\b(change|changes)\b/i.test(q) ? ['change_request', 'open changes'] : /\bproblems?\b/i.test(q) ? ['problem', 'open problems'] : /\bsla\b.*\bbreach/i.test(q) ? ['task_sla', 'breached SLAs'] : ['incident', 'open incidents']
+        const t = /\b(change|changes)\b/i.test(q) ? ['change_request', 'open changes'] : /\bproblems?\b/i.test(q) ? ['problem', 'open problems'] : /\bsla\b.*\bbreach/i.test(q) ? ['task_sla', 'breached SLAs'] : /\b(incidents?|tickets?)\b/i.test(q) ? ['incident', 'open incidents'] : null
+        if (!t) return { kind: 'no_answer' }
         const filter = t[0] === 'task_sla' ? 'has_breached=true' : `active=true${/\bp1\b|priority 1|critical/i.test(q) ? '^priority=1' : ''}`
         return { kind: 'metric', request: { table: t[0]!, filter, aggregate: 'count', label: /\bp1\b|priority 1|critical/i.test(q) && t[0] === 'incident' ? 'open P1 incidents' : t[1] } }
       }

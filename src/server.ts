@@ -18,6 +18,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 
 const MAX_MESSAGE_LENGTH = 2000
 const DECLINE_TEXT = 'I do not have that in the knowledge base.'
+const COUNT_DECLINE_TEXT = 'No dashboard definition matches that number, and I will not guess a query for it.'
 const UNAVAILABLE_TEXT = 'I cannot reach the knowledge base right now. Please try again shortly.'
 
 interface Sn {
@@ -42,7 +43,9 @@ export interface ChatContext {
 }
 
 /** A NowOps definition matched to a counting question: the same query the dashboard tile runs (D-004). */
-export interface KpiMatch { id: string; name: string; meaning: string; request: MetricRequest }
+export type KpiMatch =
+  | { id: string; name: string; meaning: string; request: MetricRequest; ratio?: { num: MetricRequest; den: MetricRequest }; unavailable?: undefined }
+  | { id: string; name: string; meaning: string; unavailable: string; request?: undefined; ratio?: undefined }
 export interface Kpis { match(question: string): KpiMatch | null }
 
 const COUNT_RE = /\b(how many|how much|count|number of|total|what is (our|the)|what's (our|the)|show me the number)\b/i
@@ -77,8 +80,16 @@ const STOP = new Set(['what', 'when', 'where', 'which', 'this', 'that', 'there',
 
 /** "5,513 open incidents" — or just the value when the model gave no label. */
 function metricSentence(m: MetricResult): string {
-  const value = typeof m.value === 'number' ? m.value.toLocaleString('en-US') : m.value
+  const value = typeof m.value === 'number' ? m.value.toLocaleString('en-US') : humanDuration(m.value)
   return m.label ? `${value} ${m.label}` : String(value)
+}
+/** ServiceNow durations arrive as "2 19:05:11" or "00:02:45"; read them as days, hours, minutes. */
+export function humanDuration(v: string): string {
+  const m = /^(?:(\d+) )?(\d{1,2}):(\d{2}):(\d{2})$/.exec(v.trim())
+  if (!m) return v
+  const d = Number(m[1] ?? 0), h = Number(m[2]), min = Number(m[3])
+  const parts = [d ? `${d} d` : '', h ? `${h} h` : '', min || (!d && !h) ? `${min} min` : ''].filter(Boolean)
+  return parts.join(' ')
 }
 
 export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm; kpis?: Kpis; allowedTables?: () => Set<string> | null }) {
@@ -120,7 +131,7 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm; kpi
       const decline = (gateReason: string, retried = false) => {
         log('chat', { q: message, gate: gateReason, retried, ms: Date.now() - started })
         return res.json({
-          answer: DECLINE_TEXT, kind: 'decline', sources: [], grounded: false, gateReason, retried,
+          answer: gateReason === 'count_unmatched' ? COUNT_DECLINE_TEXT : DECLINE_TEXT, kind: 'decline', sources: [], grounded: false, gateReason, retried,
         })
       }
 
@@ -135,9 +146,19 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm; kpi
       // Definitions first (D-004): a counting question that names a NowOps KPI runs the tile's own
       // query, so the chatbot and the dashboard can never disagree on "open". No model call.
       const kpi = counting && kpis ? kpis.match(message) : null
-      if (kpi) {
+      if (kpi?.unavailable) {
+        log('chat', { q: message, gate: 'definition_unavailable', definition: kpi.id, reason: kpi.unavailable, ms: Date.now() - started })
+        return res.json({ answer: `"${kpi.name}" is defined, but it is not available on this instance: ${kpi.unavailable}.`, kind: 'decline', sources: [], grounded: false, gateReason: 'definition_unavailable', retried: false, definition: { id: kpi.id, name: kpi.name, meaning: kpi.meaning } })
+      }
+      if (kpi?.request) {
         try {
-          const result = await stats.run(kpi.request)
+          let result: MetricResult
+          if (kpi.ratio) {
+            // A ratio is two counts. The value is the percentage; the filter shows both queries.
+            const [n, d] = await Promise.all([stats.run(kpi.ratio.num), stats.run(kpi.ratio.den)])
+            const nv = Number(n.value), dv = Number(d.value)
+            result = { ...n, label: kpi.request.label, filter: `${n.filter || 'all'} ÷ ${d.filter || 'all'}`, value: dv > 0 && isFinite(nv) ? `${(100 * nv / dv).toFixed(1)}% (${nv.toLocaleString('en-US')} of ${dv.toLocaleString('en-US')})` : 'n/a, the denominator is 0' }
+          } else result = await stats.run(kpi.request)
           const answer = metricSentence(result)
           log('chat', { q: message, gate: 'definition', definition: kpi.id, value: result.value, ms: Date.now() - started })
           remember(conversationId, history, message, `${answer} (${result.table} · ${result.filter || 'no filter'})`)
@@ -232,7 +253,8 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm; kpi
         })
       }
 
-      if (reply.kind !== 'answer') return decline('model_declined', retried)
+      // A count nobody could produce is not a knowledge-base miss; the page words the decline accordingly.
+      if (reply.kind !== 'answer') return decline(counting ? 'count_unmatched' : 'model_declined', retried)
 
       const { sources, fabricated } = verifyCitations(parseCitations(reply.text), articles)
       if (fabricated.length) log('chat.fabricated_citation', { q: message, labels: fabricated })

@@ -1464,8 +1464,19 @@ function doAct(a) {
 // anywhere: the queue counts, the open ticket, the dashboard tiles. No model, no instance call, and the
 // answer says where it came from. Anything unmatched goes to the server with who is asking attached.
 const numAns = (n, label, why) => `<div class="num">${Number(n).toLocaleString('en-US')}<small>${esc(label)}</small></div><div class="sub" style="margin-top:6px">${why}</div>`
-const normQ = (s) => ` ${String(s).toLowerCase().replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9%> ]/g, ' ').replace(/\b(incidents?|tickets?|tkts?)\b/g, 'tickets').replace(/\bpriority ?1\b|\bcritical\b/g, 'p1').replace(/\bpriority ?2\b/g, 'p2').replace(/\bbreach(ed|es|ing)?\b/g, 'breaches').replace(/\bchanges?\b/g, 'changes').replace(/\bproblems?\b/g, 'problems').replace(/\bslas?\b/g, 'sla').replace(/\s+/g, ' ')} `
-const NAME_STOP = new Set(['now', 'with', 'a', 'the', 'of', 'and', 'or', '>', '%'])
+// Same normalisation and scoring as matchKpi on the server, so a tile answers the same questions in both places.
+const CANON = [[/^(incidents?|tickets?|tkts?)$/, 'tickets'], [/^(p1|critical)$/, 'p1'], [/^breach(ed|es|ing)?$/, 'breaches'], [/^changes?$/, 'changes'], [/^problems?$/, 'problems'], [/^slas?$/, 'sla'], [/^approvals?$/, 'approval'], [/^(pct|share|percent|percentage|proportion)$/, 'pct'], [/^(mean|average)$/, 'avg'], [/^servers?$/, 'servers'], [/^(kb|knowledge)$/, 'knowledge'], [/^licen[cs]es?$/, 'licence']]
+const normQ = (s) => ` ${String(s).toLowerCase().replace(/\(.*?\)/g, ' ').replace(/%/g, ' pct ').replace(/priority ?([1-5])/g, 'p$1').replace(/[^a-z0-9> ]/g, ' ').split(/\s+/).filter(Boolean).map((w) => { for (const [re, to] of CANON) if (re.test(w)) return to; return w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w }).join(' ')} `
+const NAME_STOP = new Set(['now', 'with', 'a', 'the', 'of', 'and', 'or', 'to', 'in', '>', 'house', 'related'])
+const GENERIC = new Set(['tickets', 'open', 'changes', 'sla', 'problems', 'active', 'total', 'all', 'count', 'time', 'avg', 'pct', 'rate', 'item', 'use', 'day', 'with'])
+function scoreName(question, name) {
+  const q = normQ(question), words = normQ(name).trim().split(' ').filter((w) => w && !NAME_STOP.has(w))
+  if (!words.length) return 0
+  const hit = words.filter((w) => q.includes(` ${w} `))
+  if (hit.length / words.length < 0.5) return 0
+  if (hit.length === 1 && words.length > 1 && GENERIC.has(hit[0])) return 0
+  return hit.length / words.length + hit.length * 0.01
+}
 function pageAnswer(message) {
   const m = message, q = R.queue, c = R.cur, me = person()
   const counting = /\b(how many|how much|count|number of|total|what is (our|the|my)|what's (our|the|my)|show me)\b/i.test(m) || /\b(assigned to me|my (tickets|queue|work)|waiting on me|unassigned|at risk|reopened)\b/i.test(m)
@@ -1494,12 +1505,8 @@ function pageAnswer(message) {
   }
   // Dashboard tiles: a counting question that names a KPI is answered from the loaded tile, with its definition.
   if (counting && cache?.rows) {
-    const nq = normQ(m); let best = null
-    for (const d of cache.rows) {
-      if (d.status !== 'available') continue
-      const words = normQ(d.name).trim().split(' ').filter((w) => w && !NAME_STOP.has(w))
-      if (words.length && words.every((w) => nq.includes(` ${w} `)) && (!best || words.length > best.n)) best = { d, n: words.length }
-    }
+    let best = null
+    for (const d of cache.rows) { if (d.status !== 'available') continue; const s = scoreName(m, d.name); if (s && (!best || s > best.s)) best = { d, s } }
     if (best) { const d = best.d; const v = d.kind === 'ratio' ? d.value : Number(d.value).toLocaleString('en-US'); return `<div class="num">${esc(String(v))}<small>${esc(d.name.toLowerCase())}</small></div><div class="sub" style="margin-top:6px">${esc(d.meaning)}. From the dashboard tile loaded at ${new Date(cache.at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.${d.url ? ` <a href="${esc(d.url)}" target="_blank" rel="noopener" style="color:var(--acc-ink)">Open the records</a>` : ''}</div>` }
   }
   return null
@@ -1762,6 +1769,8 @@ const REASON = {
   servicenow_unavailable: ['The ServiceNow instance did not answer. Live counts and articles both need it.', 'off'],
   metric_unavailable: ['The count was attempted, but the instance rejected the query.', 'off'],
   model_declined: ['No published article covers this, so there is no grounded answer to give.', 'soft'],
+  count_unmatched: ['No dashboard tile or NowOps definition matches that number, and no query could be written for it. Try the tile\'s own name.', 'soft'],
+  definition_unavailable: ['The matching definition exists but the instance scan could not confirm its table or fields, so the dashboard tile is off too. Re-run the scan.', 'off'],
 }
 const GREETING = 'Ask for a live count on this instance, or how to do something from the knowledge base.'
 const KEY = 'nowops.chats.v2', HIST_SHOWN = 10

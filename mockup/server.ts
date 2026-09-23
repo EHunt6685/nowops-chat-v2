@@ -44,8 +44,12 @@ app.get('/api/connection', (_req, res) => res.json({
 app.post('/api/scan', async (_req, res) => {
   const tables: Record<string, any> = {}
   for (const [table, fields] of Object.entries(TABLES)) {
-    const r = await get<{ result: Rec[] }>(`/api/now/table/${table}?sysparm_fields=sys_id,${fields.join(',')}&sysparm_limit=1`)
-    if (!r) { tables[table] = { present: false }; continue }
+    // One timeout must not record a table as absent: every definition on it would go dark. Probe twice.
+    const probe = () => get<{ result: Rec[] }>(`/api/now/table/${table}?sysparm_fields=sys_id,${fields.join(',')}&sysparm_limit=1`)
+    const r = (await probe()) ?? (await probe())
+    // Still nothing: a network failure is "unknown", not "absent". Keep the last good scan's answer for
+    // this table if there was one; otherwise mark it unreachable so the reason shows on the tile.
+    if (!r) { const prev = state.profile?.tables?.[table]; tables[table] = prev?.present ? { ...prev, stale: true } : { present: false, reason: 'not reachable during the scan; re-run the scan' }; continue }
     const rec = r.result[0]
     const cnt = await get<{ result: { stats: { count: string } } }>(`/api/now/stats/${table}?sysparm_count=true`)
     tables[table] = { present: true, rows: cnt ? Number(cnt.result.stats.count) : null, missing_fields: rec ? fields.filter((f) => !(f in rec)) : [] }
@@ -94,7 +98,7 @@ function validate() {
     if (d.kind === 'ratio') return { ...d, status: 'derived', reason: `${d.num} ÷ ${d.den}` }
     const t = state.profile?.tables[d.table]
     let status = 'available', reason = ''
-    if (!t?.present) { status = 'unavailable'; reason = `table ${d.table} not present` }
+    if (!t?.present) { status = 'unavailable'; reason = t?.reason ? `table ${d.table} ${t.reason}` : `table ${d.table} not present` }
     else {
       const miss = fieldsOf(d).filter((f) => t.missing_fields.includes(f))
       if (miss.length) { status = 'unavailable'; reason = `field ${miss.join(', ')} not on ${d.table}` }
@@ -117,20 +121,41 @@ app.get('/api/validate', (_req, res) => res.json(validate()))
 // dashboard says it means. Matching is by words: every word of the definition's name must be in the
 // question after the same normalisation ("incidents" and "tickets" are one word here). The longest
 // matching name wins, so "open p1 tickets" beats "open tickets". Ratios and unavailable rows never match.
-const normalise = (s: string) => ` ${s.toLowerCase().replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9%> ]/g, ' ').replace(/\b(incidents?|tickets?|tkts?)\b/g, 'tickets').replace(/\bpriority ?1\b|\bcritical\b/g, 'p1').replace(/\bpriority ?2\b/g, 'p2').replace(/\bbreach(ed|es|ing)?\b/g, 'breaches').replace(/\bchanges?\b/g, 'changes').replace(/\bproblems?\b/g, 'problems').replace(/\bslas?\b/g, 'sla').replace(/\s+/g, ' ')} `
-const NAME_STOP = new Set(['now', 'with', 'a', 'the', 'of', 'and', 'or', '>', '%'])
-function matchKpi(question: string) {
+// Matching is by words after one normalisation on both sides ("incidents" and "tickets" are one word,
+// "share", "percent" and "%" are one word). A definition scores by how many of its name words the
+// question contains; it needs half of them, and if only one, a distinctive one (not "tickets" or "open").
+// Highest score wins, ties to the longer name. The same function, in JavaScript, runs on the page.
+// Word level: synonyms to one canonical word, then plurals folded ("articles" and "article", "uses" and "use").
+const CANON: [RegExp, string][] = [[/^(incidents?|tickets?|tkts?)$/, 'tickets'], [/^(p1|critical)$/, 'p1'], [/^breach(ed|es|ing)?$/, 'breaches'], [/^changes?$/, 'changes'], [/^problems?$/, 'problems'], [/^slas?$/, 'sla'], [/^approvals?$/, 'approval'], [/^(pct|share|percent|percentage|proportion)$/, 'pct'], [/^(mean|average)$/, 'avg'], [/^servers?$/, 'servers'], [/^(kb|knowledge)$/, 'knowledge'], [/^licen[cs]es?$/, 'licence']]
+const normalise = (s: string) => ` ${s.toLowerCase().replace(/\(.*?\)/g, ' ').replace(/%/g, ' pct ').replace(/priority ?([1-5])/g, 'p$1').replace(/[^a-z0-9> ]/g, ' ').split(/\s+/).filter(Boolean).map((w) => { for (const [re, to] of CANON) if (re.test(w)) return to; return w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w }).join(' ')} `
+const NAME_STOP = new Set(['now', 'with', 'a', 'the', 'of', 'and', 'or', 'to', 'in', '>', 'house', 'related'])
+const GENERIC = new Set(['tickets', 'open', 'changes', 'sla', 'problems', 'active', 'total', 'all', 'count', 'time', 'avg', 'pct', 'rate', 'item', 'use', 'day', 'with'])
+export function scoreName(question: string, name: string): number {
   const q = normalise(question)
-  let best: { d: Definition; n: number } | null = null
-  for (const d of validate()) {
-    if (d.kind === 'ratio' || d.status !== 'available') continue
-    const words = normalise(d.name).trim().split(' ').filter((w) => w && !NAME_STOP.has(w))
-    if (!words.length || !words.every((w) => q.includes(` ${w} `))) continue
-    if (!best || words.length > best.n) best = { d, n: words.length }
+  const words = normalise(name).trim().split(' ').filter((w) => w && !NAME_STOP.has(w))
+  if (!words.length) return 0
+  const hit = words.filter((w) => q.includes(` ${w} `))
+  if (hit.length / words.length < 0.5) return 0
+  if (hit.length === 1 && words.length > 1 && GENERIC.has(hit[0]!)) return 0
+  return hit.length / words.length + hit.length * 0.01
+}
+function matchKpi(question: string) {
+  const rows = validate()
+  // Score every definition first. If the best name is unavailable on this instance, say so;
+  // never slide to a worse name that happens to be available.
+  let best: { d: (typeof rows)[number]; s: number } | null = null
+  for (const d of rows) { const s = scoreName(question, d.name); if (s && (!best || s > best.s)) best = { d, s } }
+  if (!best) return null
+  if (best.d.status !== 'available') return { id: best.d.id, name: best.d.name, meaning: best.d.meaning, unavailable: best.d.reason || 'not available on this instance' }
+  const d = best.d, label = d.name.toLowerCase().replace(/\s*\(.*?\)/g, '')
+  const req = (x: Definition) => x.kind === 'ratio' ? null : { table: x.table, filter: resolved(x.filter), aggregate: x.aggregate, ...(x.field ? { field: x.field } : {}), label }
+  if (d.kind === 'ratio') {
+    const num = DEFINITIONS.find((x) => x.id === d.num), den = DEFINITIONS.find((x) => x.id === d.den)
+    const n = num && req(num), m = den && req(den)
+    if (!n || !m) return null
+    return { id: d.id, name: d.name, meaning: d.meaning, request: n, ratio: { num: n, den: m } }
   }
-  if (!best || best.d.kind === 'ratio') return null
-  const d = best.d
-  return { id: d.id, name: d.name, meaning: d.meaning, request: { table: d.table, filter: resolved(d.filter), aggregate: d.aggregate, ...(d.field ? { field: d.field } : {}), label: d.name.toLowerCase().replace(/\s*\(.*?\)/g, '') } }
+  return { id: d.id, name: d.name, meaning: d.meaning, request: req(d)! }
 }
 /** Tables the instance scan found. Null before a scan: nothing to check against, so nothing is rejected. */
 function scannedTables() { return state.profile ? new Set(Object.entries(state.profile.tables as Record<string, { present: boolean }>).filter(([, t]) => t.present).map(([k]) => k)) : null }

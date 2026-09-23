@@ -66,7 +66,7 @@ Each entry: what was decided, why, what follows from it, and what would make us 
 
 ## D-005 · Multi-tenant across ServiceNow instances: automated instance scan, no onboarding checklist
 
-**Date:** 2026-09-16 · **Status:** Active (reworded 2026-09-16; supersedes the "onboarding checklist" wording)
+**Date:** 2026-09-16 · **Status:** Active in part (reworded 2026-09-16; supersedes the "onboarding checklist" wording). The upfront scan step, the human confirm step and the scheduled refresh are superseded by D-008; the rest stands.
 
 **Decision.** A tenant is one client; a connection is that client's instance URL plus a service credential held in a secrets store. On connection, the product **scans the instance itself**: it reads ServiceNow's own metadata (`sys_db_object`, `sys_dictionary`, `sys_choice`, `contract_sla`, `kb_knowledge_base`, installed plugins) for the ~25 standard tables NowOps uses and produces a per-connection summary and an onboarding report. No consultant fills in a form. The only human step is confirming two or three **meanings** the scan can detect but not decide: which of the client's SLA definitions is "P1 resolution" (sys_ids differ per instance), and whether any client-added states count as open or closed. These are pre-filled with the standard answer.
 
@@ -113,6 +113,32 @@ Each entry: what was decided, why, what follows from it, and what would make us 
 
 ---
 
+## D-008 · Zero-touch onboarding: definitions resolve themselves on first run; no scan step, no confirm step, no scheduled rescan
+
+**Date:** 2026-09-23 · **Status:** Active (supersedes the scan, confirm and scheduled-refresh parts of D-005)
+
+**Decision.** Onboarding is sign in, connect the instance, dashboard. There is no scan phase, no profile or validation screen, and no human confirmation. The definitions engine resolves everything it needs the first time a definition runs, from the instance's own data, and keeps the result in the tenant profile. Two settings pages replace the removed steps: **Connection health**, which shows what was resolved and why, with an override for each choice; and **Tiles**, which lists every definition with an on/off switch.
+
+**How each former human decision is made automatically.**
+- **Table and field availability.** The first run of each definition is the scan. A definition whose table or field is missing is marked "not available" with the reason, using the one-record probe and missing-table check that already exist. Nothing is probed ahead of time.
+- **Which custom states count as open.** Not read from the label. For each non-standard state value, the engine measures the share of records in that state that have no resolution date. Above about 90 percent unresolved the state counts as open; above about 90 percent resolved it does not. A mixed state defaults to open and is noted in the tile recipe and on Connection health. The instance's own behaviour decides, not our guess.
+- **Which SLA definition is "P1 resolution".** Structural match: SLA definitions on the incident table, type SLA, active, condition referencing priority 1, name containing "resolution" or "resolve". One match is used. Several matches: the one with the most `task_sla` records attached, because that is the one the instance actually runs. The reason is written into the tile recipe ("chosen because it carries 6,910 of 7,100 P1 resolution SLA records"). A near tie is noted, never blocking.
+- **Priority labels and other choice lists.** Read from `sys_choice` on first use, cached in the profile.
+
+**No scheduled rescan.** Resolved values are re-derived whenever the tenant cache expires (minutes), so any change on the instance (a new state, a retired SLA, a plugin added or removed, an access rule tightened) is picked up on the next load. When a freshly resolved value differs from the stored one, the difference is recorded and shown as a change notice on Connection health. That replaces the weekly job and its drift alert; there is no scheduler and nobody has to run anything.
+
+**Tile visibility.** Tiles are still built once for every client (D-005), but a tile that has nothing to show is hidden from the dashboard rather than displayed as "not available" or "no data yet". Two cases hide by default: the table or field is absent on the instance, and the table exists but holds no records for the definition (the Tier B case, for example orphan CIs and reopened incidents on abhrademo4). The Tiles settings page lists every definition with its current state and an on/off switch, so an admin can turn a tile on when the client starts recording that data, or turn off a tile the client does not want. Turning a tile on that still has nothing to show renders it with its reason, as today. Hidden tiles are still listed on Connection health so nobody mistakes an absent tile for an absent problem.
+
+**Admin override, not approval.** Connection health shows every automatic choice with the evidence behind it and lets an admin change it. This is a correction path used rarely, not a gate on the first dashboard. Overrides are stored in the profile and survive re-resolution; a change notice is raised if the evidence later contradicts an override.
+
+**Why.** The confirm step asked an admin to decide from labels what the instance's records already show. The scan duplicated the failure handling the engine has to do at run time anyway. The weekly job was a coarse way to detect change that the cache expiry already detects finely. Removing all three leaves credentials and identity as the only onboarding inputs, which is the promise made to clients: connect once and read.
+
+**Consequences.** The mockup's scan, confirm and skip screens become dead code and are retired with the old page. Tenant profile gains: resolved placeholders with evidence, overrides, change notices, tile visibility. The definitions engine gains: lazy placeholder resolution, the unresolved-share test for states, the structural SLA match with usage tiebreak. The chatbot's per-tenant grounding (D-005, D-007) reads the same profile.
+
+**Revisit when.** A client's instance has a state that the unresolved-share test cannot classify and the default causes a wrong open count that the recipe did not make obvious; or a client asks for a formal sign-off step on definitions for contractual reasons, in which case Connection health gains an "approved by" stamp without becoming a gate.
+
+---
+
 ## Pending decisions
 
 Open questions that shape the architecture. Each names what it affects. Answered items become numbered entries above.
@@ -127,6 +153,7 @@ Open questions that shape the architecture. Each names what it affects. Answered
 | P-6 | Observability sources (Dynatrace, Datadog) — uptime and latency exist in no ticketing platform | Scope of a later release |
 | P-7 | Write access for agents: credential model and confirm-before-commit controls | Agents release (D-002) |
 | P-8 | Server-side cache for model output (suggested steps, brief, drafts), keyed by tenant, ticket and the ticket's `sys_updated_on`, with a time backstop of about 24 h for changes outside the ticket (new articles, new look-alikes). Regenerates only when the record changed; shared across agents. Mockup uses an in-memory map; the product needs a small persistent table in the per-tenant store or a cache service, since instances restart and scale out. Not a copy of ServiceNow data, so it does not reopen D-003. Open: where it lives, TTL, and a per-tenant daily budget with fallback to rules. | Agents release (D-002), D-003, cost and latency of the LLM gateway |
+| P-9 | Chatbot prompt once the model is live: hand the model the NowOps definition catalogue (id, name, meaning, about 60 rows) and have it pick a definition when the question means one, writing a raw query only for what no definition covers. Replaces the word-matching layer built while the gateway was unreachable (normalisation, plural folding, score threshold), which stays only as the zero-cost fast path. Keeps every structural guard: identity context for me/my/this ticket, table whitelist from the instance scan, shown query with a verify link, decline rather than guess. Then run the eval harness (`tools/eval.ts`) against a fixed question set so quality is measured, not found one screenshot at a time. Open: catalogue size in the prompt versus a two-step pick, and how ratios are presented to the model. | D-004, chatbot accuracy, cost per question |
 
 ---
 
