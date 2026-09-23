@@ -126,6 +126,7 @@ Open questions that shape the architecture. Each names what it affects. Answered
 | P-5 | Whether automation accounts (AURA Agent) appear in people-oriented tiles | Backlog and assignment tiles |
 | P-6 | Observability sources (Dynatrace, Datadog) — uptime and latency exist in no ticketing platform | Scope of a later release |
 | P-7 | Write access for agents: credential model and confirm-before-commit controls | Agents release (D-002) |
+| P-8 | Server-side cache for model output (suggested steps, brief, drafts), keyed by tenant, ticket and the ticket's `sys_updated_on`, with a time backstop of about 24 h for changes outside the ticket (new articles, new look-alikes). Regenerates only when the record changed; shared across agents. Mockup uses an in-memory map; the product needs a small persistent table in the per-tenant store or a cache service, since instances restart and scale out. Not a copy of ServiceNow data, so it does not reopen D-003. Open: where it lives, TTL, and a per-tenant daily budget with fallback to rules. | Agents release (D-002), D-003, cost and latency of the LLM gateway |
 
 ---
 
