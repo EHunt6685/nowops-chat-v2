@@ -7,7 +7,7 @@ import { ServiceNowUnavailableError } from './servicenow/types.js'
 import { makeSnClient } from './servicenow/client.js'
 import { makeSearch } from './servicenow/search.js'
 import { makeStats, type MetricRequest, type MetricResult } from './servicenow/stats.js'
-import { hasEnoughTokens } from './guard.js'
+import { hasEnoughTokens, tokenise } from './guard.js'
 import {
   makeLlm, parseCitations, verifyCitations, stripCitationMarkup,
   type Turn, type Reply,
@@ -31,8 +31,49 @@ interface Stats {
 
 interface Llm {
   preflight(): Promise<void>
-  decide(o: { question: string; articles: Article[]; history: Turn[] }): Promise<Reply>
+  decide(o: { question: string; articles: Article[]; history: Turn[]; context?: ChatContext }): Promise<Reply>
 }
+
+/** Who is asking and what they are looking at. Sent by the page; never trusted for authorisation. */
+export interface ChatContext {
+  user?: { id: string; name: string; groups: { id: string; name: string }[] }
+  page?: string
+  ticket?: string
+}
+
+/** A NowOps definition matched to a counting question: the same query the dashboard tile runs (D-004). */
+export interface KpiMatch { id: string; name: string; meaning: string; request: MetricRequest }
+export interface Kpis { match(question: string): KpiMatch | null }
+
+const COUNT_RE = /\b(how many|how much|count|number of|total|what is (our|the)|what's (our|the)|show me the number)\b/i
+const ID_RE = /^[a-f0-9]{32}$/
+
+/** Only the shape we read; anything else on the object is dropped. */
+export function parseContext(raw: unknown): ChatContext | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Record<string, unknown>
+  const out: ChatContext = {}
+  const u = r.user as Record<string, unknown> | undefined
+  if (u && typeof u.id === 'string' && ID_RE.test(u.id) && typeof u.name === 'string') {
+    const groups = Array.isArray(u.groups) ? (u.groups as Record<string, unknown>[]).filter((g) => typeof g?.id === 'string' && ID_RE.test(g.id as string) && typeof g?.name === 'string').slice(0, 20).map((g) => ({ id: g.id as string, name: String(g.name).slice(0, 80) })) : []
+    out.user = { id: u.id, name: u.name.slice(0, 80), groups }
+  }
+  if (typeof r.page === 'string') out.page = r.page.slice(0, 40)
+  if (typeof r.ticket === 'string' && /^[A-Z]{2,5}\d{5,10}$/.test(r.ticket)) out.ticket = r.ticket
+  return Object.keys(out).length ? out : undefined
+}
+
+/**
+ * Relevance floor for knowledge search. The instance returns its nearest article however weak
+ * the match, so an article reaches the model only if it shares a real word with the question.
+ * The model is still told to decline when CONTEXT does not answer; this makes the empty case mechanical.
+ */
+export function relevant(question: string, articles: Article[]): Article[] {
+  const terms = tokenise(question).filter((t) => t.length >= 4 && !STOP.has(t))
+  if (!terms.length) return articles
+  return articles.filter((a) => { const hay = `${a.title} ${a.body}`.toLowerCase(); return terms.some((t) => hay.includes(t)) })
+}
+const STOP = new Set(['what', 'when', 'where', 'which', 'this', 'that', 'there', 'with', 'from', 'have', 'does', 'many', 'much', 'about', 'please', 'tell', 'show', 'give', 'know', 'want', 'need', 'help', 'into', 'your', 'their', 'them', 'they', 'will', 'would', 'could', 'should'])
 
 /** "5,513 open incidents" — or just the value when the model gave no label. */
 function metricSentence(m: MetricResult): string {
@@ -40,8 +81,8 @@ function metricSentence(m: MetricResult): string {
   return m.label ? `${value} ${m.label}` : String(value)
 }
 
-export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
-  const { cfg, sn, stats, llm } = deps
+export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm; kpis?: Kpis; allowedTables?: () => Set<string> | null }) {
+  const { cfg, sn, stats, llm, kpis, allowedTables } = deps
   // ponytail: grows one entry per conversationId for the process lifetime. Fine for a
   // proof on one laptop; add eviction when this runs as a shared service.
   const conversations = new Map<string, Turn[]>()
@@ -87,22 +128,43 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
       // reaches the instance or the model. The only free rejection there is.
       if (!hasEnoughTokens(message)) return decline('too_few_tokens')
 
-      let articles: Article[]
-      try {
-        articles = await sn.search(message)
-      } catch (e) {
-        if (!(e instanceof ServiceNowUnavailableError)) throw e
-        log('chat.servicenow_unavailable', { q: message, detail: e.message })
-        return res.status(503).json({
-          answer: UNAVAILABLE_TEXT, kind: 'decline', sources: [], grounded: false,
-          gateReason: 'servicenow_unavailable', retried: false,
-        })
-      }
-
+      const context = parseContext(req.body?.context)
+      const counting = COUNT_RE.test(message)
       const history = conversations.get(conversationId) ?? []
 
+      // Definitions first (D-004): a counting question that names a NowOps KPI runs the tile's own
+      // query, so the chatbot and the dashboard can never disagree on "open". No model call.
+      const kpi = counting && kpis ? kpis.match(message) : null
+      if (kpi) {
+        try {
+          const result = await stats.run(kpi.request)
+          const answer = metricSentence(result)
+          log('chat', { q: message, gate: 'definition', definition: kpi.id, value: result.value, ms: Date.now() - started })
+          remember(conversationId, history, message, `${answer} (${result.table} · ${result.filter || 'no filter'})`)
+          return res.json({ answer, kind: 'metric', sources: [], metric: result, definition: { id: kpi.id, name: kpi.name, meaning: kpi.meaning }, grounded: true, gateReason: null, retried: false })
+        } catch (e) {
+          log('chat.definition_failed', { q: message, definition: kpi.id, detail: e instanceof Error ? e.message : String(e) })
+          // fall through: the model may still answer
+        }
+      }
+
+      // A counting question needs no articles; the search is skipped and the model sees an empty CONTEXT.
+      let articles: Article[] = []
+      if (!counting) {
+        try {
+          articles = relevant(message, await sn.search(message))
+        } catch (e) {
+          if (!(e instanceof ServiceNowUnavailableError)) throw e
+          log('chat.servicenow_unavailable', { q: message, detail: e.message })
+          return res.status(503).json({
+            answer: UNAVAILABLE_TEXT, kind: 'decline', sources: [], grounded: false,
+            gateReason: 'servicenow_unavailable', retried: false,
+          })
+        }
+      }
+
       // Gate layer 2 — one call, four possible replies (D16).
-      let reply = await llm.decide({ question: message, articles, history })
+      let reply = await llm.decide({ question: message, articles, history, context })
       let retried = false
       let rewritten: string | null = null
 
@@ -113,7 +175,7 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
         retried = true
         rewritten = reply.query
         try {
-          const second = await sn.search(rewritten)
+          const second = relevant(rewritten, await sn.search(rewritten))
           // Union, deduped by sys_id. Rewritten results lead because they are the
           // better guess; nothing is truncated, or the first search — which usually
           // fills the limit on its own — would discard everything the rewrite found.
@@ -125,12 +187,18 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm }) {
           log('chat.retry_search_failed', { q: message, detail: e.message })
         }
 
-        reply = await llm.decide({ question: message, articles, history })
+        reply = await llm.decide({ question: message, articles, history, context })
         // A second SEARCH is never honoured — no loops.
         if (reply.kind === 'search') reply = { kind: 'no_answer' }
       }
 
       if (reply.kind === 'metric') {
+        // A table the instance scan did not find is a guess, not a query. Declined before it runs.
+        const allowed = allowedTables?.()
+        if (allowed && !allowed.has(reply.request.table)) {
+          log('chat.metric_table_rejected', { q: message, table: reply.request.table })
+          return decline('metric_unavailable', retried)
+        }
         let result: MetricResult
         try {
           result = await stats.run(reply.request)

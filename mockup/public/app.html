@@ -1171,7 +1171,7 @@ async function loadPeople() {
   if (sel.value) queueFor(sel.value).then((q) => { if (q && id_('who').value === sel.value) id_('kq').textContent = q.counts.mine + q.counts.group_unassigned }).catch(() => {})
 }
 /** One in-flight or finished queue read per person; a failure is forgotten so a retry can happen. */
-const queueFor = (as) => R.qp[as] ??= apiJ('GET', '/api/resolve/queue?as=' + encodeURIComponent(as)).catch((e) => { delete R.qp[as]; throw e })
+const queueFor = (as) => R.qp[as] ??= apiJ('GET', '/api/resolve/queue?as=' + encodeURIComponent(as)).then((q) => ((q.at = Date.now()), q)).catch((e) => { delete R.qp[as]; throw e })
 /** In Resolve the avatar is the person being worked as; on the dashboard it is the signed-in user. */
 function setAvatar() {
   const p = person(), tav = id_('topav'); if (!tav) return
@@ -1451,13 +1451,64 @@ function doAct(a) {
   const c = R.cur, q = R.queue
   if (a.startsWith('ask:')) return ask(a.slice(4))
   if (a.startsWith('draft:')) { showDraft(a.slice(6)); return }
-  if (a === 'fix') return ask('How do I fix: ' + (c?.title ?? ''))
+  if (a === 'fix') return ask('How do I fix this?')
   if (a === 'sla') { if (chat.hidden && fs.hidden) openDrawer(); return localAnswer('What SLAs are on this ticket?', c?.slas.length ? c.slas.map((s) => `<b>${esc(s.name)}</b>: ${s.breached ? 'breached' + (s.breach_time ? ' on ' + esc(day(s.breach_time)) : '') : Math.round(s.pct) + '% of the time used, breaches ' + esc(s.breach_time)}, stage ${esc(s.stage)}`).join('<br>') : 'No active SLA on this ticket.') }
   if (a === 'who') return localAnswer('Who fixed this before?', c?.who.length ? c.who.map((w) => `<b>${esc(w.name)}</b> (${esc(w.kind)}) closed ${w.n}: ${esc(w.tickets.join(', '))}`).join('<br>') : 'Nobody on this instance has closed a similar ticket with a usable close note.')
   if (a === 'same' && chat.hidden && fs.hidden) openDrawer()
   if (a === 'same') return localAnswer('How many open tickets have this title?', `<div class="num">${(c?.sameTitle.length ?? 0) + 1}<small>including this one</small></div>${c?.sameTitle.length ? `<div class="sub" style="margin-top:6px">${esc(c.sameTitle.map((s) => s.number).join(', '))}</div>` : ''}`)
   if (a === 'why') { const t = q?.queue?.[0]; return localAnswer('Why is the first one first?', t ? `<b>${esc(t.number)}</b>: ${t.reasons.map((r) => esc(r.text)).join('; ') || 'nothing stands out, it is simply the oldest'}.` : 'The queue is empty or not loaded.') }
   if (a === 'kb') { const l = (q?.queue || []).filter((t) => t.kb); return localAnswer('Which have a knowledge article?', l.length ? l.map((t) => `<b>${esc(t.number)}</b> → <a href="${esc(t.kb.url)}" target="_blank" rel="noopener" style="color:var(--acc-ink)">${esc(t.kb.number)}</a> ${esc(t.kb.title)}`).join('<br>') : 'None of the top ten has a published article whose title matches.') }
+}
+
+// ---- Page facts first. A typed question is matched against what the page already holds before it goes
+// anywhere: the queue counts, the open ticket, the dashboard tiles. No model, no instance call, and the
+// answer says where it came from. Anything unmatched goes to the server with who is asking attached.
+const numAns = (n, label, why) => `<div class="num">${Number(n).toLocaleString('en-US')}<small>${esc(label)}</small></div><div class="sub" style="margin-top:6px">${why}</div>`
+const normQ = (s) => ` ${String(s).toLowerCase().replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9%> ]/g, ' ').replace(/\b(incidents?|tickets?|tkts?)\b/g, 'tickets').replace(/\bpriority ?1\b|\bcritical\b/g, 'p1').replace(/\bpriority ?2\b/g, 'p2').replace(/\bbreach(ed|es|ing)?\b/g, 'breaches').replace(/\bchanges?\b/g, 'changes').replace(/\bproblems?\b/g, 'problems').replace(/\bslas?\b/g, 'sla').replace(/\s+/g, ' ')} `
+const NAME_STOP = new Set(['now', 'with', 'a', 'the', 'of', 'and', 'or', '>', '%'])
+function pageAnswer(message) {
+  const m = message, q = R.queue, c = R.cur, me = person()
+  const counting = /\b(how many|how much|count|number of|total|what is (our|the|my)|what's (our|the|my)|show me)\b/i.test(m) || /\b(assigned to me|my (tickets|queue|work)|waiting on me|unassigned|at risk|reopened)\b/i.test(m)
+  // Queue counts: the six tiles, plus the first ranked ticket.
+  if (q && me && q.me.id === me.id) {
+    const src = `From your queue, loaded ${new Date(q.at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+    if (/\b(assigned to me|my (open )?(tickets|incidents|queue|work))\b/i.test(m) && counting) return numAns(q.counts.mine, 'open incidents assigned to you', src)
+    if (/\bunassigned\b/i.test(m) && counting) return numAns(q.counts.group_unassigned, `unassigned in your ${q.me.groups.length} group${q.me.groups.length === 1 ? '' : 's'}`, `${q.me.groups.map((g) => esc(g.name)).join(', ')}. ${src}`)
+    if (/\b(sla|breach)\b.*\b(risk|soon|2 ?h|two hours|under)\b|\bat risk\b/i.test(m)) return numAns((q.browse.sla || []).length, 'SLA breached or breaching within 2 hours', src)
+    if (/\bwaiting on (me|my reply)\b|\breply owed\b/i.test(m)) return numAns((q.browse.waiting || []).length, 'waiting on your reply', src)
+    if (/\breopened\b/i.test(m) && counting) return numAns((q.browse.reopened || []).length, 'reopened', src)
+    if (/\b(changed|updated)\b.*\b(4|four) ?h/i.test(m)) return numAns((q.browse.changed || []).length, 'changed in the last 4 hours', src)
+    if (/\b(what|which) (should i|do i|to) (start|pick|work|do) (with|on|first)\b|\bstart with\b|\bfirst ticket\b/i.test(m)) { const t = q.queue[0]; return t ? `<b>${esc(t.number)}</b> ${esc(t.title)}<div class="sub" style="margin-top:6px">${t.reasons.map((r) => esc(r.text)).join('; ') || 'oldest first'}. ${src}</div>` : 'Your queue is empty.' }
+  }
+  // The open ticket: its fields, look-alikes, SLAs and same-title tickets.
+  if (c) {
+    if (/\bhow (do i|to|can i|should i) (fix|resolve|solve|handle)\b|\bfix this\b/i.test(m)) {
+      const sim = c.similar.slice(0, 2).map((s) => `<b>${esc(s.number)}</b> closed ${esc(day(s.resolved_at))}${s.resolved_by ? ' by ' + esc(s.resolved_by) : ''}: ${esc(s.close_notes.replace(/\s+/g, ' ').slice(0, 260))}${s.close_notes.length > 260 ? '…' : ''}`)
+      const kb = c.kb.filter((k) => k.match).map((k) => `<a href="${esc(k.url)}" target="_blank" rel="noopener" style="color:var(--acc-ink)">${esc(k.number)}</a> ${esc(k.title)}`)
+      if (sim.length || kb.length) return `${sim.join('<br><br>')}${kb.length ? `<div class="sub" style="margin-top:8px">Knowledge: ${kb.join(' · ')}</div>` : ''}<div class="sub" style="margin-top:6px">From the resolved look-alikes and articles already on this ticket page. Suggested steps has these as a checklist.</div>`
+    }
+    if (/\bwho (is|'s) the caller\b|\bwho (raised|reported|opened)\b/i.test(m)) return `<b>${esc(c.fields.caller_id || 'No caller recorded')}</b><div class="sub" style="margin-top:6px">From ${esc(c.number)} on this page.</div>`
+    if (/\b(what|which) (state|status|priority|group)\b|\bassigned to\b(?! me)/i.test(m)) return `State <b>${esc(c.fields.state)}</b> · Priority <b>${esc(c.fields.priority)}</b> · Group <b>${esc(c.fields.assignment_group || 'none')}</b> · Assigned to <b>${esc(c.fields.assigned_to || 'nobody')}</b><div class="sub" style="margin-top:6px">From ${esc(c.number)} on this page.</div>`
+    if (/\bsla/i.test(m) && !/how many/i.test(m)) return c.slas.length ? c.slas.map((s) => `<b>${esc(s.name)}</b>: ${s.breached ? 'breached' + (s.breach_time ? ' on ' + esc(day(s.breach_time)) : '') : Math.round(s.pct) + '% of the time used, breaches ' + esc(s.breach_time)}`).join('<br>') + `<div class="sub" style="margin-top:6px">From ${esc(c.number)} on this page.</div>` : 'No active SLA on this ticket.'
+    if (/\bsame title\b|\bthis title\b|\bsimilar open\b/i.test(m)) return numAns(c.sameTitle.length + 1, 'open with this title, including this one', c.sameTitle.length ? esc(c.sameTitle.map((s) => s.number).join(', ')) : 'This title is unique among open incidents.')
+  }
+  // Dashboard tiles: a counting question that names a KPI is answered from the loaded tile, with its definition.
+  if (counting && cache?.rows) {
+    const nq = normQ(m); let best = null
+    for (const d of cache.rows) {
+      if (d.status !== 'available') continue
+      const words = normQ(d.name).trim().split(' ').filter((w) => w && !NAME_STOP.has(w))
+      if (words.length && words.every((w) => nq.includes(` ${w} `)) && (!best || words.length > best.n)) best = { d, n: words.length }
+    }
+    if (best) { const d = best.d; const v = d.kind === 'ratio' ? d.value : Number(d.value).toLocaleString('en-US'); return `<div class="num">${esc(String(v))}<small>${esc(d.name.toLowerCase())}</small></div><div class="sub" style="margin-top:6px">${esc(d.meaning)}. From the dashboard tile loaded at ${new Date(cache.at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.${d.url ? ` <a href="${esc(d.url)}" target="_blank" rel="noopener" style="color:var(--acc-ink)">Open the records</a>` : ''}</div>` }
+  }
+  return null
+}
+/** Who is asking and what they look at, for questions that leave the page. Ids and names only. */
+function chatContext() {
+  const me = person(), q = R.queue
+  const user = me ? { id: me.id, name: me.name, groups: q && q.me.id === me.id ? q.me.groups : [] } : undefined
+  return { user, page: R.view === 'dash' ? (location.hash.slice(1) || 'overview') : R.view, ticket: R.cur?.number }
 }
 
 // ---- Pages
@@ -1484,7 +1535,7 @@ async function load() {
   // Skeletons in the shape of the page, so the first seconds read as loading rather than empty.
   id_('page').innerHTML = `<div class="grid">${Array(6).fill('<div class="card kpi c2 skcard"><div class="sk w"></div><div class="sk n"></div><div class="sk"></div></div>').join('')}<div class="card c8 skcard"><div class="sk w"></div><div class="sk" style="height:220px;margin-top:16px"></div></div><div class="card c4 skcard"><div class="sk w"></div><div class="sk" style="height:220px;margin-top:16px"></div></div></div>`
   const [rows, s] = await Promise.all([api('/api/dashboard?group='), api('/api/series')])
-  cache = { rows, s, d: Object.fromEntries(rows.map((r) => [r.id, r])) }
+  cache = { rows, s, d: Object.fromEntries(rows.map((r) => [r.id, r])), at: Date.now() }
   id_('when').textContent = `Live · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
   paintNav('dash')
 }
@@ -1722,7 +1773,7 @@ const save = () => { try { localStorage.setItem(KEY, JSON.stringify(convos.slice
 const clip = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s
 const initials = (n) => n.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?'
 const dayGreeting = () => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening' }
-const kindOf = (d) => d?.kind === 'metric' ? 'live count' : d?.kind === 'article' ? 'knowledge base' : d?.kind === 'local' ? 'from this page' : 'no answer'
+const kindOf = (d) => d?.kind === 'metric' ? (d.definition ? 'NowOps definition' : 'live count') : d?.kind === 'article' ? 'knowledge base' : d?.kind === 'local' ? 'from this page' : 'no answer'
 const kindIcon = (c) => { const k = c.turns.find((t) => t.role === 'bot' && t.data)?.data.kind; return icon(k === 'metric' ? 'sigma' : k === 'article' ? 'doc' : 'flat') }
 const replay = (n) => { n.style.animation = 'none'; void n.offsetWidth; n.style.animation = '' }
 function newChat() { active = { id: crypto.randomUUID(), title: '', at: Date.now(), turns: [] }; paint(); animateGreeting() }
@@ -1744,14 +1795,14 @@ function replyHtml(t, fresh = false) {
   if (d.kind === 'metric' && d.metric) {
     const m = d.metric
     const v = typeof m.value === 'number' ? `<span data-count="${m.value}">${fresh ? '0' : m.value.toLocaleString('en-US')}</span>` : esc(String(m.value))
-    return `<div class="ans metric">${kindBadge('metric')}<div class="num">${v}${m.label ? `<small>${esc(m.label)}</small>` : ''}</div><div class="meta"><span class="pillm">${esc(m.table)}</span><span class="pillm">${esc(m.aggregate)}${m.field ? `(${esc(m.field)})` : ''}</span></div><div class="q"><b>Query</b>${esc(m.filter || '(no filter, whole table)')}</div><a class="go" href="${esc(m.url)}" target="_blank" rel="noopener">Verify in ServiceNow ${icon('link')}</a></div>`
+    return `<div class="ans metric">${kindBadge('metric')}<div class="num">${v}${m.label ? `<small>${esc(m.label)}</small>` : ''}</div>${d.definition ? `<div class="sub" style="margin:4px 0 6px">${esc(d.definition.name)}: ${esc(d.definition.meaning)}. The same query as the dashboard tile.</div>` : ''}<div class="meta"><span class="pillm">${esc(m.table)}</span><span class="pillm">${esc(m.aggregate)}${m.field ? `(${esc(m.field)})` : ''}</span></div><div class="q"><b>Query</b>${esc(m.filter || '(no filter, whole table)')}</div><a class="go" href="${esc(m.url)}" target="_blank" rel="noopener">Verify in ServiceNow ${icon('link')}</a></div>`
   }
   if (d.kind === 'article') {
     const srcs = (d.sources || []).map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener" title="${esc(s.title)}">${icon('doc')}${esc(s.label || s.title)}</a>`).join('')
     return `<div class="ans article">${kindBadge('article')}<div>${reveal(d.answer, fresh)}</div>${srcs ? `<div class="srcs">Sources${srcs}</div>` : ''}</div>`
   }
   // Answered from records already on the Resolve page: no model call, nothing fetched.
-  if (d.kind === 'local') return `<div class="ans">${kindBadge('local')}<div>${d.html}</div></div>`
+  if (d.kind === 'local') return `<div class="ans">${kindBadge('local')}<div>${d.html}</div></div>`.replace('>Resolve</div>', '>From this page</div>')
   const [why, tone] = REASON[d.gateReason] ?? ['No response.', 'soft']
   return note(tone, reveal(d.answer ?? d.error ?? 'No answer', fresh), why, tone === 'soft' ? CAPS.map((c) => c.ex[0]) : [])
 }
@@ -1805,6 +1856,8 @@ function paintHistory() {
   const all = id_('fsall'); all.hidden = saved.length <= HIST_SHOWN; all.textContent = showAll ? 'Show fewer' : `View all chats (${saved.length})`
 }
 async function ask(message) {
+  const local = pageAnswer(message)
+  if (local) return localAnswer(message, local)
   if (!active) newChat()
   if (!convos.some((c) => c.id === active.id)) convos.unshift(active)
   if (!active.title) active.title = clip(message, 44)
@@ -1814,7 +1867,7 @@ async function ask(message) {
   active.turns.push(turn); paint()
   const t0 = performance.now()
   try {
-    const r = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, conversationId: active.id }) })
+    const r = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, conversationId: active.id, context: chatContext() }) })
     turn.data = await r.json()
   } catch { turn.failed = true }
   turn.pending = false; turn.at = Date.now(); turn.ms = performance.now() - t0

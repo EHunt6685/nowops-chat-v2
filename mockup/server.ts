@@ -21,7 +21,7 @@ app.use(express.json())
 app.use(express.static(join(dirname(fileURLToPath(import.meta.url)), 'public')))
 // The real chatbot, same ServiceNow client, same guardrails. Its /api/chat and /api/health
 // live alongside the mockup's routes so "Ask NowOps" can open a chat panel on any page.
-app.use(makeChatApp({ cfg, sn: makeSearch(sn), stats, llm: makeLlm(cfg) }))
+app.use(makeChatApp({ cfg, sn: makeSearch(sn), stats, llm: makeLlm(cfg), kpis: { match: matchKpi }, allowedTables: scannedTables }))
 
 // One tenant, in memory: the "small database" from the decision log, as an object.
 const state: { user?: string; profile?: any; params?: Record<string, string>; confirmed?: boolean } = {}
@@ -111,6 +111,29 @@ function validate() {
   return rows
 }
 app.get('/api/validate', (_req, res) => res.json(validate()))
+
+// ---- The chatbot reads the definitions before it writes a query (D-004).
+// A counting question that names a KPI runs that KPI's own resolved filter, so "open" means what the
+// dashboard says it means. Matching is by words: every word of the definition's name must be in the
+// question after the same normalisation ("incidents" and "tickets" are one word here). The longest
+// matching name wins, so "open p1 tickets" beats "open tickets". Ratios and unavailable rows never match.
+const normalise = (s: string) => ` ${s.toLowerCase().replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9%> ]/g, ' ').replace(/\b(incidents?|tickets?|tkts?)\b/g, 'tickets').replace(/\bpriority ?1\b|\bcritical\b/g, 'p1').replace(/\bpriority ?2\b/g, 'p2').replace(/\bbreach(ed|es|ing)?\b/g, 'breaches').replace(/\bchanges?\b/g, 'changes').replace(/\bproblems?\b/g, 'problems').replace(/\bslas?\b/g, 'sla').replace(/\s+/g, ' ')} `
+const NAME_STOP = new Set(['now', 'with', 'a', 'the', 'of', 'and', 'or', '>', '%'])
+function matchKpi(question: string) {
+  const q = normalise(question)
+  let best: { d: Definition; n: number } | null = null
+  for (const d of validate()) {
+    if (d.kind === 'ratio' || d.status !== 'available') continue
+    const words = normalise(d.name).trim().split(' ').filter((w) => w && !NAME_STOP.has(w))
+    if (!words.length || !words.every((w) => q.includes(` ${w} `))) continue
+    if (!best || words.length > best.n) best = { d, n: words.length }
+  }
+  if (!best || best.d.kind === 'ratio') return null
+  const d = best.d
+  return { id: d.id, name: d.name, meaning: d.meaning, request: { table: d.table, filter: resolved(d.filter), aggregate: d.aggregate, ...(d.field ? { field: d.field } : {}), label: d.name.toLowerCase().replace(/\s*\(.*?\)/g, '') } }
+}
+/** Tables the instance scan found. Null before a scan: nothing to check against, so nothing is rejected. */
+function scannedTables() { return state.profile ? new Set(Object.entries(state.profile.tables as Record<string, { present: boolean }>).filter(([, t]) => t.present).map(([k]) => k)) : null }
 
 /** Run `fn` over `items` with at most `n` in flight. ServiceNow handles a handful of parallel reads fine. */
 async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {

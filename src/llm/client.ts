@@ -49,8 +49,26 @@ Rules for METRIC:
 - Relative dates use ServiceNow javascript functions, e.g. opened_at<javascript:gs.daysAgoStart(30)
 - Never invent a table or field you are not confident exists. Prefer NO_ANSWER.
 - If the data plainly does not exist in ServiceNow (uptime, latency, synthetic checks, anything from a monitoring tool), reply NO_ANSWER.
+- A USER block, when present, names the person asking with their sys_id and groups. "me", "my", "mine", "I" refer to that person: assigned_to=<user sys_id>; "my group" or "my team" is assignment_groupIN<group sys_ids>. "this ticket" is the TICKET number given. Without a USER block those words cannot be resolved: reply NO_ANSWER rather than counting everyone.
 
 Never answer a knowledge question from your own knowledge. If CONTEXT does not contain it and better keywords will not help, reply NO_ANSWER.`
+
+/** Who is asking and what they look at, as the model sees it. Kept to ids and names; no page numbers, those are answered on the page. */
+export interface DecideContext {
+  user?: { id: string; name: string; groups: { id: string; name: string }[] }
+  page?: string
+  ticket?: string
+}
+export function buildUserBlock(c?: DecideContext): string {
+  if (!c) return ''
+  const lines: string[] = []
+  if (c.user) lines.push(`name: ${c.user.name}`, `sys_id: ${c.user.id}`, `groups: ${c.user.groups.map((g) => `${g.name} (${g.id})`).join(', ') || 'none'}`)
+  if (c.ticket) lines.push(`TICKET: ${c.ticket}`)
+  if (c.page) lines.push(`page: ${c.page}`)
+  return lines.length ? `USER\n${lines.join('\n')}\n\n` : ''
+}
+const ME_RE = /\b(assigned to me|my (open )?(tickets|incidents|queue|work)|mine)\b/i
+const MY_GROUP_RE = /\bmy (group|groups|team)\b/i
 
 /** Articles are labelled [1]..[n]. The model cites labels, never sys_ids or KB numbers (D10). */
 export function buildContextBlock(articles: Article[]): string {
@@ -164,16 +182,25 @@ export function makeStubLlm() {
     },
 
     // Same signature as the live client so makeLlm returns one shape; history is unused here.
-    async decide(opts: { question: string; articles: Article[]; history: Turn[] }): Promise<Reply> {
+    async decide(opts: { question: string; articles: Article[]; history: Turn[]; context?: DecideContext }): Promise<Reply> {
       log('llm.STUB_MODE.decide', { q: opts.question })
+      const q = opts.question
 
-      // A fixture, not intelligence: it exists so the aggregate path can be
-      // exercised end-to-end, with a real number, before the key arrives.
-      if (/how many|count of/i.test(opts.question)) {
-        return {
-          kind: 'metric',
-          request: { table: 'incident', filter: 'active=true', aggregate: 'count', label: 'open incidents' },
-        }
+      // Fixtures, not intelligence: they exist so the aggregate and identity paths can be
+      // exercised end-to-end, with real numbers, before the key arrives.
+      const u = opts.context?.user
+      if (MY_GROUP_RE.test(q) && u) {
+        if (!u.groups.length) return { kind: 'no_answer' }
+        return { kind: 'metric', request: { table: 'incident', filter: `active=true^assignment_groupIN${u.groups.map((g) => g.id).join(',')}${/unassigned/i.test(q) ? '^assigned_toISEMPTY' : ''}`, aggregate: 'count', label: /unassigned/i.test(q) ? 'unassigned in your groups' : 'open incidents in your groups' } }
+      }
+      if (ME_RE.test(q)) {
+        if (!u) return { kind: 'no_answer' }
+        return { kind: 'metric', request: { table: 'incident', filter: `active=true^assigned_to=${u.id}`, aggregate: 'count', label: 'open incidents assigned to you' } }
+      }
+      if (/how many|count of|number of/i.test(q)) {
+        const t = /\b(change|changes)\b/i.test(q) ? ['change_request', 'open changes'] : /\bproblems?\b/i.test(q) ? ['problem', 'open problems'] : /\bsla\b.*\bbreach/i.test(q) ? ['task_sla', 'breached SLAs'] : ['incident', 'open incidents']
+        const filter = t[0] === 'task_sla' ? 'has_breached=true' : `active=true${/\bp1\b|priority 1|critical/i.test(q) ? '^priority=1' : ''}`
+        return { kind: 'metric', request: { table: t[0]!, filter, aggregate: 'count', label: /\bp1\b|priority 1|critical/i.test(q) && t[0] === 'incident' ? 'open P1 incidents' : t[1] } }
       }
 
       const first = opts.articles[0]
@@ -248,9 +275,10 @@ export function makeLlm(cfg: Config) {
       question: string
       articles: Article[]
       history: Turn[]
+      context?: DecideContext
     }): Promise<Reply> {
       const user =
-        `CONTEXT\n${buildContextBlock(opts.articles)}\n\nQUESTION\n${opts.question}`
+        `${buildUserBlock(opts.context)}CONTEXT\n${buildContextBlock(opts.articles)}\n\nQUESTION\n${opts.question}`
       const raw = await complete(SYSTEM_PROMPT, [...opts.history, { role: 'user', content: user }], 1024)
       return parseReply(raw, opts.question)
     },

@@ -148,6 +148,55 @@ describe('POST /api/chat', () => {
     expect(second.history[1]?.content).toContain('active=true')
   })
 
+  it('answers a counting question from a NowOps definition before asking the model', async () => {
+    const decide = vi.fn()
+    const search = vi.fn(async () => [])
+    const run = vi.fn(async (_r: unknown) => ({ table: 'incident', filter: 'stateIN1,2,3', aggregate: 'count' as const, label: 'open tickets', value: 5403, url: 'u' }))
+    const app = makeApp({
+      cfg, sn: { search, health: async () => ({ ok: true }) }, stats: { run }, llm: { preflight: async () => {}, decide },
+      kpis: { match: (q) => /open/.test(q) ? { id: 'open_incidents', name: 'Open Tickets', meaning: 'the client\'s open states', request: { table: 'incident', filter: 'stateIN1,2,3', aggregate: 'count', label: 'open tickets' } } : null },
+    })
+    const r = await post(app, { message: 'how many open incidents do we have' })
+    expect(r.body.kind).toBe('metric')
+    expect((r.body.definition as { id: string }).id).toBe('open_incidents')
+    expect(run.mock.calls[0]?.[0]).toMatchObject({ filter: 'stateIN1,2,3' })
+    expect(decide).not.toHaveBeenCalled()
+    expect(search).not.toHaveBeenCalled()
+  })
+
+  it('skips the knowledge search for a counting question and passes who is asking to the model', async () => {
+    const decide = vi.fn(async (_o: unknown) => ({ kind: 'no_answer' as const }))
+    const search = vi.fn(async () => [])
+    const app = makeApp({ cfg, sn: { search, health: async () => ({ ok: true }) }, stats: noStats, llm: { preflight: async () => {}, decide } })
+    const ctx = { user: { id: 'a'.repeat(32), name: 'David Dan', groups: [{ id: 'b'.repeat(32), name: 'Network' }] }, page: 'queue', junk: 'ignored' }
+    await post(app, { message: 'how many tickets are assigned to me', context: ctx })
+    expect(search).not.toHaveBeenCalled()
+    const seen = decide.mock.calls[0]?.[0] as unknown as { context?: { user?: { id: string }; page?: string } }
+    expect(seen.context?.user?.id).toBe('a'.repeat(32))
+    expect(seen.context?.page).toBe('queue')
+    expect('junk' in (seen.context ?? {})).toBe(false)
+  })
+
+  it('drops articles that share no real word with the question', async () => {
+    const decide = vi.fn(async (_o: unknown) => ({ kind: 'no_answer' as const }))
+    const app = makeApp({ cfg, sn: okSn([article('x', 'Wrong Manager Assigned in Expense Approval')]), stats: noStats, llm: { preflight: async () => {}, decide } })
+    await post(app, { message: 'where is the printer queue for building seven' })
+    const seen = decide.mock.calls[0]?.[0] as unknown as { articles: unknown[] }
+    expect(seen.articles).toHaveLength(0)
+  })
+
+  it('rejects a model-written query against a table the instance scan did not find', async () => {
+    const run = vi.fn()
+    const app = makeApp({
+      cfg, sn: okSn(), stats: { run },
+      llm: fakeLlm(() => ({ kind: 'metric', request: { table: 'sn_vul_vulnerable_item', filter: 'active=true', aggregate: 'count' } })),
+      allowedTables: () => new Set(['incident', 'task_sla']),
+    })
+    const r = await post(app, { message: 'how many vulnerable items are open' })
+    expect(r.body.gateReason).toBe('metric_unavailable')
+    expect(run).not.toHaveBeenCalled()
+  })
+
   it('declines when the aggregate query fails, and does not retry it', async () => {
     const run = vi.fn(async () => { throw new ServiceNowUnavailableError('rejected') })
     const app = makeApp({
