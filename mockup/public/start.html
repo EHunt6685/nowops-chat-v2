@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NowOps · sign in</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-8 -8 91 91'%3E%3Crect x='-8' y='-8' width='91' height='91' rx='18' fill='%23141416'/%3E%3Cpath fill='%23fff' d='M12.942 45.532c4.351 0 8.691 1.844 10.687 5.182l-4.722 3.82c-1.607-1.448-3.566-2.505-6.004-2.505-2.633 0-3.917 1.075-3.917 2.076 0 1.328 1.228 2.103 3.917 2.766l2.411.586c6.802 1.64 9.302 4.792 9.302 8.734C24.616 71.383 19.98 75 12.23 75 7.894 75 2.548 73.183.487 69.445l4.723-3.82c1.912 1.939 4.076 3.11 6.98 3.11 2.514 0 4.51-.839 4.51-2.347 0-1.21-.911-1.677-3.402-2.301l-2.53-.625c-6.762-1.678-9.38-5.491-9.38-9.16 0-4.75 4.2-8.77 11.554-8.77zm54.941.81v6.613h-8.279v21.16h-7.65v-21.16h-8.278v-6.613h24.207zM7.618 0v16.46c0 3.279 1.871 5.146 4.916 5.146 3.044 0 4.877-1.867 4.877-5.146V0h7.617v16.424c0 7.635-4.57 12.234-12.455 12.234C4.376 28.658 0 23.864 0 16.424V0h7.618zm53.555 8.233V19.02H50.386V8.233h10.787z'/%3E%3C/svg%3E">
+<style>
+/* NowOps on the UST brand system: warm cream, two teals, Aptos. Two screens.
+   Sign in is a split screen. Connect is a 1280x720 stage scaled to the window, where the instance is read:
+   its tables rise as an isometric stack, a scan plane reads them, states and SLA definitions come out of the
+   stack, the measures the instance can answer check off, and the stack folds into the dashboard.
+   Every act is triggered by a real server answer. Nothing in the picture is invented. */
+:root{color-scheme:light;
+  --ust-teal:#0f8b8d;--ust-teal-2:#0b6c6e;--teal-deep:#0a5556;--teal-light:#3db3b5;
+  --bg:#e7e1d8;--frame:#f6f3ee;--card:#fffdfa;--card2:#efeae2;--line:#e6dfd5;--line2:#d8d0c4;--sand:#e4dccd;--sand-dark:#cfc4b0;
+  --ink:#2a2622;--ink2:#6e675f;--muted:#a0988e;--acc:var(--ust-teal);--acc-ink:var(--ust-teal-2);--acc-bg:#e1f1f0;
+  --neg-ink:#b03a3a;--neg-bg:#fbe9e6;
+  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;
+  --sans:Aptos,"Aptos Display","Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;--mono:Consolas,"Cascadia Mono",ui-monospace,monospace;
+  --ease:cubic-bezier(.2,.7,.2,1)}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden}
+button{font:inherit;color:inherit}
+.ic{display:inline-block;flex:none;width:1em;height:1em;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.15em}
+[hidden]{display:none!important}
+
+/* ---- Sign in: split frame. */
+.frame{margin:18px;height:calc(100vh - 36px);background:var(--frame);border-radius:28px;box-shadow:0 30px 80px rgba(60,45,25,.12),inset 0 1px 0 rgba(255,255,255,.7);display:grid;grid-template-columns:minmax(380px,44%) 1fr;grid-template-rows:minmax(0,1fr);overflow:hidden}
+.right{min-height:0}
+@media (max-width:900px){.frame{grid-template-columns:1fr}.right{display:none}}
+.left{display:flex;flex-direction:column;padding:26px 44px 28px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:14.5px;letter-spacing:-.01em}
+.brand .logo{width:26px;height:26px;display:grid;place-items:center;color:var(--ink)}.brand .logo svg{width:22px;height:22px;display:block}
+.brand .sep{width:1px;height:18px;background:var(--line2);margin:0 2px}
+.stepsline{display:flex;align-items:center;gap:10px;margin-left:auto;font-size:12.5px;color:var(--muted)}
+.stepsline span{display:inline-flex;align-items:center;gap:8px}
+.stepsline i{width:8px;height:8px;border-radius:50%;background:var(--line2);transition:background .3s,transform .3s}
+.stepsline span.on{color:var(--acc-ink);font-weight:600}.stepsline span.on i{background:var(--acc);transform:scale(1.25)}
+.stepsline span.done i{background:var(--acc)}
+.stepsline em{width:22px;height:1px;background:var(--line2);display:inline-block}
+.top{display:flex;align-items:center;gap:14px}
+.screen{margin:auto 0;max-width:420px;width:100%;animation:rise .55s var(--ease) both}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.eyebrow{font-size:12.5px;color:var(--acc-ink);font-weight:600;margin:0 0 10px}
+h1{font-size:34px;line-height:1.1;letter-spacing:-.025em;margin:0 0 12px;font-weight:650}
+.lede{color:var(--ink2);font-size:14.5px;margin:0 0 26px;max-width:38ch}
+label{display:block;font-size:12.5px;color:var(--ink2);margin:14px 0 6px}
+.field{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line2);border-radius:12px;padding:0 12px;height:46px;transition:border-color .15s,box-shadow .15s}
+.field:focus-within{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-bg)}
+.field input{flex:1;border:0;background:none;outline:none;font:inherit;font-size:14.5px;color:var(--ink);min-width:0}
+.field .ic{color:var(--muted);width:18px;height:18px}
+.field .tag{font-size:11.5px;color:var(--acc-ink);background:var(--acc-bg);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;height:46px;padding:0 18px;border-radius:12px;border:1px solid var(--line2);background:var(--card);cursor:pointer;font-weight:600;font-size:14.5px;transition:transform .15s,box-shadow .15s,background .15s;width:100%}
+.btn:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(60,45,25,.10)}
+.btn:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.btn.p{background:var(--ust-teal-2);border-color:var(--ust-teal-2);color:#fff}.btn.p:hover{background:var(--teal-deep)}
+.btn[disabled]{opacity:.6;cursor:default;transform:none;box-shadow:none}
+.btn .ic{width:18px;height:18px}
+.or{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:12px;margin:16px 0}.or::before,.or::after{content:'';flex:1;height:1px;background:var(--line)}
+.note{font-size:12.5px;color:var(--muted);margin-top:18px;line-height:1.55}
+.foot{display:flex;gap:16px;font-size:12px;color:var(--muted);margin-top:auto;padding-top:24px}
+.err{margin-top:12px;font-size:13px;color:var(--neg-ink);background:var(--neg-bg);border-radius:10px;padding:8px 12px}
+.right{position:relative;background:linear-gradient(135deg,var(--ust-teal-2) 0%,var(--teal-deep) 100%);color:#fff;overflow:hidden;display:flex;flex-direction:column;padding:34px 40px}
+.right::before{content:'';position:absolute;right:-140px;top:-160px;width:520px;height:520px;border-radius:50%;border:64px solid rgba(255,255,255,.06)}
+.right::after{content:'';position:absolute;left:-120px;bottom:-220px;width:440px;height:440px;border-radius:50%;background:rgba(255,255,255,.05)}
+.right>*{position:relative;z-index:1}
+.claim{margin-top:auto;max-width:34ch}
+.claim h2{font-size:30px;line-height:1.12;letter-spacing:-.02em;margin:0 0 12px;font-weight:650}
+.claim p{color:rgba(255,255,255,.8);font-size:14.5px;margin:0}
+.facts{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:26px}
+.facts div{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:12px 14px;font-size:12.5px;color:rgba(255,255,255,.82);animation:rise .6s var(--ease) both;animation-delay:calc(var(--j) * .08s + .2s)}
+.facts b{display:block;font-size:20px;font-weight:650;letter-spacing:-.02em;color:#fff;margin-bottom:2px;font-variant-numeric:tabular-nums}
+
+/* ---- Connect: the stage. 1280x720, scaled to fit. */
+/* The same outer frame as sign in: 18px inset, 28px radius. Inside it a transparent 1280x720 canvas is scaled to fit
+   and centred; the cream and the deck are painted on the frame itself, so there is never a letterbox. */
+.wrap{position:fixed;inset:0}
+/* The scale set by fit() lives on transform; the entrance uses the separate translate property so it never overrides it. */
+.stage{position:absolute;left:calc(50% - 640px);top:calc(50% - 360px);width:1280px;height:720px;background:var(--frame);border-radius:28px;overflow:hidden;box-shadow:0 30px 80px rgba(60,45,25,.14),inset 0 1px 0 rgba(255,255,255,.7);transform-origin:center;animation:rise2 .6s var(--ease) both}
+@keyframes rise2{from{opacity:0;translate:0 14px}to{opacity:1;translate:0 0}}
+/* The deck: the dark right two-thirds where the instance is read. Cream column on the left tells the story. */
+.deck{position:absolute;left:470px;top:0;right:0;bottom:0;background:linear-gradient(160deg,var(--ust-teal-2) 0%,var(--teal-deep) 50%,#063b3c 100%);overflow:hidden}
+.deck::before{content:'';position:absolute;right:-160px;top:-200px;width:560px;height:560px;border-radius:50%;border:70px solid rgba(255,255,255,.05)}
+.deck::after{content:'';position:absolute;left:-140px;bottom:-260px;width:480px;height:480px;border-radius:50%;background:rgba(255,255,255,.04)}
+.stage .topbar{position:absolute;left:36px;top:24px;height:44px;display:flex;align-items:center}
+.conn{position:absolute;left:64px;bottom:26px;max-width:376px;display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line2);border-radius:999px;padding:9px 18px 9px 14px;font-size:13.5px;color:var(--ink2);opacity:0;transform:translateY(6px);transition:opacity .5s,transform .5s}
+.conn.on{opacity:1;transform:none}
+.conn .who{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.conn strong{color:var(--ink);font-weight:600}
+.conn .dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--teal-light);box-shadow:0 0 0 0 rgba(61,179,181,.6);animation:ping 1.6s ease-out infinite}
+@keyframes ping{to{box-shadow:0 0 0 8px rgba(61,179,181,0)}}
+.conn .track{flex:none;width:80px;height:4px;border-radius:4px;background:var(--line2);overflow:hidden}
+.conn .fill{display:block;height:100%;width:100%;background:var(--ust-teal);transform-origin:left;transform:scaleX(0);transition:transform .8s var(--ease)}
+.ro{position:absolute;right:36px;top:34px;font-size:12.5px;color:rgba(255,255,255,.6)}
+.col{position:absolute;left:64px;top:118px;width:380px}
+.col h2{font-weight:300;font-size:34px;line-height:1.1;letter-spacing:-.02em;color:var(--teal-deep);margin:0}
+.col .lede{margin:14px 0 0;font-size:14.5px;max-width:340px}
+.form{margin-top:26px;transition:opacity .4s,transform .4s}
+.form.gone{opacity:0;transform:translateY(-8px);pointer-events:none;position:absolute}
+.steps{list-style:none;margin:26px 0 0;padding:0;display:flex;flex-direction:column;gap:11px;opacity:0;transition:opacity .5s}
+.steps.on{opacity:1}
+.step{display:grid;grid-template-columns:28px 1fr;column-gap:14px;opacity:.38;transition:opacity .4s}
+.step.on,.step.done{opacity:1}
+.step .ic2{width:28px;height:28px;border-radius:50%;border:1.5px solid var(--line2);position:relative;display:grid;place-items:center;font-size:12px;font-weight:600;color:var(--muted);background:var(--card)}
+.step .ic2 .ok{position:absolute;inset:-1.5px;border-radius:50%;background:var(--ust-teal);opacity:0;transform:scale(.6);display:grid;place-items:center;transition:opacity .35s,transform .35s cubic-bezier(.34,1.56,.64,1)}
+.step.done .ic2 .ok{opacity:1;transform:none}
+.step .name{font-size:15.5px;font-weight:600;line-height:28px}
+.step .detail{grid-column:2;font-size:12.5px;color:var(--ink2);min-height:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.step .bar{grid-column:2;margin-top:6px;height:2px;background:var(--line2);border-radius:2px;overflow:hidden;position:relative}
+.step .bar i{display:block;height:100%;background:var(--teal-light);transform-origin:left;transform:scaleX(0);transition:transform .6s var(--ease)}
+.step.on .bar i.wait{transform:none;width:36%;animation:slide 1.6s ease-in-out infinite;background:linear-gradient(90deg,transparent,var(--teal-light),transparent)}
+@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(300%)}}
+.step.done .bar i{transform:scaleX(1);animation:none;width:100%;background:var(--teal-light)}
+.skip{position:absolute;right:36px;bottom:22px;font-size:12.5px;color:rgba(255,255,255,.6);background:none;border:0;cursor:pointer;text-decoration:underline;text-underline-offset:3px;padding:0}
+.skip:hover{color:#fff}
+#scene{position:absolute;left:470px;top:0;width:810px;height:720px;overflow:visible}
+.tname{font-family:var(--mono);font-size:13.5px;fill:#fff;font-weight:500}
+.tdet{font-size:12.5px;fill:#9fdcdc}
+.panel{position:absolute;left:846px;top:120px;width:380px;color:#fff;opacity:0;transform:translateY(10px);transition:opacity .5s,transform .5s}
+.panel.on{opacity:1;transform:none}
+.panel h3{font-size:12.5px;font-weight:600;color:#9fdcdc;margin:0 0 10px}
+.panel .group{margin-bottom:20px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-size:13.5px;padding:6px 12px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);color:rgba(255,255,255,.8);opacity:0;transform:translateX(-60px);transition:opacity .5s,transform .6s var(--ease);display:inline-flex;gap:6px;align-items:baseline}
+.chip.in{opacity:1;transform:none}
+.chip.open{border-color:var(--teal-light);color:#fff;background:rgba(61,179,181,.28);box-shadow:0 0 18px rgba(61,179,181,.25)}
+.chip small{font-size:11px;color:rgba(255,255,255,.55);font-variant-numeric:tabular-nums}
+.chip.open small{color:#c9f0f0}
+.sla{display:flex;justify-content:space-between;font-size:13.5px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.12);opacity:0;transform:translateX(-40px);transition:opacity .5s,transform .6s var(--ease)}
+.sla.in{opacity:1;transform:none}
+.sla span:last-child{font-family:var(--mono);font-size:12.5px;color:#9fdcdc}
+.sla.miss{color:rgba(255,255,255,.5)}.sla.miss span:last-child{font-family:var(--sans);color:rgba(255,255,255,.5)}
+.rows{display:flex;flex-direction:column}
+.row{display:grid;grid-template-columns:22px 1fr auto;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.12);font-size:14px;opacity:0;transform:translateY(8px);transition:opacity .45s,transform .45s}
+.row.in{opacity:1;transform:none}
+.row .mk{width:20px;height:20px;border-radius:50%;background:var(--teal-light);display:grid;place-items:center;transform:scale(0);transition:transform .4s cubic-bezier(.34,1.56,.64,1);box-shadow:0 0 14px rgba(61,179,181,.5)}
+.row.in .mk{transform:none}
+.row.no{color:rgba(255,255,255,.45)}.row.no .mk{background:transparent;border:1.5px dashed rgba(255,255,255,.3);box-shadow:none}
+.row small{font-size:12px;color:rgba(255,255,255,.55);font-variant-numeric:tabular-nums}
+.finale{position:absolute;left:470px;top:0;right:0;bottom:0;display:grid;place-items:center;color:#fff;opacity:0;pointer-events:none;transition:opacity .5s}
+.finale.on{opacity:1}
+.finale .chipx{display:inline-flex;align-items:center;gap:8px;background:rgba(61,179,181,.28);border:1px solid var(--teal-light);color:#fff;border-radius:999px;padding:6px 14px;font-size:13px;font-weight:600;box-shadow:0 0 24px rgba(61,179,181,.35)}
+.finale .chipx i{width:8px;height:8px;border-radius:50%;background:#c9f0f0}
+.finale div{text-align:center}
+.finale p{margin:12px 0 0;color:rgba(255,255,255,.75)}
+.err2{position:absolute;left:64px;right:64px;bottom:60px;font-size:13px;color:var(--neg-ink);background:var(--neg-bg);border-radius:10px;padding:8px 12px}
+/* Short windows (a 1080p screen at 150% scaling gives about 590px): tighten sign in so nothing leaves the frame. */
+@media (max-height:680px){h1{font-size:28px}.lede{margin-bottom:16px}.foot{display:none}.left{padding-bottom:18px}.left .note{font-size:12px}
+  .claim h2{font-size:24px;margin-bottom:8px}.claim p{font-size:13.5px}.facts{margin-top:16px}.facts div{padding:8px 10px;font-size:12px}.facts b{font-size:17px}}
+@media (prefers-reduced-motion:reduce){.screen,.stage,.facts div{animation:none}.conn .dot,.step.on .bar i.wait{animation:none}}
+</style></head><body>
+
+<!-- ============================ Sign in ============================ -->
+<div class="frame" id="signin">
+  <div class="left">
+    <div class="top">
+      <div class="brand"><span class="logo"><svg viewBox="0 0 68 75" aria-hidden="true"><path fill="currentColor" d="M12.942 45.532c4.351 0 8.691 1.844 10.687 5.182l-4.722 3.82c-1.607-1.448-3.566-2.505-6.004-2.505-2.633 0-3.917 1.075-3.917 2.076 0 1.328 1.228 2.103 3.917 2.766l2.411.586c6.802 1.64 9.302 4.792 9.302 8.734C24.616 71.383 19.98 75 12.23 75 7.894 75 2.548 73.183.487 69.445l4.723-3.82c1.912 1.939 4.076 3.11 6.98 3.11 2.514 0 4.51-.839 4.51-2.347 0-1.21-.911-1.677-3.402-2.301l-2.53-.625c-6.762-1.678-9.38-5.491-9.38-9.16 0-4.75 4.2-8.77 11.554-8.77zm54.941.81v6.613h-8.279v21.16h-7.65v-21.16h-8.278v-6.613h24.207zM7.618 0v16.46c0 3.279 1.871 5.146 4.916 5.146 3.044 0 4.877-1.867 4.877-5.146V0h7.617v16.424c0 7.635-4.57 12.234-12.455 12.234C4.376 28.658 0 23.864 0 16.424V0h7.618zm53.555 8.233V19.02H50.386V8.233h10.787z"/></svg></span><span class="sep"></span>NowOps</div>
+      <div class="stepsline"><span class="on"><i></i>Sign in</span><em></em><span><i></i>Connect</span><em></em><span><i></i>Dashboard</span></div>
+    </div>
+    <section class="screen">
+      <p class="eyebrow">Welcome</p>
+      <h1>See your service the way you run it.</h1>
+      <p class="lede">One sign-in, one connection to your ServiceNow instance, and the dashboard is live. Nothing to configure first.</p>
+      <button type="button" class="btn p" id="sso"><svg class="ic" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Continue with UST single sign-on</button>
+      <div class="or">or with your work email</div>
+      <label for="u">Work email</label>
+      <div class="field"><svg class="ic" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg><input id="u" type="email" value="sdm@ust.com" autocomplete="username"></div>
+      <div style="margin-top:12px"><button type="button" class="btn" id="b1">Sign in<svg class="ic" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button></div>
+      <div class="err" id="e1" hidden></div>
+      <p class="note">Your session resolves to your organisation's tenant. Nothing about your instance is read until you connect it on the next step.</p>
+    </section>
+    <div class="foot"><span>UST · NowOps</span><span>ServiceNow first · one platform per client</span></div>
+  </div>
+  <div class="right">
+    <div class="claim">
+      <h2>Two views. One truth. Every number opens its records.</h2>
+      <p>Strategic for the service review, Operational for the shift, Resolve for the ticket in front of you. All read live from your instance, each figure carrying the exact filter behind it.</p>
+      <div class="facts"><div style="--j:0"><b>2</b>persona views</div><div style="--j:1"><b>0</b>dashboards to build in ServiceNow</div><div style="--j:2"><b>1</b>connection, read once</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ Connect: the stage ============================ -->
+<div class="wrap" id="connect" hidden>
+  <div class="stage" id="stage">
+    <div class="topbar">
+      <div class="brand"><span class="logo"><svg viewBox="0 0 68 75" aria-hidden="true"><path fill="currentColor" d="M12.942 45.532c4.351 0 8.691 1.844 10.687 5.182l-4.722 3.82c-1.607-1.448-3.566-2.505-6.004-2.505-2.633 0-3.917 1.075-3.917 2.076 0 1.328 1.228 2.103 3.917 2.766l2.411.586c6.802 1.64 9.302 4.792 9.302 8.734C24.616 71.383 19.98 75 12.23 75 7.894 75 2.548 73.183.487 69.445l4.723-3.82c1.912 1.939 4.076 3.11 6.98 3.11 2.514 0 4.51-.839 4.51-2.347 0-1.21-.911-1.677-3.402-2.301l-2.53-.625c-6.762-1.678-9.38-5.491-9.38-9.16 0-4.75 4.2-8.77 11.554-8.77zm54.941.81v6.613h-8.279v21.16h-7.65v-21.16h-8.278v-6.613h24.207zM7.618 0v16.46c0 3.279 1.871 5.146 4.916 5.146 3.044 0 4.877-1.867 4.877-5.146V0h7.617v16.424c0 7.635-4.57 12.234-12.455 12.234C4.376 28.658 0 23.864 0 16.424V0h7.618zm53.555 8.233V19.02H50.386V8.233h10.787z"/></svg></span><span class="sep"></span>NowOps</div>
+    </div>
+    <div class="deck" aria-hidden="true"></div>
+    <div class="ro">Read only. Nothing is written during setup.</div>
+    <div class="finale" id="finale"><div><span class="chipx"><i></i>Connected</span><p id="finaleP">Opening your dashboard with live figures.</p></div></div>
+    <button type="button" class="skip" id="skip" hidden>Skip the animation</button>
+    <div class="conn" id="conn"><span class="dot"></span><span class="who">Connecting to <strong id="host"></strong></span><span class="track"><span class="fill" id="connFill"></span></span></div>
+
+    <div class="col">
+      <p class="eyebrow" id="hello">Connect your instance</p>
+      <h2 id="h2">Point NowOps at ServiceNow.</h2>
+      <p class="lede" id="lede2">Enter the instance and the service credential once. The credential goes to the secrets store; NowOps keeps only a reference to it.</p>
+      <div class="form" id="form">
+        <label for="inst">Instance URL</label>
+        <div class="field"><svg class="ic" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg><input id="inst" placeholder="https://your-instance.service-now.com"></div>
+        <label for="cid">OAuth client</label>
+        <div class="field"><svg class="ic" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg><input id="cid"><span class="tag" id="cred">credential in secrets store</span></div>
+        <div style="margin-top:16px"><button type="button" class="btn p" id="b2"><svg class="ic" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Connect and read the instance</button></div>
+        <p class="note">Connecting reads the instance once: which tables exist, which states count as open, which SLA definitions apply. Every choice is recorded with its reason and can be changed later under Settings.</p>
+      </div>
+      <ol class="steps" id="steps">
+        <li class="step"><span class="ic2">1<span class="ok"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 6.4l2.6 2.4L10 3.4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span><span class="name">Finding tables</span><span class="detail"></span><span class="bar"><i></i></span></li>
+        <li class="step"><span class="ic2">2<span class="ok"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 6.4l2.6 2.4L10 3.4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span><span class="name">Working out open states and SLAs</span><span class="detail"></span><span class="bar"><i></i></span></li>
+        <li class="step"><span class="ic2">3<span class="ok"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 6.4l2.6 2.4L10 3.4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span><span class="name">Checking what this instance supports</span><span class="detail"></span><span class="bar"><i></i></span></li>
+        <li class="step"><span class="ic2">4<span class="ok"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 6.4l2.6 2.4L10 3.4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span><span class="name">First read of your figures</span><span class="detail"></span><span class="bar"><i></i></span></li>
+        <li class="step"><span class="ic2">5<span class="ok"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 6.4l2.6 2.4L10 3.4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span><span class="name">Opening your dashboard</span><span class="detail"></span><span class="bar"><i></i></span></li>
+      </ol>
+    </div>
+
+    <svg id="scene" viewBox="0 0 810 720" aria-hidden="true">
+      <defs>
+        <linearGradient id="face" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fffdfa"/><stop offset="1" stop-color="#ece6dc"/></linearGradient>
+        <linearGradient id="lit" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9f6f6"/><stop offset="1" stop-color="#b9e4e3"/></linearGradient>
+        <linearGradient id="plane" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7fe0e2" stop-opacity=".12"/><stop offset="1" stop-color="#7fe0e2" stop-opacity=".5"/></linearGradient>
+        <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%"><feDropShadow dx="0" dy="14" stdDeviation="12" flood-color="#021d1e" flood-opacity=".45"/></filter>
+        <filter id="glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+      <g id="stack"></g>
+    </svg>
+
+    <div class="panel" id="pStates">
+      <div class="group"><h3>Counts as open</h3><div class="chips" id="chipsOpen"></div></div>
+      <div class="group"><h3>Counts as closed</h3><div class="chips" id="chipsClosed"></div></div>
+      <div class="group"><h3>SLA definitions that apply</h3><div id="slas"></div></div>
+    </div>
+    <div class="panel" id="pSupport">
+      <div class="group"><h3>What this instance can show</h3><div class="rows" id="rows"></div></div>
+    </div>
+    <div class="err2" id="e2" hidden></div>
+  </div>
+</div>
+
+<script type="module">
+const $ = (id) => document.getElementById(id)
+const api = (m, p, b) => fetch(p, { method: m, headers: { 'content-type': 'application/json' }, body: b ? JSON.stringify(b) : undefined }).then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j })
+const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+const fmt = (n) => Math.round(n).toLocaleString('en-US')
+const params = new URLSearchParams(location.search)
+const DEMO = params.has('demo')
+let quick = matchMedia('(prefers-reduced-motion: reduce)').matches || params.has('quick')
+const wait = (ms) => new Promise((r) => setTimeout(r, quick ? 0 : ms))
+const setStep = (n) => [...document.querySelectorAll('.stepsline span')].forEach((s, i) => { s.classList.toggle('on', i === n); s.classList.toggle('done', i < n) })
+
+// ---- Sign in.
+async function signIn(user) {
+  $('e1').hidden = true
+  try {
+    const r = DEMO ? { user, tenant: 'Acme (demo tenant)' } : await api('POST', '/api/signin', { user })
+    $('hello').textContent = `Signed in as ${r.user} · ${r.tenant}`
+    await toConnect()
+  } catch (e) { $('e1').textContent = 'Could not sign in: ' + e.message; $('e1').hidden = false }
+}
+$('sso').onclick = () => signIn($('u').value || 'sdm@ust.com')
+$('b1').onclick = () => signIn($('u').value || 'sdm@ust.com')
+$('u').addEventListener('keydown', (e) => { if (e.key === 'Enter') signIn($('u').value) })
+
+// ---- Connect stage: scale 1280x720 to the window.
+function fit() {
+  const s = Math.min((innerWidth - 36) / 1280, (innerHeight - 36) / 720, 1.35)
+  $('stage').style.transform = `scale(${s})`
+}
+addEventListener('resize', fit)
+async function toConnect() {
+  const c = DEMO ? { instance_url: 'https://acme.service-now.com', client_id: 'a1b2c3…f9e8', credential: 'in secrets store' } : await api('GET', '/api/connection').catch(() => ({}))
+  $('inst').value = c.instance_url ?? ''; $('cid').value = c.client_id ?? ''; $('cred').textContent = c.credential ? 'credential ' + c.credential : 'credential in secrets store'
+  $('host').textContent = (c.instance_url ?? '').replace(/^https?:\/\//, '')
+  $('signin').hidden = true; $('connect').hidden = false; fit(); document.title = 'NowOps · connect'
+  stack.build(DEFAULT_TABLES.map((name) => ({ name })))
+  $('inst').focus()
+}
+
+// =====================================================================================================
+// The stack: one isometric plate per table, drawn in code. State objects per plate; render() paints them,
+// so the same picture works whether the scan takes five seconds or thirty.
+// =====================================================================================================
+const NS = 'http://www.w3.org/2000/svg'
+const WORD = { incident: 'incidents', task_sla: 'SLAs', contract_sla: 'SLA definitions', sc_req_item: 'request items', sc_request: 'requests', sysapproval_approver: 'approvals', change_request: 'changes', problem: 'problems', kb_knowledge: 'knowledge', kb_use: 'article uses', cmdb_ci: 'CIs', cmdb_ci_server: 'servers', cmdb_ci_business_app: 'business apps', cmdb_ci_appl: 'applications', cmdb_ci_database: 'databases', cmdb_rel_ci: 'CI relations', cmdb_health_result: 'CMDB health', alm_license: 'entitlements', sn_si_incident: 'security incidents', sn_vul_vulnerable_item: 'vulnerable items', em_alert: 'alerts', metric_instance: 'metrics', asmt_assessment_instance: 'surveys' }
+const DEFAULT_TABLES = ['incident', 'task_sla', 'sc_req_item', 'change_request', 'problem', 'kb_knowledge', 'cmdb_ci', 'alm_license']
+const N = 8, W = 150, H = 75, T = 10, CX = 250
+// Geometry is bounded to the deck: plates span y-75..y+85, so the exploded stack sits inside 25..605 of the 720 stage.
+const compactY = (i) => 316 + i * 16, explodedY = (i) => 100 + i * 60
+const el = (tag, attrs, parent) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (parent) parent.appendChild(n); return n }
+const topPts = `0,${-H} ${W},0 0,${H} ${-W},0`
+
+// A tiny tween engine over plain state objects. Every frame re-renders from state.
+const tweens = new Set()
+const EASE = { out: (t) => 1 - (1 - t) ** 3, inout: (t) => t < .5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2, in: (t) => t * t * t, lin: (t) => t, back: (t) => 1 + 2.7 * (t - 1) ** 3 + 1.7 * (t - 1) ** 2 }
+function tween(obj, to, dur, ease = 'out') {
+  return new Promise((res) => { if (quick) dur = 0; const from = Object.fromEntries(Object.keys(to).map((k) => [k, obj[k]])); const t0 = performance.now(); const tw = { step(now) { const p = dur ? Math.min(1, (now - t0) / dur) : 1, e = EASE[ease](p); for (const k in to) obj[k] = from[k] + (to[k] - from[k]) * e; if (p >= 1) { tweens.delete(tw); res() } } }; tweens.add(tw); kick() })
+}
+let raf = 0
+function kick() { if (!raf) raf = requestAnimationFrame(frame) }
+function frame(now) { raf = 0; for (const tw of [...tweens]) tw.step(now); stack.render(); if (tweens.size) kick() }
+
+const stack = (() => {
+  const g0 = $('stack'); let plates = []
+  const scanS = { y: -80, o: 0 }, stackS = { x: 0, s: 1, o: 1 }
+  let scanG, sweepAnim = null
+  function build(list) {
+    g0.innerHTML = ''; plates = []
+    list.slice(0, N).forEach((t, i) => {
+      const s = { y: compactY(i) + 40, draw: 0, lit: 0, call: 0, rows: 0, o: 0, grid: 0, present: true }
+      const g = el('g', { filter: 'url(#shadow)' }, g0)
+      const sideL = el('polygon', { points: `${-W},0 0,${H} 0,${H + T} ${-W},${T}`, fill: '#cfc4b0', stroke: '#bfb39e', 'stroke-width': 1 }, g)
+      const sideR = el('polygon', { points: `0,${H} ${W},0 ${W},${T} 0,${H + T}`, fill: '#e4dccd', stroke: '#bfb39e', 'stroke-width': 1 }, g)
+      const face = el('polygon', { points: topPts, fill: 'url(#face)' }, g)
+      const lit = el('polygon', { points: topPts, fill: 'url(#lit)', stroke: '#0f8b8d', 'stroke-width': 1.4, 'stroke-linejoin': 'round', opacity: 0 }, g)
+      const edge = el('polygon', { points: topPts, fill: 'none', stroke: '#9fdcdc', 'stroke-width': 1.2, pathLength: 1, 'stroke-dasharray': 1, 'stroke-linejoin': 'round' }, g)
+      const grid = []
+      ;[.2, .4, .6, .8].forEach((k) => grid.push(el('line', { x1: -W + k * W, y1: -k * H, x2: k * W, y2: H - k * H, stroke: '#3db3b5', 'stroke-width': 1, pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1 }, g)))
+      ;[.33, .66].forEach((k) => grid.push(el('line', { x1: -W + k * W, y1: k * H, x2: k * W, y2: -H + k * H, stroke: '#3db3b5', 'stroke-width': 1, 'stroke-opacity': .55, pathLength: 1, 'stroke-dasharray': 1, 'stroke-dashoffset': 1 }, g)))
+      const cg = el('g', {}, g)
+      el('circle', { cx: W + 4, cy: 4, r: 3, fill: '#7fe0e2' }, cg)
+      const cl = el('line', { x1: W + 8, y1: 4, x2: W + 78, y2: 4, stroke: 'rgba(255,255,255,.45)', 'stroke-width': 1, pathLength: 1, 'stroke-dasharray': 1 }, cg)
+      const tn = el('text', { x: W + 88, y: 4, class: 'tname' }, cg); tn.textContent = t.name
+      const td = el('text', { x: W + 88, y: 22, class: 'tdet' }, cg); td.textContent = 'reading…'
+      plates.push({ s, g, sideL, sideR, face, lit, edge, grid, cg, cl, tn, td, name: t.name })
+    })
+    // Bottom plates first so the top of the stack draws over the ones below.
+    plates.slice().reverse().forEach((p) => g0.appendChild(p.g))
+    scanG = el('g', { opacity: 0, filter: 'url(#glow)' }, g0)
+    el('polygon', { points: topPts, fill: 'url(#plane)', stroke: '#7fe0e2', 'stroke-width': 1.8, 'stroke-linejoin': 'round' }, scanG)
+    el('line', { x1: -W - 40, y1: 0, x2: W + 40, y2: 0, stroke: '#7fe0e2', 'stroke-width': 1.2, 'stroke-dasharray': '3 5' }, scanG)
+    render()
+    assemble()
+  }
+  function render() {
+    plates.forEach((p) => {
+      const s = p.s
+      p.g.setAttribute('transform', `translate(${CX},${s.y})`); p.g.setAttribute('opacity', s.o)
+      p.edge.setAttribute('stroke-dashoffset', 1 - s.draw)
+      const body = Math.max(0, (s.draw - .45) * 1.8)
+      p.sideL.setAttribute('opacity', body); p.sideR.setAttribute('opacity', body); p.face.setAttribute('opacity', body)
+      p.lit.setAttribute('opacity', s.present ? s.lit : 0)
+      p.edge.setAttribute('stroke-dasharray', s.present ? 1 : '.02 .015')
+      p.grid.forEach((l, k) => l.setAttribute('stroke-dashoffset', 1 - Math.min(1, Math.max(0, s.grid * 1.6 - k * .12))))
+      p.cg.setAttribute('opacity', Math.min(1, s.call * 1.4)); p.cl.setAttribute('stroke-dashoffset', 1 - s.call)
+    })
+    if (scanG) { scanG.setAttribute('transform', `translate(${CX},${scanS.y})`); scanG.setAttribute('opacity', scanS.o) }
+    g0.setAttribute('transform', `translate(${stackS.x} 0) translate(${CX} 380) scale(${stackS.s}) translate(${-CX} -380)`); g0.setAttribute('opacity', stackS.o)
+  }
+  // Act 1a: plates rise into a compact stack, bottom first, then open out with their callouts.
+  async function assemble() {
+    plates.slice().reverse().forEach((p, i) => setTimeout(() => { tween(p.s, { o: 1, y: compactY(N - 1 - i) }, 700, 'out'); tween(p.s, { draw: 1 }, 800, 'inout') }, quick ? 0 : i * 130))
+    await wait(N * 130 + 700)
+  }
+  async function explode() {
+    plates.forEach((p, i) => setTimeout(() => tween(p.s, { y: explodedY(i) }, 1300, 'inout'), quick ? 0 : i * 50))
+    await wait(700)
+    plates.forEach((p, i) => setTimeout(() => tween(p.s, { call: 1 }, 600), quick ? 0 : i * 120))
+    await wait(N * 120 + 400)
+  }
+  // Act 1b: the scan plane sweeps down through the open stack for as long as the scan runs.
+  function sweep() {
+    let stop = false
+    ;(async () => {
+      tween(scanS, { o: 1 }, 300)
+      while (!stop) {
+        scanS.y = 60; await tween(scanS, { y: 560 }, 3000, 'lin')
+        // A plate shimmers as the plane passes it.
+        plates.forEach((p) => { const dy = Math.abs(scanS.y - p.s.y); void dy })
+      }
+    })()
+    // shimmer: a separate loop that pulses the plate nearest the plane
+    const iv = setInterval(() => { if (stop) return clearInterval(iv); plates.forEach((p) => { const d = Math.abs(scanS.y - p.s.y); if (d < 30 && p.s.lit < .1) { p.s.lit = .55; tween(p.s, { lit: 0 }, 900) } }) }, 60)
+    return () => { stop = true; clearInterval(iv); tween(scanS, { o: 0 }, 400) }
+  }
+  // Act 1c: the scan answered. Relabel the plates with the largest tables, light each one, draw its rows.
+  async function found(profile) {
+    const tables = Object.entries(profile.tables).map(([name, t]) => ({ name, ...t }))
+    const top = tables.filter((t) => t.present).sort((a, b) => (b.rows ?? 0) - (a.rows ?? 0)).slice(0, N)
+    while (top.length < N && tables.length > top.length) { const rest = tables.find((t) => !top.includes(t)); if (!rest) break; top.push(rest) }
+    for (let i = 0; i < plates.length; i++) {
+      const p = plates[i], t = top[i]; if (!t) { tween(p.s, { o: 0 }, 400); continue }
+      p.name = t.name; p.tn.textContent = t.name; p.s.present = !!t.present
+      await wait(140)
+      if (t.present) { tween(p.s, { lit: 1, grid: 1 }, 800); const rowsS = { v: 0 }; const to = t.rows ?? 0; tween(rowsS, { v: to }, 900).then(); const tick = () => { p.td.textContent = `${fmt(rowsS.v)} rows`; if (rowsS.v < to) requestAnimationFrame(tick) }; tick() }
+      else p.td.textContent = t.reason ? 'not reachable' : 'not on this instance'
+    }
+    await wait(500)
+    return { present: tables.filter((t) => t.present).length, total: tables.length, rows: tables.reduce((a, t) => a + (t.rows ?? 0), 0), others: tables.filter((t) => t.present && !top.includes(t)).map((t) => WORD[t.name] ?? t.name) }
+  }
+  // Act 2: fold the stack to the left to make room for the panels.
+  async function aside() {
+    plates.forEach((p) => tween(p.s, { call: 0 }, 350))
+    plates.forEach((p, i) => tween(p.s, { y: compactY(i) }, 1100, 'inout'))
+    await tween(stackS, { x: -110, s: .8 }, 1100, 'inout')
+  }
+  async function dim() { plates.forEach((p) => tween(p.s, { lit: .35 }, 700)); await wait(300) }
+  // Act 4: fold down and leave.
+  async function fold() {
+    plates.forEach((p) => tween(p.s, { y: 380 }, 650, 'in'))
+    await wait(350)
+    await tween(stackS, { s: .25, o: 0 }, 600, 'in')
+  }
+  return { build, render, explode, sweep, found, aside, dim, fold }
+})()
+
+// ---- The left column steps.
+const steps = [...document.querySelectorAll('#steps .step')]
+const stepOn = (i) => { steps[i].classList.add('on'); steps[i].querySelector('.bar i').classList.add('wait') }
+const stepDone = (i, detail) => { steps[i].classList.remove('on'); steps[i].classList.add('done'); steps[i].querySelector('.bar i').classList.remove('wait'); if (detail) steps[i].querySelector('.detail').textContent = detail }
+const stepDetail = (i, detail) => { steps[i].querySelector('.detail').textContent = detail }
+const progress = (k) => { $('connFill').style.transform = `scaleX(${k})` }
+const GROUPS = { core: 'Incidents and SLAs', request: 'Requests and approvals', change: 'Change and approvals', knowledge: 'Knowledge usage', satisfaction: 'Survey responses', cmdb: 'CMDB and estate', sam: 'Software entitlements', security: 'Security', alerts: 'Alerts', metrics: 'ServiceNow metrics' }
+
+// ---- Demo answers, shaped exactly like the server's, so the scene can be reviewed without an instance.
+const DEMO_PROFILE = { tables: Object.fromEntries([['incident', 36049], ['task_sla', 61213], ['cmdb_ci', 3452], ['kb_knowledge', 732], ['sc_req_item', 840], ['change_request', 158], ['alm_license', 202], ['problem', 149], ['sysapproval_approver', 470], ['contract_sla', 44], ['kb_use', 169], ['cmdb_ci_server', 625], ['cmdb_ci_business_app', 50], ['cmdb_rel_ci', 259], ['sn_si_incident', 246], ['sn_vul_vulnerable_item', 91], ['em_alert', 88], ['metric_instance', 8120], ['asmt_assessment_instance', 78], ['sc_request', 0]].map(([n, rows]) => [n, { present: n !== 'sc_request', rows, missing_fields: [] }])),
+  standard_states: [['1', 'New', 16], ['2', 'In Progress', 5382], ['3', 'On Hold', 2], ['6', 'Resolved', 16], ['7', 'Closed', 30013], ['8', 'Canceled', 616]].map(([value, label, count]) => ({ value, label, count, shipped: label })),
+  custom_states: [['9', 'Awaiting Vendor', 1], ['10', 'Awaiting Change', 0], ['11', 'Awaiting Problem', 0], ['12', 'Pending Approval', 3], ['15', 'Triage', 1]].map(([value, label, count]) => ({ value, label, count, default: 'open' })),
+  sla_matches: Object.fromEntries([1, 2, 3, 4].map((p) => [`sla_p${p}_resolution`, { priority: p, sure: true, candidates: [{ name: `Priority ${p} resolution (8 hour)`.replace('8 hour', ['1 hour', '8 hour', '3 day', '5 day'][p - 1]), duration: ['1 Hour', '8 Hours', '3 Days', '5 Days'][p - 1] }] }])) }
+const DEMO_PARAMS = { open_states: '1,2,3,9,10,11,12,15' }
+const DEMO_DEFS = Object.entries({ core: [30, 30], request: [10, 7], change: [8, 8], knowledge: [1, 1], satisfaction: [1, 1], cmdb: [11, 10], sam: [4, 3], security: [3, 3], alerts: [1, 1], metrics: [3, 3] }).flatMap(([group, [n, ok]]) => Array.from({ length: n }, (_, i) => ({ id: `${group}${i}`, group, status: i < ok ? 'available' : 'no data yet' })))
+const slow = (v, ms) => new Promise((r) => setTimeout(() => r(v), quick ? 0 : ms))
+$('skip').onclick = () => { quick = true; $('skip').hidden = true }
+
+// ---- Connect: the real calls, each one advancing the scene.
+$('b2').onclick = async () => {
+  const btn = $('b2'); btn.disabled = true; $('e2').hidden = true
+  $('form').classList.add('gone'); $('steps').classList.add('on'); $('conn').classList.add('on'); $('skip').hidden = false
+  $('h2').textContent = 'Getting to know your instance'; $('lede2').textContent = 'NowOps reads what exists on your instance, so every figure on the dashboard comes with its own recipe you can check.'
+  try {
+    // 1 · Finding tables. The stack opens out and the plane sweeps until the scan answers.
+    stepOn(0); progress(.08)
+    const scanP = DEMO ? slow(DEMO_PROFILE, 9000) : api('POST', '/api/scan')
+    await stack.explode()
+    const stopSweep = stack.sweep()
+    const profile = await scanP
+    stopSweep()
+    const f = await stack.found(profile)
+    stepDone(0, `${f.present} of ${f.total} tables present · ${fmt(f.rows)} rows`); progress(.42)
+    await wait(1500)
+    // 2 · States and SLAs. The stack steps aside; the client's own state labels come out of it.
+    stepOn(1)
+    const pP = DEMO ? slow(DEMO_PARAMS, 600) : api('POST', '/api/skip-confirm')
+    await stack.aside()
+    const p = await pP
+    const openSet = new Set(String(p.open_states).split(','))
+    const states = [...(profile.standard_states ?? []), ...(profile.custom_states ?? [])].filter((s) => s.label && !/not defined|not in choice/.test(s.label))
+    $('chipsOpen').innerHTML = states.filter((s) => openSet.has(String(s.value))).map((s) => `<span class="chip open">${esc(s.label)}<small>${fmt(s.count)}</small></span>`).join('')
+    $('chipsClosed').innerHTML = states.filter((s) => !openSet.has(String(s.value))).map((s) => `<span class="chip">${esc(s.label)}<small>${fmt(s.count)}</small></span>`).join('')
+    const matches = Object.values(profile.sla_matches ?? {}).sort((a, b) => a.priority - b.priority)
+    $('slas').innerHTML = matches.map((m) => m.sure ? `<div class="sla"><span>${esc(m.candidates[0].name)}</span><span>${esc(m.candidates[0].duration || '')}</span></div>` : `<div class="sla miss"><span>P${m.priority} resolution</span><span>${m.candidates.length ? m.candidates.length + ' candidates, pick one in Settings' : 'no definition found'}</span></div>`).join('')
+    $('pStates').classList.add('on')
+    const chips = [...document.querySelectorAll('#pStates .chip')], slas = [...document.querySelectorAll('#pStates .sla')]
+    for (const c of chips) { c.classList.add('in'); await wait(140) }
+    await wait(300)
+    for (const s of slas) { s.classList.add('in'); await wait(200) }
+    stepDone(1, `${openSet.size} states count as open · ${matches.filter((m) => m.sure).length} of ${matches.length} SLA definitions matched${profile.custom_states?.length ? ` · ${profile.custom_states.length} custom` : ''}`); progress(.62)
+    await wait(1200)
+    // 3 · What the instance supports, by group, from the real validation. Meanwhile the first dashboard read starts.
+    stepOn(2)
+    const defsP = DEMO ? slow(DEMO_DEFS, 900) : api('GET', '/api/validate')
+    const rowsP = DEMO ? slow(DEMO_DEFS.map((d) => ({ ...d, value: 1 })), 2500) : api('GET', '/api/dashboard?group=').catch(() => null)
+    const defs = await defsP
+    const byGroup = {}
+    for (const d of defs) { if (d.kind === 'ratio' && d.status === 'derived') continue; const g = byGroup[d.group ?? 'core'] ??= { n: 0, ok: 0 }; g.n++; if (d.status === 'available') g.ok++ }
+    $('pStates').classList.remove('on'); await wait(350)
+    $('rows').innerHTML = Object.entries(GROUPS).filter(([k]) => byGroup[k]).map(([k, label]) => { const g = byGroup[k], none = g.ok === 0; return `<div class="row${none ? ' no' : ''}"><span class="mk">${none ? '' : '<svg width="11" height="11" viewBox="0 0 12 12"><path d="M2 6.4l2.6 2.4L10 3.4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>'}</span><span>${esc(label)}</span><small>${none ? 'not on this instance, hidden' : g.ok === g.n ? `${g.n} measure${g.n === 1 ? '' : 's'}` : `${g.ok} of ${g.n} measures`}</small></div>` }).join('')
+    $('pSupport').classList.add('on'); stack.dim()
+    for (const r of document.querySelectorAll('#rows .row')) { r.classList.add('in'); await wait(180) }
+    const n = defs.filter((d) => d.status === 'available').length
+    stepDone(2, `${n} of ${defs.length} measures available · the rest stay hidden with their reason`); progress(.8)
+    // 4 · First read of the figures, capped at twelve seconds so a slow instance never holds the person up.
+    stepOn(3)
+    const rows = await Promise.race([rowsP, new Promise((r) => setTimeout(() => r(null), quick ? 0 : 12000))])
+    const live = rows ? rows.filter((r) => r.status === 'available').length : 0
+    stepDone(3, rows ? `${live} figures read and cached, the dashboard opens warm` : 'the dashboard will read them as it opens'); progress(.95)
+    await wait(600)
+    // 5 · Fold and open.
+    stepOn(4); setStep(2)
+    $('pSupport').classList.remove('on')
+    await stack.fold()
+    $('finale').classList.add('on'); stepDone(4, 'Dashboard ready'); progress(1); $('skip').hidden = true
+    await wait(1400)
+    if (DEMO) { $('finaleP').textContent = 'Demo complete. Reload to play again; without ?demo this hands over to the dashboard.'; return }
+    $('stage').style.transition = 'opacity .5s'; $('stage').style.opacity = '0'
+    await wait(450)
+    location.href = '/app-next.html'
+  } catch (e) {
+    $('e2').textContent = 'Could not connect: ' + e.message + '. Check the instance URL and the credential, then try again.'; $('e2').hidden = false
+    btn.disabled = false; $('form').classList.remove('gone'); $('skip').hidden = true
+    steps.forEach((s) => { s.classList.remove('on'); s.querySelector('.bar i').classList.remove('wait') })
+  }
+}
+if (DEMO) signIn('demo@client.com')
+</script></body></html>

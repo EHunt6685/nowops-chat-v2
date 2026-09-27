@@ -139,6 +139,26 @@ Each entry: what was decided, why, what follows from it, and what would make us 
 
 ---
 
+## D-009 · Settings live behind the gear in the top bar, as a page in the same frame
+
+**Date:** 2026-09-24 · **Status:** Active, build deferred
+
+**Decision.** The gear icon already in the top bar of the app is the single entry to settings. Settings open as a page at the `#settings` hash, inside the same frame as Dashboard and Resolve, so the top bar, the tenant switch and the assistant stay in place. There is no separate admin site and no settings inside individual tiles.
+
+**Sections, in this order.**
+1. **Connection.** Instance URL, credential status, last successful call. The automatic choices from D-008 with their evidence: the SLA definition picked and why; each custom state with the unresolved share that classified it. An override beside each choice. Change notices when a re-resolved value differs from the stored one.
+2. **Tiles.** Every definition, grouped by page, with its current state (available, not available with reason, no data yet) and an on/off switch. Tiles hidden by default under D-008 show as off here and can be turned on when the client starts recording that data.
+3. **Resolve.** The "Writes on" and "Model off" pills shown on the queue page become real switches here, with the audit log of writes beneath them.
+4. **Appearance.** The theme toggle moves in from the top bar; the bar keeps a shortcut.
+
+**Why.** The mockup already has the gear and a working theme button beside it, so the gear is where a user will look. D-008 removes onboarding screens and needs a home for the override and visibility controls it introduces; a page in the existing frame reuses the layout and the endpoints (validate, connection, profile) rather than adding a surface.
+
+**Status of the build.** Not built. In the mockup the gear is a dead link. Sections 1 and 2 need one small server addition each: exposing the resolution evidence with the profile, and a per-tenant tile visibility map with a filter in the dashboard render. Sections 3 and 4 are re-homing controls that exist. Deferred until the dashboard tile set settles; building settings for tiles that are still moving would be rework.
+
+**Revisit when.** The tile list stabilises after the Operational and Strategic split is agreed, or a client needs the override path before then.
+
+---
+
 ## Pending decisions
 
 Open questions that shape the architecture. Each names what it affects. Answered items become numbered entries above.

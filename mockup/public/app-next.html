@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NowOps</title>
+<title>NowOps · next</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-8 -8 91 91'%3E%3Crect x='-8' y='-8' width='91' height='91' rx='18' fill='%23141416'/%3E%3Cpath fill='%23fff' d='M12.942 45.532c4.351 0 8.691 1.844 10.687 5.182l-4.722 3.82c-1.607-1.448-3.566-2.505-6.004-2.505-2.633 0-3.917 1.075-3.917 2.076 0 1.328 1.228 2.103 3.917 2.766l2.411.586c6.802 1.64 9.302 4.792 9.302 8.734C24.616 71.383 19.98 75 12.23 75 7.894 75 2.548 73.183.487 69.445l4.723-3.82c1.912 1.939 4.076 3.11 6.98 3.11 2.514 0 4.51-.839 4.51-2.347 0-1.21-.911-1.677-3.402-2.301l-2.53-.625c-6.762-1.678-9.38-5.491-9.38-9.16 0-4.75 4.2-8.77 11.554-8.77zm54.941.81v6.613h-8.279v21.16h-7.65v-21.16h-8.278v-6.613h24.207zM7.618 0v16.46c0 3.279 1.871 5.146 4.916 5.146 3.044 0 4.877-1.867 4.877-5.146V0h7.617v16.424c0 7.635-4.57 12.234-12.455 12.234C4.376 28.658 0 23.864 0 16.424V0h7.618zm53.555 8.233V19.02H50.386V8.233h10.787z'/%3E%3C/svg%3E">
 <style>
 /* ---------------------------------------------------------------------------------------------
@@ -115,7 +115,35 @@ main{background:var(--main);padding:4px 22px 150px;min-width:0;flex:1;border-rad
 .ibtn:hover{color:var(--ink);background:var(--card2)}
 .ibtn .ic{width:19px;height:19px}
 .ibtn.dark{background:var(--ink);color:var(--frame);border-color:var(--ink)}
-.lede{margin:0 0 18px;color:var(--ink2);font-size:13px;max-width:70ch}
+.lede{margin:0 0 14px;color:var(--ink2);font-size:13px;max-width:70ch}
+.subnav{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px;animation:rise .5s var(--ease) both;animation-delay:.12s}
+.subnav a{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px 0 6px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink2);font-size:13px;font-weight:600;text-decoration:none;transition:background .15s,color .15s,border-color .15s}
+.subnav a i{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--card2);color:var(--ink2);font-size:11px;font-style:normal;font-variant-numeric:tabular-nums}
+.subnav a:hover{border-color:var(--ust-teal-2);color:var(--ink)}
+.subnav a.on{background:var(--ust-teal-2);border-color:var(--ust-teal-2);color:#fff}.subnav a.on i{background:rgba(255,255,255,.2);color:#fff}
+.card.period{display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:12px 18px}.card.period b{font-size:13px}
+body.resolve .subnav{display:none}
+.tbl.wl{width:100%;table-layout:fixed}
+.card .tbl.wl td,.card .tbl.wl th{text-align:left;font-family:var(--sans);font-weight:400;white-space:normal;vertical-align:top;overflow-wrap:anywhere}
+.card .tbl.wl th{font-weight:600;color:var(--ink2)}
+.card .tbl.wl th:first-child{width:112px}.card .tbl.wl th:nth-child(2){width:38%}
+.card .tbl.wl td:first-child{max-width:none;white-space:nowrap;font-family:var(--mono);font-size:12.5px}
+.kpi.drill{cursor:pointer;position:relative;transition:box-shadow .2s,transform .2s}
+.kpi.drill:hover{box-shadow:var(--shadow-lg);transform:translateY(-1px)}
+.kpi.drill:focus-visible{outline:2px solid var(--ust-teal-2);outline-offset:2px}
+.kpi.drill .dr{position:absolute;right:14px;bottom:12px;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--acc-bg);color:var(--acc-ink);transition:transform .25s var(--ease),background .2s,color .2s}
+.kpi.drill .dr .ic{width:14px;height:14px}
+.kpi.drill:hover .dr{transform:translateX(3px)}
+.kpi.drill.on{border-color:var(--ust-teal-2);box-shadow:0 0 0 2px var(--ust-teal-2) inset}
+.kpi.drill.on .dr,.kpi.drill.on:hover .dr{background:var(--ust-teal-2);color:#fff;transform:rotate(90deg)}
+.card.dpanel{grid-column:span 12;position:relative;padding:0;animation:cardin .4s var(--ease) both;border-color:var(--ust-teal-2)}
+.card.dpanel::before{content:'';position:absolute;top:-8px;left:var(--x,48px);width:14px;height:14px;background:var(--card);border-left:1px solid var(--ust-teal-2);border-top:1px solid var(--ust-teal-2);transform:rotate(45deg)}
+.dpanel .dh{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line)}
+.dpanel .dh b{font-size:14px}.dpanel .dh .sub{font-size:12.5px}.dpanel .dh .r{margin-left:auto}
+.dpanel .dbody{padding:4px 8px}
+.dpanel .recipe{display:block;padding:10px 16px 12px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.dpanel .recipe code{display:inline;padding:1px 6px;margin:0 2px;border-radius:6px;background:var(--card2);font-size:11.5px}
+@media (prefers-reduced-motion:reduce){.kpi.drill,.kpi.drill .dr,.card.dpanel{transition:none;animation:none}}
 
 /* ---- Cards and the grid. */
 .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
@@ -724,6 +752,7 @@ main>*{position:relative}
 <main>
   <h1 id="title" class="ptitle">Loading</h1>
   <p class="lede" id="lede"></p>
+  <nav id="subnav" class="subnav" aria-label="Sections" hidden></nav>
   <div id="page"></div>
   <div id="resolve" hidden></div>
   <div class="foot" id="foot"></div>
@@ -837,6 +866,7 @@ id_('themebtn').onclick = () => setTheme(isDark() ? 'light' : 'dark')
 
 // ---- Icons (Lucide, ISC). Geometry only; size and colour come from CSS.
 const ICONS = {
+  strategic: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/>',
   overview: '<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
   assistant: '<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/>',
   operational: '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>',
@@ -1029,7 +1059,7 @@ const shortName = (n) => SHORT[n] ?? n
 const dotClass = (v, warn, bad) => v == null ? 'mute' : v >= bad ? 'bad' : v >= warn ? 'warn' : ''
 /** Month-over-month delta as a pill, unless the previous month is one of the thin data-load months. */
 function deltaPill(cur, prev, thinLabels, prevLabel) {
-  if (!prev || cur == null || thinLabels.includes(prevLabel)) return `<span class="pill flat" title="Previous month is too sparse to compare">n/a</span>`
+  if (!prev || cur == null || thinLabels.includes(prevLabel)) return ''
   const d = (cur - prev) / prev * 100, s = `${d >= 0 ? '+' : ''}${d.toFixed(0)}%`
   return pill(Math.abs(d) < 1 ? 'flat' : d > 0 ? 'up' : 'down', s)
 }
@@ -1548,22 +1578,29 @@ function pageAnswer(message) {
 function chatContext() {
   const me = person(), q = R.queue
   const user = me ? { id: me.id, name: me.name, groups: q && q.me.id === me.id ? q.me.groups : [] } : undefined
-  return { user, page: R.view === 'dash' ? (location.hash.slice(1) || 'overview') : R.view, ticket: R.cur?.number }
+  return { user, page: R.view === 'dash' ? (location.hash.slice(1).split('&')[0] || 'strategic') : R.view, ticket: R.cur?.number }
 }
 
 // ---- Pages
 const PAGES = {
-  overview: { title: 'General metrics', lede: 'What a service delivery manager checks first. Every number opens its recipe and the records behind it.' },
-  operational: { title: 'Operational', lede: 'The live ticket picture across incidents, requests, changes and problems.' },
-  sla: { title: 'SLA performance', lede: 'Attainment as ServiceNow measured it, breaches, and what is about to breach.' },
-  backlog: { title: 'Backlog and aging', lede: 'Opened against resolved, how long open work has waited, and how fast it resolves.' },
-  change: { title: 'Change and approvals', lede: 'Change outcomes, emergency share, and approvals waiting.' },
-  security: { title: 'Security', lede: 'Security incidents and vulnerable items. Shown only where the plugins exist.' },
-  cmdb: { title: 'CMDB and assets', lede: 'Infrastructure inventory, warranty exposure, software entitlements and alerts.' },
-  knowledge: { title: 'Knowledge and satisfaction', lede: 'Article usage, survey responses and reopened work.' },
-  estate: { title: 'Application 360', lede: 'The estate behind the service. Pick an application to see its own picture.' },
+  strategic: { title: 'Strategic', sections: [
+    ['commitments', 'Commitments', 'Are we meeting what we promised: attainment as ServiceNow measured it, and where the breaches land.'],
+    ['workload', 'Workload & quality', 'Is the workload sustainable and how well do we work: opened against resolved, time to resolve, handovers and rework.'],
+    ['change', 'Change', 'Change outcomes: success, emergency share and approval cycle time.'],
+    ['knowledge', 'Knowledge & CSAT', 'Article usage and survey responses. Thin on this instance; they earn charts once a client has volume.'],
+    ['app360', 'Application 360', 'The estate behind the service: pick an application, then the configuration and portfolio around it.'],
+    ['software', 'Software', 'Software entitlements from Software Asset Management: what we own, what is in use, what it costs.'],
+    ['cmdb', 'CMDB health', 'Whether the CMDB can be trusted, and whether the server estate is covered.'],
+  ] },
+  operational: { title: 'Operational', sections: [
+    ['incidents', 'Incidents', 'What is about to breach and where the open incidents sit. Tiles with an arrow open their list, ranked so the top row is the one to pick up.'],
+    ['aging', 'Waited too long', 'Old open work is a breach that already happened quietly. Tiles with an arrow open their list.'],
+    ['requests', 'Requests & approvals', 'Request items wait on approval before anyone can fulfil them. Tiles with an arrow open their list.'],
+    ['changes', 'Changes & problems', 'Open changes and the problems behind repeating incidents.'],
+    ['security', 'Security & monitoring', 'Open security incidents, critical vulnerabilities and active alerts. Shown only where the plugins exist.'],
+  ] },
 }
-const NAV = [['overview', 'Home', 'sla_attainment'], ['operational', 'Operational', 'open_incidents'], ['sla', 'SLA performance', 'sla_attainment'], ['backlog', 'Backlog & aging', 'backlog'], ['change', 'Change & approvals', 'change_success_rate'], ['knowledge', 'Knowledge & CSAT', 'kb_uses'], ['estate', 'Application 360', 'servers'], ['security', 'Security', 'security_open'], ['cmdb', 'CMDB & assets', 'servers']]
+const NAV = [['strategic', 'Strategic', 'sla_attainment'], ['operational', 'Operational', 'open_incidents']]
 const LENS = { operational: 'Service review', estate: 'Estate' }
 const short = (d) => !d || d.status !== 'available' ? '' : d.kind === 'ratio' ? d.value : fmt(d.value)
 const PCOL = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)']
@@ -1599,6 +1636,47 @@ id_('page').addEventListener('mouseover', (e) => {
 })
 id_('page').addEventListener('mouseout', (e) => { const box = e.target.closest('.sync'); if (box && !box.contains(e.relatedTarget)) box.querySelectorAll('[data-k]').forEach((n) => n.classList.remove('hk', 'dim')) })
 
+// ---- Drill: a tile with a list behind it opens that list right under its row. Read-only; actions stay in Resolve.
+// Declared before render() so the page code can reference DRILL and nextTiles on the first paint.
+let nextTiles = null
+const INC_FIELDS = ['number', 'short_description', 'priority', 'assigned_to', 'opened_at'], INC_LABELS = ['Ticket', 'Title', 'Priority', 'Assigned to', 'Opened']
+const DRILL = {
+  approaching_breach: { title: 'SLAs at risk, closest to breach first', sub: 'Sorted by elapsed share of the target; many SLAs on this instance carry no planned end time.', table: 'task_sla', fields: ['task.number', 'task.short_description', 'task.priority', 'task.assignment_group', 'business_percentage'], labels: ['Ticket', 'Title', 'Priority', 'Group', 'Elapsed %'], order: '-business_percentage', q: 'active=true^has_breached=false^business_percentage>80' },
+  active_major: { title: 'Open P1 and P2, oldest first', sub: 'Every open major incident across all teams.', table: 'incident', fields: INC_FIELDS, labels: INC_LABELS, order: 'opened_at', q: 'stateIN{{open_states}}^priorityIN1,2' },
+  open_p1: { title: 'Open P1, oldest first', sub: 'Every open critical incident across all teams.', table: 'incident', fields: INC_FIELDS, labels: INC_LABELS, order: 'opened_at', q: 'stateIN{{open_states}}^priority=1' },
+  unassigned: { title: 'Unassigned incidents, oldest first', sub: 'Open, with nobody assigned. The group column says whose queue it is sitting in.', table: 'incident', fields: ['number', 'short_description', 'priority', 'assignment_group', 'opened_at'], labels: ['Ticket', 'Title', 'Priority', 'Group', 'Opened'], order: 'opened_at', q: 'stateIN{{open_states}}^assigned_toISEMPTY' },
+  aged_90: { title: 'Open longer than 90 days, oldest first', sub: 'Still open, opened more than 90 days ago.', table: 'incident', fields: INC_FIELDS, labels: INC_LABELS, order: 'opened_at', q: 'stateIN{{open_states}}^opened_at<javascript:gs.daysAgoStart(90)' },
+  on_hold: { title: 'On hold, longest first', sub: 'With the reason each one is waiting.', table: 'incident', fields: ['number', 'short_description', 'priority', 'hold_reason', 'opened_at'], labels: ['Ticket', 'Title', 'Priority', 'Hold reason', 'Opened'], order: 'opened_at', q: 'state=3' },
+  ritm_awaiting_approval: { title: 'Request items awaiting approval, by approver', sub: 'One row per pending approver, oldest request first. The request page in Resolve has Approve and Reject.', table: 'sysapproval_approver', fields: ['sysapproval.number', 'sysapproval.short_description', 'approver', 'sysapproval.requested_for', 'sys_created_on'], labels: ['Item', 'Title', 'Approver', 'Requested for', 'Waiting since'], order: 'sys_created_on', q: 'state=requested^source_table=sc_req_item' },
+  ritm_past_due: { title: 'Request items past due, most overdue first', sub: 'Active, due date before today.', table: 'sc_req_item', fields: ['number', 'short_description', 'cat_item', 'assigned_to', 'due_date'], labels: ['Item', 'Title', 'Catalog item', 'Assigned to', 'Due'], order: 'due_date', q: 'active=true^due_date<javascript:gs.beginningOfToday()' },
+}
+const cellV = (raw) => String((raw && typeof raw === 'object' ? raw.display_value : raw) ?? '')
+function drillTable(spec, rows) {
+  const cell = (row, f, i) => { const v = cellV(row[f]); return i === 0 && /^(INC|RITM)\d+$/.test(v) ? `<a href="#resolve/${v}" style="color:var(--acc-ink);font-weight:600">${esc(v)}</a>` : esc(v.length > 70 ? v.slice(0, 69) + '…' : v) }
+  return `<table class="tbl wl"><tr>${spec.labels.map((l) => `<th>${esc(l)}</th>`).join('')}</tr>${rows.length ? rows.map((row) => `<tr>${spec.fields.map((f, i) => `<td>${cell(row, f, i)}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${spec.fields.length}" class="sub">Nothing waiting.</td></tr>`}</table>`
+}
+function closeDrill() { document.querySelectorAll('.dpanel').forEach((p) => p.remove()); document.querySelectorAll('.kpi.drill.on').forEach((t) => t.classList.remove('on')) }
+async function openDrill(tile) {
+  const id = tile.dataset.drill, spec = DRILL[id]; if (!spec) return
+  const was = tile.classList.contains('on'); closeDrill(); if (was) return
+  const d = cache?.d?.[id] ?? nextTiles?.[id]
+  // The panel lands after the last tile of the row, so the row stays put and the list opens under it.
+  let anchor = tile; while (anchor.nextElementSibling?.classList.contains('kpi')) anchor = anchor.nextElementSibling
+  const g = anchor.parentElement.getBoundingClientRect(), tr = tile.getBoundingClientRect()
+  const panel = el(`<div class="card dpanel" style="--x:${Math.round(tr.left - g.left + tr.width / 2 - 7)}px"><div class="dh"><b>${esc(spec.title)}</b>${d?.status === 'available' ? `<span class="pill flat">${fmt(d.value)} in total</span>` : ''}<span class="sub">${esc(spec.sub)}</span><div class="r"><button type="button" class="btn sm" data-drill-close>Close</button></div></div><div class="tscroll dbody"><p class="sub" style="padding:12px 8px">Loading the list…</p></div><div class="recipe"><code>${esc(spec.table)}</code> where <code>${esc(spec.q)}</code>, ordered by <code>${esc(spec.order)}</code>, first 20${d?.status === 'available' ? ` of ${fmt(d.value)}` : ''}. Numbers open in Resolve.${d?.url ? ` <a href="${esc(d.url)}" target="_blank" rel="noopener">Open all in ServiceNow ${icon('link')}</a>` : ''}</div></div>`)
+  const show = () => { tile.classList.add('on'); anchor.after(panel) }
+  if (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) document.startViewTransition(show); else show()
+  try { const r = await apiJ('GET', `/api/list?table=${spec.table}&fields=${spec.fields.join(',')}&order=${spec.order}&limit=20&q=${encodeURIComponent(spec.q)}`); if (panel.isConnected) panel.querySelector('.dbody').innerHTML = drillTable(spec, r.rows ?? []) }
+  catch (e) { if (panel.isConnected) panel.querySelector('.dbody').innerHTML = `<p class="sub" style="padding:12px 8px">Could not load the list: ${esc(e.message)}</p>` }
+}
+id_('page').addEventListener('click', (e) => {
+  if (e.target.closest('[data-drill-close]')) return closeDrill()
+  const t = e.target.closest('.kpi.drill'); if (!t || e.target.closest('.cc, a, .recipe')) return
+  openDrill(t)
+})
+id_('page').addEventListener('keydown', (e) => { const t = e.target.closest?.('.kpi.drill'); if (t && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDrill(t) } })
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrill() })
+
 async function render() {
   if (!cache) await load()
   // Two surfaces share the frame. #resolve… hashes belong to Resolve; everything else is the dashboard.
@@ -1608,12 +1686,16 @@ async function render() {
   document.body.classList.toggle('ticket', isRes && /^resolve\/INC/i.test(hash))
   document.querySelectorAll('#mode a').forEach((a) => a.classList.toggle('on', (a.dataset.m === 'resolve') === isRes))
   id_('page').hidden = id_('foot').hidden = isRes; id_('resolve').hidden = !isRes
+  id_('subnav').hidden = true
   if (isRes) { await renderResolve(hash); return }
   R.view = 'dash'; R.ticket = null; R.cur = null; setAvatar(); paintCtx()
   const { rows, s, d } = cache
-  const page = (location.hash.slice(1).split('&')[0] || 'overview'); const meta = PAGES[page] ?? PAGES.overview
+  const [page0, sub0] = location.hash.slice(1).split('&')[0].split('/'); const page = PAGES[page0] ? page0 : 'strategic', meta = PAGES[page]
+  const section = meta.sections.find((x) => x[0] === sub0) ?? meta.sections[0], sub = section[0]
+  id_('subnav').hidden = false
+  id_('subnav').innerHTML = meta.sections.map(([sid, n], i) => `<a href="#${page}/${sid}" class="${sid === sub ? 'on' : ''}"><i>${i + 1}</i>${esc(n)}</a>`).join('')
   document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.p === page))
-  id_('title').textContent = meta.title; id_('lede').textContent = meta.lede
+  id_('title').textContent = meta.title; id_('lede').textContent = section[2]
   const g = id_('page'); g.innerHTML = ''; let grid = null
   // The first group on a page has no heading: the top bar already names the page. Later groups
   // carry a small eyebrow label.
@@ -1658,75 +1740,79 @@ async function render() {
     'Completed incident resolution SLAs by created month.', legend([['Met', 'var(--mark)'], ['Breached', 'var(--mark2)']]) + gapNote(thinM),
     dtable(['Month', 'Met', 'Breached'], s.months.map((m) => [m.label, fmt(m.met), fmt(m.breached)])), 'per calendar month')
 
-  if (page === 'overview') {
-    // Hero: the greeting and the one number the service is judged on, on the brand's dark teal,
-    // with the four figures a delivery manager reaches for next beside it.
-    const met = (att?.detail ?? '').split('÷').map((x) => x.trim())
-    const quick = [['Open incidents', d.open_incidents], ['Open request items', d.open_ritm], ['Major incidents', d.active_major], ['SLAs at risk', d.approaching_breach], ['Due in 72 h', d.due_72h]]
-    add(`<div class="hero2"><div><div class="hi">${esc(dayGreeting())}, ${esc(USER.name)}.</div><div class="ht">SLA attainment · resolution</div>
-      <div class="hfig">${attPct == null ? '—' : `<span data-count-pct="${attPct}">${firstPaint ? '0.0' : attPct.toFixed(1)}</span>`}<small>%</small></div>
-      <div class="hmeter"><i style="width:${Math.max(0, Math.min(100, attPct ?? 0))}%"></i><b style="left:80%" title="target 80%"></b></div>
-      <div class="hsub">${esc(met[0] ?? '')} met of ${esc(met[1] ?? '')} completed · target 80% · ${attPct == null ? '' : attPct >= 80 ? 'on target' : 'below target'}</div></div>
-      <div class="hr">${quick.map(([n, x], j) => `<div style="--j:${j}"><span>${esc(n)}</span><b>${x?.status === 'available' ? (firstPaint && typeof x.value === 'number' ? `<span data-count="${x.value}">0</span>` : fmt(x.value)) : '—'}</b></div>`).join('')}</div></div>`)
-    add(`<div class="c4 grid" style="align-content:stretch">${stat(d.active_major, 12, { warn: 20, bad: 50 }) + stat(d.approaching_breach, 12, { warn: 50, bad: 200 })}</div>`)
-    add(flowCard(8) + attByPriority(4, 236))
-    await addAll(bd('donut', 'Open incidents by priority', 'incident', 'stateIN{{open_states}}', 'priority', { span: 4, top: 5 }),
-      bd('table', 'Open incidents by support group', 'incident', 'stateIN{{open_states}}', 'assignment_group', { span: 5, top: 6, sub: 'top groups, with their share of open work' }))
-    add(`<div class="c3 grid" style="align-content:stretch">${stat(d.open_changes, 12) + stat(d.open_problems, 12)}</div>`)
-    add(sect('Explore', 'Each area holds its full set of measures and charts. Scroll sideways.'))
-    add(`<div class="strip">${NAV.filter(([id]) => id !== 'overview').map(([id, n]) => `<a class="card gcard" href="#${id}"><span class="gi">${icon(id)}</span><span><b>${esc(n)}</b><span class="d">${esc(PAGES[id]?.lede ?? '').split('.')[0]}.</span></span><span class="go">Open ${icon('go')}</span></a>`).join('')}</div>`)
-  }
-  if (page === 'operational') {
-    add(stat(d.open_incidents, 2) + stat(d.open_p1, 2, { warn: 5, bad: 15 }) + stat(d.active_major, 2, { warn: 20, bad: 50 }) + stat(d.on_hold, 2) + stat(d.open_changes, 2) + stat(d.open_problems, 2))
-    add(sect('Where the open incidents are'))
+  const period = () => `<div class="card c12 period"><b>Period</b><select class="sel" disabled title="The date range arrives with the server range in the next round"><option>All time, as measured today</option><option>Last 30 days</option><option>Last quarter</option></select><span class="sub">Every figure in this view is a rate, a trend or a slow-moving total. The range control is drawn but not wired yet; until it is, these are all-time figures.</span></div>`
+  // Figures only this page uses (unassigned, major MTTR, automation share, stale articles, request months).
+  const nx = ['incidents', 'workload', 'knowledge'].includes(sub) ? await api('/api/next') : null
+  if (nx) nextTiles = nx.tiles
+  // A tile with a list behind it: same tile, plus the arrow that says it opens. Drill tiles lead their row.
+  const dstat = (x, span, opts, id) => { const h = stat(x, span, opts); return h && DRILL[id] && x?.status === 'available' ? h.replace('<div class="card kpi c', `<div data-drill="${id}" role="button" tabindex="0" title="Open the list" class="card kpi drill c`).replace(/<\/div>$/, `<span class="dr">${icon('go')}</span></div>`) : h }
+  // ---- Operational: present tense only, counts of records that exist now, each opening the records to work.
+  if (page === 'operational' && sub === 'incidents') {
+    add(dstat(d.approaching_breach, 2, { warn: 50, bad: 200 }, 'approaching_breach') + dstat(d.active_major, 2, { warn: 20, bad: 50 }, 'active_major') + dstat(d.open_p1, 2, { warn: 5, bad: 15 }, 'open_p1') + dstat(nx.tiles.unassigned, 2, { warn: 200, bad: 1000 }, 'unassigned') + stat(d.due_72h, 2, { sub: 'unbreached, planned end within 72 hours' }) + stat(d.open_incidents, 2))
+    add(sect('Where the open work is', 'Which team is carrying it, how severe it is, and who holds it.'))
     await addAll(bd('donut', 'Open incidents by priority', 'incident', 'stateIN{{open_states}}', 'priority', { span: 4, top: 5 }),
       bd('tree', 'Open incidents by support group', 'incident', 'stateIN{{open_states}}', 'assignment_group', { span: 8, top: 9, sub: 'area is the count; the largest group is highlighted' }))
-    await addAll(bd('share', 'Open incidents by state', 'incident', 'stateIN{{open_states}}', 'state', { span: 5, top: 6 }),
-      bd('lolli', 'Open incidents by location', 'incident', 'stateIN{{open_states}}^locationISNOTEMPTY', 'location', { span: 7, top: 9 }))
-    add(sect('Requests, changes, problems', 'Request items wait on approval before anyone can fulfil them.'))
-    add(stat(d.open_ritm, 4) + stat(d.ritm_awaiting_approval, 4, { warn: 30, bad: 100 }) + stat(d.open_problems, 4))
-    await addAll(bd('table', 'Open request items by catalog item', 'sc_req_item', 'active=true', 'cat_item', { span: 6, top: 6, sub: 'what is actually being requested' }),
-      bd('donut', 'Problems by state', 'problem', '', 'state', { span: 6, top: 6 }))
+    await addAll(bd('share', 'Open incidents by state', 'incident', 'stateIN{{open_states}}', 'state', { span: 4, top: 6 }),
+      bd('table', 'Open incidents by assignee', 'incident', 'stateIN{{open_states}}^assigned_toISNOTEMPTY', 'assigned_to', { span: 4, top: 6, sub: 'automation accounts included' }),
+      bd('lolli', 'Open incidents by location', 'incident', 'stateIN{{open_states}}^locationISNOTEMPTY', 'location', { span: 4, top: 7 }))
   }
-  if (page === 'sla') {
-    add(gaugeCard() + attByPriority(4) + `<div class="c5 grid" style="align-content:start">${stat(d.sla_breached, 6) + stat(d.approaching_breach, 6, { warn: 50, bad: 200 }) + stat(d.due_72h, 6, { sub: 'unbreached, planned end within 72 hours' }) + stat(d.sla_p1_attainment, 6, { sub: 'P1 met ÷ P1 completed' })}</div>`)
+  if (page === 'operational' && sub === 'aging') {
+    add(dstat(d.aged_90, 3, { warn: 500, bad: 2000 }, 'aged_90') + dstat(d.on_hold, 3, {}, 'on_hold') + stat(d.backlog, 3, { sub: 'in progress, assigned, P2 to P4' }) + stat(d.oldest_open_p1, 3, { sub: 'opened' }))
+    add(agingChart(12))
+    add(sect('Who holds the old work'))
+    await addAll(bd('lolli', 'Open incidents by support group', 'incident', 'stateIN{{open_states}}', 'assignment_group', { span: 6, top: 8 }),
+      bd('table', 'Open incidents by assignee', 'incident', 'stateIN{{open_states}}^assigned_toISNOTEMPTY', 'assigned_to', { span: 6, top: 8, sub: 'automation accounts included' }))
+  }
+  if (page === 'operational' && sub === 'requests') {
+    add(dstat(d.ritm_awaiting_approval, 3, { warn: 30, bad: 100 }, 'ritm_awaiting_approval') + dstat(d.ritm_past_due, 3, { warn: 20, bad: 60 }, 'ritm_past_due') + stat(d.open_ritm, 2) + stat(d.approvals_pending_changes, 2) + stat(d.approvals_pending_requests, 2))
+    await addAll(bd('table', 'Open request items by catalog item', 'sc_req_item', 'active=true', 'cat_item', { span: 6, top: 8, sub: 'what is actually being requested' }),
+      bd('lolli', 'Approvals pending, by what they approve', 'sysapproval_approver', 'state=requested', 'source_table', { span: 6, top: 6, sub: 'change requests and request items are the two that matter' }))
+  }
+  if (page === 'operational' && sub === 'changes') {
+    add(`<div class="c4 grid" style="align-content:stretch">${stat(d.open_changes, 12) + stat(d.open_problems, 12)}</div>`)
+    await addAll(bd('vbars', 'Open changes by priority', 'change_request', 'active=true', 'priority', { span: 4, top: 5 }),
+      bd('donut', 'Problems by state', 'problem', '', 'state', { span: 4, top: 6 }))
+    await addAll(bd('donut', 'Changes by type', 'change_request', 'active=true', 'type', { span: 6, top: 5, sub: 'open changes' }),
+      bd('share', 'Open changes by state', 'change_request', 'active=true', 'state', { span: 6, top: 5 }))
+  }
+  if (page === 'operational' && sub === 'security') {
+    add(stat(d.security_open, 4) + stat(d.critical_vulns, 4) + stat(d.alerts_active, 4))
+    await addAll(bd('donut', 'Open security incidents by priority', 'sn_si_incident', 'active=true', 'priority', { span: 4, top: 5 }),
+      bd('table', 'Open security incidents by assignment group', 'sn_si_incident', 'active=true', 'assignment_group', { span: 8, top: 7 }))
+    await addAll(bd('lolli', 'Open security incidents by location', 'sn_si_incident', 'active=true^locationISNOTEMPTY', 'location', { span: 12, top: 8 }))
+  }
+  // ---- Strategic: rates, trends and slow-moving totals for the service review.
+  if (page === 'strategic' && sub === 'commitments') {
+    add(period())
+    add(gaugeCard() + attByPriority(4) + `<div class="c5 grid" style="align-content:start">${stat(d.sla_p1_attainment, 6, { sub: 'P1 met ÷ P1 completed' }) + stat(d.sla_breached, 6, { sub: 'completed resolution SLAs that breached' })}</div>`)
     add(sect('Trend and where breaches land'))
-    add(slaTrend(7))
-    await addAll(bd('tree', 'Breached SLAs by support group', 'task_sla', 'has_breached=true^task.sys_class_name=incident', 'task.assignment_group', { span: 5, top: 8, sub: 'area is the breach count' }))
-    await addAll(bd('donut', 'SLA stage, all incident SLAs', 'task_sla', 'task.sys_class_name=incident', 'stage', { span: 6, top: 6 }),
-      bd('vbars', 'Breached SLAs by priority', 'task_sla', 'has_breached=true^task.sys_class_name=incident', 'task.priority', { span: 6, top: 5 }))
+    add(slaTrend(6))
+    await addAll(bd('tree', 'Breached SLAs by support group', 'task_sla', 'has_breached=true^task.sys_class_name=incident', 'task.assignment_group', { span: 6, top: 8, sub: 'area is the breach count' }))
   }
-  if (page === 'backlog') {
-    add(stat(d.backlog, 3, { sub: 'in progress, assigned, P2 to P4' }) + stat(d.aged_90, 3, { warn: 500, bad: 2000 }) + stat(d.oldest_open_p1, 3, { sub: 'opened' }) + stat(d.time_in_state, 3, { sub: 'any single state' }))
-    add(stat(d.mtta, 3, { sub: 'incidents · ServiceNow metric' }) + stat(d.ritm_fulfilment_time, 3, { sub: 'request items, opened to closed complete' }) + stat(d.reassignment_rate, 3, { sub: `incidents · ${d.reassignment_rate?.detail ?? ''}` }) + stat(d.ritm_incomplete_pct, 3, { sub: `request items · ${d.ritm_incomplete_pct?.detail ?? ''}` }))
-    add(sect('Flow and age'))
+  if (page === 'strategic' && sub === 'workload') {
+    add(period())
     add(flowCard(12))
-    add(agingChart(7) + mttrChart(5))
-    add(sect('Where the load sits'))
-    await addAll(bd('table', 'Open incidents by assignee', 'incident', 'stateIN{{open_states}}^assigned_toISNOTEMPTY', 'assigned_to', { span: 6, top: 8, sub: 'automation accounts included' }),
-      bd('lolli', 'Open incidents by support group', 'incident', 'stateIN{{open_states}}', 'assignment_group', { span: 6, top: 8 }))
+    const mix = s.months.map((m, i) => ({ bucket: m.label, q: m.opened_q, Incidents: m.opened ?? 0, 'Request items': nx.months[i]?.requests ?? 0 }))
+    add(chart('Incidents vs request items opened', stacked(mix, ['Incidents', 'Request items'], ['var(--mark)', 'var(--s2)'], { w: 560, lw: 50 }), 6,
+      'Incidents by <code>opened_at</code> and request items by <code>opened_at</code>, per calendar month. Break-fix against standardised service.', legend([['Incidents', 'var(--mark)'], ['Request items', 'var(--s2)']]),
+      dtable(['Month', 'Incidents', 'Request items'], mix.map((m) => [m.bucket, fmt(m.Incidents), fmt(m['Request items'])])), 'per calendar month'))
+    await addAll(bd('table', 'Open incidents by title', 'incident', 'stateIN{{open_states}}', 'short_description', { span: 6, top: 8, sub: 'what keeps coming back; each row is a problem record waiting to be raised' }))
+    add(sect('How fast and how well', 'How long resolution takes, how often work is handed on, and how much of it automation closes.'))
+    add(mttrChart(6) + `<div class="c6 grid" style="align-content:start">${stat(d.mtta, 4, { sub: 'incidents · ServiceNow metric' }) + stat(d.reassignment_rate, 4, { sub: `incidents · ${d.reassignment_rate?.detail ?? ''}` }) + stat(nx.tiles.major_mttr, 4, { sub: nx.tiles.major_mttr?.detail ?? '' }) + stat(d.ritm_fulfilment_time, 4, { sub: 'request items, opened to closed complete' }) + stat(d.ritm_incomplete_pct, 4, { sub: `request items · ${d.ritm_incomplete_pct?.detail ?? ''}` }) + stat(nx.tiles.automation_share, 4, { sub: `${nx.tiles.automation_share?.detail ?? ''} · AURA account` })}</div>`)
   }
-  if (page === 'change') {
-    add(stat(d.change_success_rate, 2, { sub: `${d.change_success_rate?.detail ?? ''} with a close code` }) + stat(d.emergency_change_pct, 2, { sub: d.emergency_change_pct?.detail ?? '' }) + stat(d.approvals_pending_changes, 2) + stat(d.approvals_pending_requests, 2) + stat(d.ritm_past_due, 2, { warn: 20, bad: 60 }) + stat(d.approval_time, 2, { sub: 'ServiceNow metric' }))
-    add(sect('Change mix and outcomes'))
-    await addAll(bd('donut', 'Changes by type', 'change_request', '', 'type', { span: 4, top: 5 }),
-      bd('share', 'Changes by close code', 'change_request', 'close_codeISNOTEMPTY', 'close_code', { span: 4, top: 4, sub: 'of the 16 changes that recorded an outcome' }),
-      bd('vbars', 'Open changes by priority', 'change_request', 'active=true', 'priority', { span: 4, top: 5 }))
-    await addAll(bd('lolli', 'Approvals pending, by what they approve', 'sysapproval_approver', 'state=requested', 'source_table', { span: 6, top: 6, sub: 'change requests and request items are the two that matter' }), bd('share', 'Changes by state', 'change_request', '', 'state', { span: 6, top: 5 }))
+  if (page === 'strategic' && sub === 'change') {
+    add(period())
+    add(stat(d.change_success_rate, 4, { sub: `${d.change_success_rate?.detail ?? ''} with a close code` }) + stat(d.emergency_change_pct, 4, { sub: d.emergency_change_pct?.detail ?? '' }) + stat(d.approval_time, 4, { sub: 'ServiceNow metric' }))
+    await addAll(bd('donut', 'Changes by type', 'change_request', '', 'type', { span: 6, top: 5 }),
+      bd('share', 'Changes by close code', 'change_request', 'close_codeISNOTEMPTY', 'close_code', { span: 6, top: 4, sub: 'of the changes that recorded an outcome' }))
   }
-  if (page === 'security') {
-    add(stat(d.security_open, 3) + stat(d.vulnerable_items, 3) + stat(d.critical_vulns, 3) + stat(d.reopened, 3))
-    add(sect('Open security incidents'))
-    await addAll(bd('donut', 'By priority', 'sn_si_incident', 'active=true', 'priority', { span: 4, top: 5 }), bd('table', 'By assignment group', 'sn_si_incident', 'active=true', 'assignment_group', { span: 8, top: 7 }))
-    await addAll(bd('lolli', 'By location', 'sn_si_incident', 'active=true^locationISNOTEMPTY', 'location', { span: 6, top: 8 }), bd('vbars', 'Vulnerable items by risk rating', 'sn_vul_vulnerable_item', 'active=true', 'risk_rating', { span: 6, top: 6 }))
+  if (page === 'strategic' && sub === 'knowledge') {
+    add(period())
+    add(stat(d.kb_uses, 4) + stat(d.csat_responses, 4) + stat(nx.tiles.kb_stale, 4, { sub: nx.tiles.kb_stale?.detail ?? '' }))
+    await addAll(bd('donut', 'Published articles by knowledge base', 'kb_knowledge', 'workflow_state=published', 'kb_knowledge_base', { span: 4, top: 5 }),
+      bd('lolli', 'Article uses by knowledge base', 'kb_use', '', 'article.kb_knowledge_base', { span: 12, top: 8 }))
   }
-  if (page === 'cmdb') {
-    add(stat(d.servers, 2) + stat(d.databases, 2) + stat(d.warranty_expired, 2, { warn: 20, bad: 60 }) + stat(d.entitlements_in_use, 2) + stat(d.perpetual_licences, 2) + stat(d.alerts_active, 2))
-    add(sect('Inventory'))
-    await addAll(bd('tree', 'CIs by class', 'cmdb_ci', '', 'sys_class_name', { span: 7, top: 11, sub: 'area is the count; the largest class is highlighted' }), bd('donut', 'Servers by class', 'cmdb_ci_server', '', 'sys_class_name', { span: 5, top: 5 }))
-    await addAll(bd('lolli', 'CIs by location', 'cmdb_ci', 'locationISNOTEMPTY', 'location', { span: 7, top: 8 }), bd('donut', 'Entitlements by acquisition', 'alm_license', '', 'acquisition_method', { span: 5, top: 5 }))
-  }
-  if (page === 'estate') {
+  if (page === 'strategic' && sub === 'app360') {
     const services = await api('/api/services')
     const sel = location.hash.split('=')[1] || services.find((x) => /SAP Enterprise/.test(x.name))?.id || services[0]?.id
     add(`<div class="card c12"><div class="hd"><p class="t">Application</p></div><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><select id="svc" class="sel">${services.map((x) => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}${x.criticality ? ' · ' + esc(x.criticality) : ''}</option>`).join('')}</select><span class="sub">${services.length} business services on this instance. Ticket tiles need tickets linked to the service; on this instance 9 of 36,038 incidents are.</span></div></div>`)
@@ -1735,32 +1821,25 @@ async function render() {
       const t = (label, k) => `<div class="card kpi c2"><div class="hd"><p class="t">${esc(label)}</p>${controls(false)}</div><div class="n">${fmt(c[k].value)}<span class="dot mute"></span></div><div class="recipe"><code>${esc(c[k].table)} · ${esc(c[k].filter)}</code><a href="${esc(c[k].url)}" target="_blank" rel="noopener">Open these records in ServiceNow ${icon('link')}</a></div></div>`
       add(t('Incidents, all time', 'incidents_all') + t('Open incidents', 'incidents_open') + t('Open P1/P2', 'incidents_p1p2_open') + t('Changes on this CI', 'changes') + t('Problems', 'problems') + t('SLA breaches', 'sla_breached'))
     }
-    add(sect('IT configuration', 'Counted directly from the CMDB; the house tile counts relationships, shown beside it.'))
-    add(stat(d.applications, 2) + stat(d.business_apps, 2) + stat(d.servers, 2) + stat(d.servers_related, 2, { sub: 'house number' }) + stat(d.databases, 2) + stat(d.ci_relationships, 2))
+    add(sect('IT configuration', 'Counted directly from the CMDB.'))
+    add(stat(d.applications, 2) + stat(d.business_apps, 2) + stat(d.servers, 2) + stat(d.databases, 2) + stat(d.ci_relationships, 2) + stat(d.vulnerable_items, 2))
     await addAll(bd('donut', 'Servers by class', 'cmdb_ci_server', '', 'sys_class_name', { span: 5, top: 5 }), bd('tree', 'CIs by class', 'cmdb_ci', '', 'sys_class_name', { span: 7, top: 11, sub: 'area is the count' }))
-    add(sect('Unified software view', 'Software entitlements from Software Asset Management.'))
-    add(stat(d.entitlements_total, 2) + stat(d.entitlements_in_use, 2) + stat(d.entitlements_in_stock, 2) + stat(d.perpetual_licences, 2))
-    await addAll(bd('share', 'In use vs in stock', 'alm_license', '', 'install_status', { span: 4, top: 3 }))
-    await addAll(stackedBreakdown('Software entitlement by state, per product', 'alm_license', '', 'model.display_name,install_status', ['In use', 'In stock'], ['var(--mark)', 'var(--mark2)'], { top: 12, note: 'Entitlements grouped by software product model and install status.' }), stackedBreakdown('Entitlements by vendor and acquisition', 'alm_license', '', 'model.manufacturer,acquisition_method', ['Purchase', 'Lease', 'Rental', 'Device as a Service', 'Loan'], ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--mark2)'], { top: 8, note: 'Vendor by acquisition method.' }))
-    await addAll(listTable('Top entitlements by cost', 'alm_license', ['display_name', 'install_status', 'rights', 'cost'], ['Entitlement', 'State', 'Rights', 'Cost'], '-cost', { limit: 10 }))
-    add(sect('Security', 'Shown only where Security Operations is installed.'))
-    add(stat(d.security_open, 3) + stat(d.vulnerable_items, 3) + stat(d.critical_vulns, 3) + stat(d.alerts_active, 3))
-    await addAll(bd('donut', 'Open security incidents by priority', 'sn_si_incident', 'active=true', 'priority', { span: 4, top: 5 }), bd('table', 'Open security incidents by assignment group', 'sn_si_incident', 'active=true', 'assignment_group', { span: 8, top: 7 }))
-    add(sect('CMDB health and integrity'))
-    add(stat(d.cis_updated_30d, 3) + stat(d.orphan_cis, 3) + stat(d.ci_relationships, 3))
-    await addAll(bd('vbars', 'CIs updated in last 30 days, by class', 'cmdb_ci', 'sys_updated_on>=javascript:gs.daysAgoStart(30)', 'sys_class_name', { span: 6, top: 6 }), bd('lolli', 'CIs by location', 'cmdb_ci', 'locationISNOTEMPTY', 'location', { span: 6, top: 9 }))
     add(sect('Application portfolio'))
     await addAll(bd('vbars', 'Business applications by lifecycle stage', 'cmdb_ci_business_app', 'active=true^life_cycle_stageISNOTEMPTY', 'life_cycle_stage', { span: 6, top: 6 }), bd('donut', 'Business applications by criticality', 'cmdb_ci_business_app', '', 'business_criticality', { span: 6, top: 5 }))
-    add(sect('CIO view', 'Warranty exposure, and the server capacity fields the current dashboard labels "utilization".'))
-    add(stat(d.warranty_expired, 3, { warn: 20, bad: 60 }) + stat(d.warranty_90d, 3) + stat(d.servers_no_warranty, 3))
-    await addAll(breakdown('Servers by installed memory (MB), static capacity', 'cmdb_ci_server', 'ramISNOTEMPTY', 'ram', { top: 8 }), breakdown('Servers by CPU count, static capacity', 'cmdb_ci_server', 'cpu_countISNOTEMPTY', 'cpu_count', { top: 8 }))
-    const svc = id_('svc'); if (svc) svc.onchange = () => { location.hash = 'estate&service=' + svc.value }
+    const svc = id_('svc'); if (svc) svc.onchange = () => { location.hash = 'strategic/app360&service=' + svc.value }
   }
-  if (page === 'knowledge') {
-    add(stat(d.kb_uses, 3) + stat(d.csat_responses, 3) + stat(d.reopened, 3))
-    add(sect('Knowledge'))
-    await addAll(bd('donut', 'Published articles by knowledge base', 'kb_knowledge', 'workflow_state=published', 'kb_knowledge_base', { span: 5, top: 5 }), bd('lolli', 'Article uses by knowledge base', 'kb_use', '', 'article.kb_knowledge_base', { span: 7, top: 8 }))
+  if (page === 'strategic' && sub === 'software') {
+    add(stat(d.entitlements_total, 3) + stat(d.entitlements_in_use, 3) + stat(d.entitlements_in_stock, 3) + stat(d.perpetual_licences, 3))
+    await addAll(stackedBreakdown('Software entitlement by state, per product', 'alm_license', '', 'model.display_name,install_status', ['In use', 'In stock'], ['var(--mark)', 'var(--mark2)'], { top: 12, note: 'Entitlements grouped by software product model and install status.' }), stackedBreakdown('Entitlements by vendor and acquisition', 'alm_license', '', 'model.manufacturer,acquisition_method', ['Purchase', 'Lease', 'Rental', 'Device as a Service', 'Loan'], ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--mark2)'], { top: 8, note: 'Vendor by acquisition method.' }))
+    await addAll(listTable('Top entitlements by cost', 'alm_license', ['display_name', 'install_status', 'rights', 'cost'], ['Entitlement', 'State', 'Rights', 'Cost'], '-cost', { limit: 10 }))
   }
+  if (page === 'strategic' && sub === 'cmdb') {
+    add(stat(d.cis_updated_30d, 3) + stat(d.orphan_cis, 3) + stat(d.warranty_expired, 3, { warn: 20, bad: 60 }) + stat(d.warranty_90d, 3))
+    await addAll(bd('vbars', 'CIs updated in last 30 days, by class', 'cmdb_ci', 'sys_updated_on>=javascript:gs.daysAgoStart(30)', 'sys_class_name', { span: 6, top: 6 }), bd('lolli', 'CIs by location', 'cmdb_ci', 'locationISNOTEMPTY', 'location', { span: 6, top: 9 }))
+    add(sect('Warranty', 'Coverage on the server estate.'))
+    add(stat(d.servers_no_warranty, 4, { sub: 'data quality, not exposure' }) + stat(d.servers, 4) + stat(d.alerts_active, 4))
+  }
+
 
   const off = rows.filter((r) => r.status !== 'available' && r.status !== 'derived')
   id_('foot').innerHTML = `Every number can show how it is measured (the ? on each card) and opens the exact records in ServiceNow.${off.length ? `<div class="offl"><span style="border:0;background:none;padding-left:0">Not on this instance:</span>${off.map((r) => `<span title="${esc(r.reason)}">${esc(r.name)} · ${esc(r.status)}</span>`).join('')}</div>` : ''}`
