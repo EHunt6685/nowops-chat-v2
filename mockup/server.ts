@@ -18,6 +18,8 @@ const sn = makeSnClient(cfg)
 const stats = makeStats(sn)
 const app = express()
 app.use(express.json())
+// The front door is the sign-in page. /index.html still serves the older onboarding prototype.
+app.get('/', (_req, res) => res.sendFile(join(dirname(fileURLToPath(import.meta.url)), 'public', 'app-preview.html')))
 app.use(express.static(join(dirname(fileURLToPath(import.meta.url)), 'public')))
 // The real chatbot, same ServiceNow client, same guardrails. Its /api/chat and /api/health
 // live alongside the mockup's routes so "Ask NowOps" can open a chat panel on any page.
