@@ -1761,7 +1761,7 @@ body.studio-on { overflow: hidden }
 <div id="studio">
 <header>
   <div class="st-brand"><span id="logo" style="display:contents"></span><b>NowOps</b><span>ServiceNow operations, measured</span></div>
-  <div class="st-prog" id="prog"><div class="on">Sign in</div><div>Connect ServiceNow</div><div>First read</div><div class="who" id="who"><i id="who-i">U</i><span id="who-n"></span></div></div>
+  <div class="st-prog" id="prog"><div class="on">Sign in</div><div>Connect ServiceNow</div><div>First read</div><div class="who" id="st-who"><i id="who-i">U</i><span id="who-n"></span></div></div>
 </header>
 
 <aside class="col">
@@ -3738,7 +3738,7 @@ paintHistory(); modeLite()
   // ---- a stat tile from a /api/dashboard or /api/next row
   function setStat(c, d) {
     if (!c || !d) return false
-    if (d.status !== 'available') { c.value = null; c.off = d.status === 'not available' ? 'unavailable' : 'no data yet'; c.reason = d.reason || 'not measurable on this instance'; return true }
+    if (d.status !== 'available') { c.value = null; c.off = /unavailable|not available|error/.test(d.status) ? 'unavailable' : 'no data yet'; c.reason = d.reason || 'not measurable on this instance'; return true }
     delete c.off; delete c.reason
     let v = d.value
     if (d.kind === 'ratio' || c.agg === 'ratio') { v = String(v); ratioParts(c, d) }
@@ -3812,10 +3812,24 @@ paintHistory(); modeLite()
   }
   window.NOWOPS_LIVE_APP = liveApp
 
+  // ---- the server forgets its scan on restart; the page runs it when needed, once, and the connect step starts it early
+  const post = (p) => fetch(p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j })
+  let scanP = null
+  const ensureScanned = () => scanP ??= (async () => {
+    const v = await api('/api/validate').catch(() => null)
+    const unscanned = Array.isArray(v) && v.length > 0 && v.filter((r) => r.kind !== 'ratio').every((r) => r.status !== 'available')
+    if (!unscanned) return false
+    toast('Reading the instance: the server has not scanned it since it started. Figures follow in a moment.')
+    await post('/api/scan'); await post('/api/skip-confirm')
+    return true
+  })()
+  window.NOWOPS_SCAN = ensureScanned
+
   // ---- the run: tiles and series first, then the charts, each followed by a quiet re-render
   async function pool(items, n, fn) { const q = items.slice(); await Promise.all(Array.from({ length: n }, async () => { while (q.length) await fn(q.shift()) })) }
   async function run() {
     let rows, next, series, conn
+    try { await ensureScanned() } catch (e) { toast(`The instance scan failed (${e.message}). Showing the 26 September snapshot.`); return }
     try { [rows, next, series, conn] = await Promise.all([api('/api/dashboard?group='), api('/api/next').catch(() => null), api('/api/series').catch(() => null), api('/api/connection').catch(() => null)]) }
     catch (e) { toast(`Live figures are not available (${e.message}). Showing the 26 September snapshot.`); return }
     let host = 'the instance'; try { host = new URL(conn.instance_url).hostname.split('.')[0] } catch {}
@@ -4118,7 +4132,7 @@ $('#f-email').onsubmit = async (e) => {
 
 async function toConnect(who) {
   $('#who-n').textContent = who; $('#who-i').textContent = who[0].toUpperCase()
-  animate('#who', { opacity: [0, 1], transform: ['translateX(8px)', 'translateX(0px)'] }, { duration: .6, ease: NO.EASE })
+  animate('#st-who', { opacity: [0, 1], transform: ['translateX(8px)', 'translateX(0px)'] }, { duration: .6, ease: NO.EASE })
   progress(1)
   L && L.leave()
   animate('#h1 .w > span', { transform: 'translateY(110%)' }, { duration: .55, delay: stagger(.035), ease: [0.7, 0, 0.84, 0] })
@@ -4286,6 +4300,8 @@ async function read() {
 }
 if (location.hash === '#connect') document.fonts.ready.then(() => setTimeout(() => toConnect('sso@ust.com'), 400))
 
+// ---------------- connecting starts the real scan, so the dashboard's figures are ready when the read finishes
+$('#f-conn').addEventListener('submit', () => { if (location.protocol !== 'file:' && window.NOWOPS_SCAN) NOWOPS_SCAN().catch(() => {}) })
 // ---------------- open the dashboard
 $('#open').addEventListener('click', async (e) => {
   e.preventDefault()
