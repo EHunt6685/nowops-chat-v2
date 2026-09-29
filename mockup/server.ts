@@ -302,6 +302,65 @@ app.get('/api/app', async (req, res) => {
   }))
 })
 
+/** Application map: two hops of CMDB relationships from a service, with the records linked to each CI.
+ *  Nodes are CIs, edges are the ServiceNow relationship types. Counts come from one GROUP BY per table over
+ *  the whole node set, so the map costs a handful of calls whatever its size. */
+app.get('/api/graph', async (req, res) => {
+  const id = String(req.query.service ?? ''), depth = Math.min(4, Math.max(1, Number(req.query.depth) || 3))
+  if (!ID.test(id)) return res.status(400).json({ error: 'bad service id' })
+  res.json(await cached(`graph:${id}:${depth}:${state.params?.open_states}`, async () => {
+    const open = state.params?.open_states ?? '1,2,3'
+    // The walk goes downward only: what the service contains, depends on and runs on. Things that merely share a
+    // server with it (sibling services, other applications) are not drawn; they are listed per node as "also used by".
+    const MAX = 40
+    type Node = { id: string; name: string; cls: string; hop: number; counts: Record<string, number>; up?: boolean; shared: string[] }
+    const nodes: Record<string, Node> = {}, edges: { from: string; to: string; type: string }[] = []
+    const touch = (r: Row, side: 'parent' | 'child', hop: number) => {
+      const nid = vv(r, side); if (!nid) return
+      nodes[nid] ??= { id: nid, name: dv(r, side) || '(unnamed CI)', cls: dv(r, `${side}.sys_class_name`) || vv(r, `${side}.sys_class_name`) || 'CI', hop, counts: {}, shared: [] }
+    }
+    const addEdge = (r: Row) => { const key = `${vv(r, 'parent')}>${vv(r, 'child')}`; if (!edges.some((e) => `${e.from}>${e.to}` === key)) edges.push({ from: vv(r, 'parent'), to: vv(r, 'child'), type: (dv(r, 'type') || '').split('::')[0] || 'related to' }) }
+    const walk = async (ids: string[], hop: number) => {
+      if (!ids.length) return
+      const rel = await rows('cmdb_rel_ci', `parentIN${ids.join(',')}^ORchildIN${ids.join(',')}`, 'parent,child,type,parent.sys_class_name,child.sys_class_name', 300)
+      for (const r of rel) {
+        const p = vv(r, 'parent'), c = vv(r, 'child'), fromP = ids.includes(p), fromC = ids.includes(c)
+        if (fromP && !nodes[c] && Object.keys(nodes).length >= MAX) continue
+        if (fromP) { touch(r, 'child', hop); addEdge(r) } // downstream: drawn
+        else if (fromC && hop === 1) { touch(r, 'parent', hop); nodes[p]!.up = true; addEdge(r) } // what the service belongs to: drawn once, not expanded
+        else if (fromC && nodes[c]) { const n = dv(r, 'parent'); if (n && !nodes[p] && !nodes[c]!.shared.includes(n)) nodes[c]!.shared.push(n) } // shared with something outside the map
+        else if (fromP && nodes[p] && nodes[c]) addEdge(r)
+      }
+    }
+    nodes[id] = { id, name: '', cls: 'Service', hop: 0, counts: {}, shared: [] }
+    // Default depth three reaches the database under the servers under the web tier, where most stacks end.
+    await walk([id], 1)
+    for (let h = 2; h <= depth; h++) await walk(Object.values(nodes).filter((n) => n.hop === h - 1 && !n.up).map((n) => n.id), h)
+    // The centre's name comes from the service record itself, not from an edge.
+    const svc = (await rows('cmdb_ci_service', `sys_id=${id}`, 'name,busines_criticality', 1))[0]
+    if (svc) nodes[id].name = dv(svc, 'name') || vv(svc, 'name')
+    const ids = Object.keys(nodes)
+    // Linked records per CI: one GROUP BY per table. Incidents on the centre also count business_service.
+    const LINKS: Record<string, { table: string; q: string }> = {
+      incidents: { table: 'incident', q: `cmdb_ciIN${ids.join(',')}^stateIN${open}` },
+      changes: { table: 'change_request', q: `cmdb_ciIN${ids.join(',')}^active=true` },
+      problems: { table: 'problem', q: `cmdb_ciIN${ids.join(',')}^active=true` },
+      vulnerabilities: { table: 'sn_vul_vulnerable_item', q: `cmdb_ciIN${ids.join(',')}^active=true` },
+    }
+    type G = { result: { groupby_fields: { value: string }[]; stats: { count: string } }[] }
+    await pool(Object.keys(LINKS), 4, async (k) => {
+      const l = LINKS[k]!
+      const g = await get<G>(`/api/now/stats/${l.table}?sysparm_count=true&sysparm_group_by=cmdb_ci&sysparm_query=${enc(l.q)}`)
+      for (const x of g?.result ?? []) { const n = nodes[x.groupby_fields[0]!.value]; if (n) n.counts[k] = (n.counts[k] ?? 0) + Number(x.stats.count) }
+    })
+    const svcInc = await count('incident', `business_service=${id}^cmdb_ciNOT IN${ids.join(',')}^stateIN${open}`)
+    if (svcInc) nodes[id].counts.incidents = (nodes[id].counts.incidents ?? 0) + svcInc
+    const link = (k: string, ci: string) => `${cfg.sn.instanceUrl}/${LINKS[k]!.table}_list.do?sysparm_query=${enc(LINKS[k]!.q.replace(/cmdb_ciIN[^^]+/, `cmdb_ci=${ci}`))}`
+    return { service: id, depth, open_states: open, nodes: Object.values(nodes).map((n) => ({ ...n, links: Object.fromEntries(Object.keys(LINKS).map((k) => [k, link(k, n.id)])) })), edges,
+      recipe: { relationships: `cmdb_rel_ci · parentIN<nodes>^ORchildIN<nodes>, ${depth} step${depth === 1 ? '' : 's'} down from the service (contains, depends on, runs on)`, ...Object.fromEntries(Object.entries(LINKS).map(([k, l]) => [k, `${l.table} · ${l.q.replace(/cmdb_ciIN[^^]+/, 'cmdb_ci=<node>')}`])) } }
+  }))
+})
+
 /** Read-only list for table-shaped tiles (the rights/cost table). Fields and table are shape-checked. */
 app.get('/api/list', async (req, res) => {
   const table = String(req.query.table ?? ''), fields = String(req.query.fields ?? ''), order = String(req.query.order ?? ''), limit = Math.min(Number(req.query.limit ?? 10), 50)

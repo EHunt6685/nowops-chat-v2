@@ -144,6 +144,37 @@ body.resolve .subnav{display:none}
 .dpanel .recipe{display:block;padding:10px 16px 12px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
 .dpanel .recipe code{display:inline;padding:1px 6px;margin:0 2px;border-radius:6px;background:var(--card2);font-size:11.5px}
 @media (prefers-reduced-motion:reduce){.kpi.drill,.kpi.drill .dr,.card.dpanel{transition:none;animation:none}}
+/* Application map: the service, what it contains or depends on, and what that runs on. */
+.gmap{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:stretch}
+.gmap svg{width:100%;height:auto;max-height:540px;display:block;overflow:hidden;cursor:grab;touch-action:none;user-select:none}
+.gmap svg.drag{cursor:grabbing}
+.gmap .ge{stroke:var(--line2);stroke-width:1.3;transition:opacity .25s,stroke .25s;marker-end:url(#garw)}
+.gmap .ge.off{opacity:.08!important}
+.gmap .ge.lit{opacity:1!important;marker-end:url(#garwT)}
+.gmap .gn{cursor:pointer}
+.gmap .gn circle{stroke-width:1.6;transition:stroke-width .2s,filter .2s}
+.gmap .gn:hover circle,.gmap .gn.sel circle{stroke-width:3;filter:drop-shadow(0 4px 10px rgba(15,139,141,.35))}
+.gmap .gn.dim{opacity:.28}
+.gmap .ge.lit{stroke:var(--ust-teal);stroke-width:2.2}
+.gmap .gl{font-size:11.5px;fill:var(--ink);text-anchor:middle;font-weight:600;pointer-events:none}
+.gmap .gc{font-size:10.5px;fill:var(--ink2);text-anchor:middle;pointer-events:none}
+.gmap .gh{font-size:10px;fill:var(--muted);text-anchor:middle;letter-spacing:.06em;pointer-events:none}
+.gmap .gb{font-size:10px;font-weight:700;fill:#fff;text-anchor:middle;pointer-events:none}
+.gpanel{border-left:1px solid var(--line);padding-left:16px;font-size:13px;min-width:0}
+.gpanel h4{margin:0;font-size:14px;font-weight:600;line-height:1.3}
+.gpanel .cls{font-size:12px;color:var(--muted);margin:2px 0 12px}
+.gpanel .lr{display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)}
+.gpanel .lr b{font-variant-numeric:tabular-nums;font-size:15px}
+.gpanel .lr a{font-size:11.5px;color:var(--acc-ink);grid-column:1/-1;display:inline-flex;gap:4px;align-items:center}
+.gpanel .lr a svg{width:12px;height:12px;flex:none}
+.gpanel .lr.zero b{color:var(--muted)}
+.gpanel .rel{margin-top:12px;font-size:12px;color:var(--ink2)}
+.gpanel .rel div{padding:3px 0}
+.gpanel .rel i{font-style:normal;color:var(--muted)}
+.gleg{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+.gleg button{font:inherit;font-size:11.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--line2);background:var(--card);color:var(--ink2);cursor:pointer}
+.gleg button.on{border-color:var(--ust-teal);color:var(--acc-ink);background:var(--acc-bg)}
+@media (max-width:1100px){.gmap{grid-template-columns:1fr}.gpanel{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:12px}}
 
 /* ---- Cards and the grid. */
 .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
@@ -1677,6 +1708,94 @@ id_('page').addEventListener('click', (e) => {
 id_('page').addEventListener('keydown', (e) => { const t = e.target.closest?.('.kpi.drill'); if (t && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDrill(t) } })
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrill() })
 
+// ---- Application map. Radial: the service in the centre, what it contains or depends on around it, what that
+// runs on outside. Every node carries the records linked to that CI; zero is drawn as zero, never hidden.
+const GKIND = [['incidents', 'Open incidents', 'var(--s2)'], ['changes', 'Open changes', 'var(--s1)'], ['problems', 'Open problems', 'var(--s4)'], ['vulnerabilities', 'Vulnerable items', 'var(--neg-ink)']]
+const gcls = (c) => /service/i.test(c) ? ['var(--acc-bg)', 'var(--ust-teal)'] : /server|cluster|computer/i.test(c) ? ['var(--card2)', 'var(--ink2)'] : /database|db/i.test(c) ? ['var(--card)', 'var(--s1)'] : ['var(--card)', 'var(--line2)']
+let GRAPH = null
+async function graphCard(sel, depth = 3) {
+  let g
+  try { g = await api(`/api/graph?service=${sel}&depth=${depth}`) } catch (e) { return `<div class="card c12"><div class="hd"><p class="t">Application map</p></div><div class="sub">The map could not be read: ${esc(e.message)}</div></div>` }
+  GRAPH = g
+  const deep = g.nodes.some((n) => n.hop >= 4)
+  const W = deep ? 980 : 860, H = deep ? 750 : 620, cx = W / 2, cy = H / 2 + 4, R = deep ? [0, 100, 170, 245, 328] : [0, 122, 200, 282]
+  const pos = {}; g.nodes.forEach((n) => { pos[n.id] = n })
+  const ring = (h) => g.nodes.filter((n) => n.hop === h)
+  ring(1).forEach((n, i, a) => { n.a = -Math.PI / 2 + i * 2 * Math.PI / a.length })
+  // Each outer ring: a node sits near the inner node it attaches to, then nodes are pushed apart so labels do not collide.
+  for (const h of [2, 3, 4]) {
+    const rh = ring(h)
+    rh.forEach((n, i) => { const nb = g.edges.filter((e) => e.from === n.id || e.to === n.id).map((e) => pos[e.from === n.id ? e.to : e.from]).filter((p) => p && p.hop === h - 1); n.a = nb.length ? Math.atan2(nb.reduce((s, p) => s + Math.sin(p.a), 0), nb.reduce((s, p) => s + Math.cos(p.a), 0)) : i * 2 * Math.PI / Math.max(1, rh.length) })
+    rh.sort((a, b) => a.a - b.a); const gap = Math.min(h === 2 ? 0.5 : h === 3 ? 0.36 : 0.3, 2 * Math.PI / Math.max(1, rh.length))
+    for (let pass = 0; pass < 3; pass++) for (let i = 1; i < rh.length; i++) if (rh[i].a - rh[i - 1].a < gap) rh[i].a = rh[i - 1].a + gap
+    if (rh.length > 1 && rh[0].a + 2 * Math.PI - rh[rh.length - 1].a < gap) { const shift = (gap - (rh[0].a + 2 * Math.PI - rh[rh.length - 1].a)) / 2; rh.forEach((n, i) => { n.a += (i / (rh.length - 1) - .5) * -2 * shift }) }
+  }
+  g.nodes.forEach((n) => { n.x = n.hop ? cx + R[n.hop] * Math.cos(n.a) : cx; n.y = n.hop ? cy + R[n.hop] * Math.sin(n.a) : cy; n.r = [26, 16, 12, 10, 9][n.hop] })
+  // Outer labels sit on the node's outward side, so they never fall back onto the inner ring's labels.
+  // A label points outward only when no node of the next ring sits in that direction; otherwise it drops below.
+  const adiff = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)))
+  const blocked = (n) => n.hop >= 2 && ring(n.hop + 1).some((m) => adiff(m.a, n.a) < .55)
+  const lab = (n) => { if (n.hop < 2) return { x: 0, y1: n.r + 14, y2: n.r + 26, an: 'middle' }; const c = Math.cos(n.a), s = Math.sin(n.a); if (blocked(n)) return { x: 0, y1: n.r + 14, y2: n.r + 26, an: 'middle' }; if (Math.abs(c) > .35) return { x: (n.r + 7) * Math.sign(c), y1: s * 6 - 1, y2: s * 6 + 11, an: c > 0 ? 'start' : 'end' }; return s > 0 ? { x: 0, y1: n.r + 14, y2: n.r + 26, an: 'middle' } : { x: 0, y1: -(n.r + 18), y2: -(n.r + 6), an: 'middle' } }
+  const eop = g.edges.length > 30 ? .5 : g.edges.length > 16 ? .7 : 1
+  const short = (s, n = 22) => s.length > n ? s.slice(0, n - 1) + '…' : s
+  const cnt = (n) => GKIND.filter(([k]) => n.counts[k]).map(([k, l]) => `${n.counts[k]} ${l.replace('Open ', '').toLowerCase()}`).join(' · ')
+  // Arrows run parent to child: the service points at what it contains, a server points at what it depends on.
+  const edgesH = g.edges.map((e) => { const a = pos[e.from], b = pos[e.to]; if (!a || !b) return ''; const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L
+    return `<line class="ge" style="opacity:${eop}" data-et="${esc(e.type)}" data-a="${a.id}" data-b="${b.id}" x1="${a.x + ux * a.r}" y1="${a.y + uy * a.r}" x2="${b.x - ux * (b.r + 7)}" y2="${b.y - uy * (b.r + 7)}" data-tip="${esc(a.name)} <b>${esc(e.type)}</b> ${esc(b.name)}"/>` }).join('')
+  const nodesH = g.nodes.slice().sort((a, b) => b.hop - a.hop).map((n) => { const [f, s] = gcls(n.cls); const tot = GKIND.reduce((a, [k]) => a + (n.counts[k] ?? 0), 0)
+    return `<g class="gn" data-gnode="${n.id}" transform="translate(${n.x},${n.y})" data-tip="<b>${esc(n.name)}</b><br>${esc(n.cls)}${tot ? '<br>' + esc(cnt(n)) : '<br>nothing linked'}"><circle r="${n.r}" fill="${f}" stroke="${s}"/>${n.hop === 0 ? `<text class="gh" y="4">SERVICE</text>` : ''}${tot ? `<g transform="translate(${n.r * .75},${-n.r * .75})"><circle r="8" fill="var(--ust-teal-2)"/><text class="gb" y="3.5">${tot}</text></g>` : ''}<text class="gl" x="${lab(n).x}" y="${lab(n).y1}" style="text-anchor:${lab(n).an}">${esc(short(n.name, n.hop === 2 ? 18 : 24))}</text><text class="gc" x="${lab(n).x}" y="${lab(n).y2}" style="text-anchor:${lab(n).an}">${esc(n.hop === 0 ? '' : n.up ? 'belongs to' : short(n.cls, 22))}</text></g>` }).join('')
+  const types = [...new Set(g.edges.map((e) => e.type))]
+  const centre = pos[g.service]
+  const maxHop = Math.max(...g.nodes.map((n) => n.hop))
+  // The canvas hugs the drawing: a box around every node and its label, with a small margin. Zoom and pan work on this box.
+  const ext = (n) => { const l = lab(n), w = Math.max(n.name.length, 12) * 6.4; return l.an === 'middle' ? [n.x - Math.max(w / 2, n.r + 10), n.x + Math.max(w / 2, n.r + 10), n.y - (l.y1 < 0 ? -l.y1 + 4 : n.r + 10), n.y + Math.max(l.y2 + 4, n.r + 10)] : [l.an === 'start' ? n.x - n.r - 10 : n.x + l.x - w, l.an === 'start' ? n.x + l.x + w : n.x + n.r + 10, n.y - n.r - 12, n.y + n.r + 14] }
+  const box = g.nodes.map(ext).reduce((b, e) => [Math.min(b[0], e[0]), Math.max(b[1], e[1]), Math.min(b[2], e[2]), Math.max(b[3], e[3])], [1e9, -1e9, 1e9, -1e9])
+  g.view0 = { x: box[0] - 16, y: box[2] - 16, w: box[1] - box[0] + 32, h: box[3] - box[2] + 32 }
+  return `<div class="card c12" id="gcard"><div class="hd"><p class="t">Application map<small>${esc(centre?.name ?? '')} · ${g.nodes.length - 1} CIs in its stack · ${g.edges.length} relationships${maxHop < g.depth ? ` · the stack ends ${maxHop} step${maxHop === 1 ? '' : 's'} down` : ''}</small></p>
+    <div class="gleg" id="gzoom" style="margin-left:0"><button type="button" data-z="out" title="Zoom out">−</button><button type="button" data-z="in" title="Zoom in">+</button><button type="button" data-z="fit" title="Fit the map">Fit</button></div>
+    <div class="gleg" id="gdepth" title="How many steps down from the service to draw">${[1, 2, 3, 4].map((d) => `<button type="button" data-depth="${d}" class="${d === g.depth ? 'on' : ''}">${d === 1 ? '1 level' : d + ' levels'}</button>`).join('')}</div>
+    <div class="gleg" id="gleg">${types.map((t) => `<button type="button" data-et="${esc(t)}">${esc(t)}</button>`).join('')}</div>${controls(false)}</div>
+    <div class="gmap"><svg viewBox="${g.view0.x} ${g.view0.y} ${g.view0.w} ${g.view0.h}" aria-label="Application map"><defs><marker id="garw" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.5 L9 5 L0 9.5 z" fill="var(--line2)"/></marker><marker id="garwT" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.5 L9 5 L0 9.5 z" fill="var(--ust-teal)"/></marker></defs><g>${edgesH}</g><g>${nodesH}</g></svg><aside class="gpanel" id="gpanel">${gpanelHtml(g.service)}</aside></div>
+    <div class="recipe">Relationships from <code>${esc(g.recipe.relationships)}</code>. A node's badge is the total of records linked to that CI: ${GKIND.map(([k]) => `<code>${esc(g.recipe[k])}</code>`).join(' ')}. Incidents on the service itself also count <code>business_service=&lt;service&gt;</code>. A zero means nothing is linked to that CI on this instance, which on abhrademo4 is the common case for incidents.</div></div>`
+}
+function gpanelHtml(id) {
+  const g = GRAPH, n = g.nodes.find((x) => x.id === id); if (!n) return ''
+  const rels = g.edges.filter((e) => e.from === id || e.to === id).map((e) => { const o = g.nodes.find((x) => x.id === (e.from === id ? e.to : e.from)); return o ? `<div>${e.from === id ? `<i>${esc(e.type)}</i> ${esc(o.name)}` : `${esc(o.name)} <i>${esc(e.type)}</i> this`}</div>` : '' }).join('')
+  const totals = n.hop === 0 ? `<p class="cls">Totals across the whole map: ${GKIND.map(([k, l]) => `${g.nodes.reduce((a, x) => a + (x.counts[k] ?? 0), 0)} ${l.toLowerCase()}`).join(' · ')}. Click a CI for its own records.</p>` : ''
+  return `<h4>${esc(n.name)}</h4><div class="cls">${esc(n.cls)}${n.hop ? ` · ${['', 'directly related', 'two steps down', 'three steps down', 'four steps down'][n.hop]}` : ''}</div>${totals}
+    ${GKIND.map(([k, l]) => { const v = n.counts[k] ?? 0; return `<div class="lr${v ? '' : ' zero'}"><span>${esc(l)}</span><b>${v}</b>${v ? `<a href="${esc(n.links[k])}" target="_blank" rel="noopener">Open in ServiceNow ${icon('link')}</a>` : ''}</div>` }).join('')}
+    <div class="rel"><b>Relationships</b>${rels || '<div>none recorded</div>'}</div>
+    ${n.shared?.length ? `<div class="rel"><b>Also used by</b>${n.shared.map((s) => `<div>${esc(s)}</div>`).join('')}<div><i>not drawn: outside this application's stack, but a change here touches them too</i></div></div>` : ''}`
+}
+function wireGraph() {
+  const card = id_('gcard'); if (!card) return
+  const svg = card.querySelector('.gmap svg'), panel = id_('gpanel')
+  card.dataset.wired = '1'
+  const pick = (id) => {
+    svg.querySelectorAll('.gn').forEach((n) => { n.classList.toggle('sel', n.dataset.gnode === id) })
+    const nb = new Set([id]); svg.querySelectorAll('.ge').forEach((e) => { const lit = e.dataset.a === id || e.dataset.b === id; e.classList.toggle('lit', lit); if (lit) { nb.add(e.dataset.a); nb.add(e.dataset.b) } })
+    svg.querySelectorAll('.gn').forEach((n) => n.classList.toggle('dim', id !== GRAPH.service && !nb.has(n.dataset.gnode)))
+    panel.innerHTML = gpanelHtml(id)
+  }
+  svg.addEventListener('click', (e) => { if (svg.dataset.moved === '1') { svg.dataset.moved = ''; return } const n = e.target.closest('.gn'); if (n) pick(n.dataset.gnode) })
+  // Zoom about the centre of the current view; drag to pan; Fit returns to the full drawing.
+  const v = { ...GRAPH.view0 }
+  const apply = () => svg.setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`)
+  const zoom = (f) => { const cx = v.x + v.w / 2, cy = v.y + v.h / 2; v.w = Math.min(GRAPH.view0.w * 2, Math.max(GRAPH.view0.w / 6, v.w * f)); v.h = v.w * GRAPH.view0.h / GRAPH.view0.w; v.x = cx - v.w / 2; v.y = cy - v.h / 2; apply() }
+  card.querySelectorAll('#gzoom button').forEach((b) => b.onclick = () => { if (b.dataset.z === 'fit') { Object.assign(v, GRAPH.view0); apply() } else zoom(b.dataset.z === 'in' ? 1 / 1.3 : 1.3) })
+  svg.addEventListener('wheel', (e) => { if (!e.ctrlKey) return; e.preventDefault(); zoom(e.deltaY > 0 ? 1.15 : 1 / 1.15) }, { passive: false })
+  let drag = null
+  svg.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, vx: v.x, vy: v.y, k: v.w / svg.getBoundingClientRect().width }; svg.classList.add('drag') })
+  svg.addEventListener('pointermove', (e) => { if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.hypot(dx, dy) > 3) svg.dataset.moved = '1'; v.x = drag.vx - dx * drag.k; v.y = drag.vy - dy * drag.k; apply() })
+  const end = () => { drag = null; svg.classList.remove('drag') }
+  svg.addEventListener('pointerup', end); svg.addEventListener('pointerleave', end)
+  card.querySelectorAll('#gdepth button').forEach((b) => b.onclick = () => { const hp = new URLSearchParams(location.hash.split('&').slice(1).join('&')); hp.set('depth', b.dataset.depth); if (!hp.get('service')) hp.set('service', GRAPH.service); location.hash = 'strategic/app360&' + hp.toString() })
+  card.querySelectorAll('#gleg button').forEach((b) => b.onclick = () => {
+    const on = !b.classList.contains('on'); card.querySelectorAll('#gleg button').forEach((x) => x.classList.remove('on')); b.classList.toggle('on', on)
+    svg.querySelectorAll('.ge').forEach((e) => e.classList.toggle('off', on && e.dataset.et !== b.dataset.et))
+  })
+}
+
 async function render() {
   if (!cache) await load()
   // Two surfaces share the frame. #resolve… hashes belong to Resolve; everything else is the dashboard.
@@ -1814,19 +1933,23 @@ async function render() {
   }
   if (page === 'strategic' && sub === 'app360') {
     const services = await api('/api/services')
-    const sel = location.hash.split('=')[1] || services.find((x) => /SAP Enterprise/.test(x.name))?.id || services[0]?.id
+    const hp = new URLSearchParams(location.hash.split('&').slice(1).join('&'))
+    const sel = hp.get('service') || services.find((x) => /SAP Enterprise/.test(x.name))?.id || services[0]?.id
+    const depth = Math.min(4, Math.max(1, Number(hp.get('depth')) || 3))
     add(`<div class="card c12"><div class="hd"><p class="t">Application</p></div><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><select id="svc" class="sel">${services.map((x) => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}${x.criticality ? ' · ' + esc(x.criticality) : ''}</option>`).join('')}</select><span class="sub">${services.length} business services on this instance. Ticket tiles need tickets linked to the service; on this instance 9 of 36,038 incidents are.</span></div></div>`)
     if (sel) {
       const a = await api(`/api/app?service=${sel}`); const c = a.counts
       const t = (label, k) => `<div class="card kpi c2"><div class="hd"><p class="t">${esc(label)}</p>${controls(false)}</div><div class="n">${fmt(c[k].value)}<span class="dot mute"></span></div><div class="recipe"><code>${esc(c[k].table)} · ${esc(c[k].filter)}</code><a href="${esc(c[k].url)}" target="_blank" rel="noopener">Open these records in ServiceNow ${icon('link')}</a></div></div>`
       add(t('Incidents, all time', 'incidents_all') + t('Open incidents', 'incidents_open') + t('Open P1/P2', 'incidents_p1p2_open') + t('Changes on this CI', 'changes') + t('Problems', 'problems') + t('SLA breaches', 'sla_breached'))
+      add(await graphCard(sel, depth))
     }
     add(sect('IT configuration', 'Counted directly from the CMDB.'))
     add(stat(d.applications, 2) + stat(d.business_apps, 2) + stat(d.servers, 2) + stat(d.databases, 2) + stat(d.ci_relationships, 2) + stat(d.vulnerable_items, 2))
     await addAll(bd('donut', 'Servers by class', 'cmdb_ci_server', '', 'sys_class_name', { span: 5, top: 5 }), bd('tree', 'CIs by class', 'cmdb_ci', '', 'sys_class_name', { span: 7, top: 11, sub: 'area is the count' }))
     add(sect('Application portfolio'))
     await addAll(bd('vbars', 'Business applications by lifecycle stage', 'cmdb_ci_business_app', 'active=true^life_cycle_stageISNOTEMPTY', 'life_cycle_stage', { span: 6, top: 6 }), bd('donut', 'Business applications by criticality', 'cmdb_ci_business_app', '', 'business_criticality', { span: 6, top: 5 }))
-    const svc = id_('svc'); if (svc) svc.onchange = () => { location.hash = 'strategic/app360&service=' + svc.value }
+    const svc = id_('svc'); if (svc) svc.onchange = () => { location.hash = 'strategic/app360&service=' + svc.value + (hp.get('depth') ? '&depth=' + hp.get('depth') : '') }
+    wireGraph()
   }
   if (page === 'strategic' && sub === 'software') {
     add(stat(d.entitlements_total, 3) + stat(d.entitlements_in_use, 3) + stat(d.entitlements_in_stock, 3) + stat(d.perpetual_licences, 3))
