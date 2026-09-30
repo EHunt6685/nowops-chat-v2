@@ -1,0 +1,34 @@
+{
+  "_meta": {
+    "created": "2026-09-30",
+    "purpose": "Grounding regression for Resolve's next steps. Each ticket exists on abhrademo4 and carries another agent's next-best-action in x_ustgl_backlog_be_u_next_best_action, which was compared by hand on 2026-09-30. Run with `npm run eval -- --resolve` against a running mockup (MOCKUP_URL, default http://localhost:3100).",
+    "checks": {
+      "cited_refs_exist": "every INC/KB/SOP number in a step's text or source is in the evidence the generator was given (look-alikes, articles, same-title tickets, the ticket itself)",
+      "no_other_system_article": "no cited article names a system the ticket does not",
+      "no_hollow_precedent": "no cited look-alike has boilerplate close notes",
+      "escalation_when_escalated": "when the only look-alikes were escalated, at least one step proposes escalation and none claims a prior fix",
+      "no_evidence_stated": "when no same-system article and no resolved look-alike exist, one step says so plainly",
+      "caller_not_merged": "no step names a look-alike's caller as this ticket's caller",
+      "no_self_reference": "no step reads NowOps's own earlier work notes as findings"
+    },
+    "otherAgentFailures": "wrong-system article 5/8 (Yardi for Edge, VPN for MID server, laptop-request for RAM, profile-sync for Canto, SOP0010005 for Outlook); hollow precedents INC0064650 and INC0064967 cited as fixes; outdated SOP0010005 cited as current; self-citation INC0012375; placeholder leak 'Incident #1'"
+  },
+
+  "tickets": [
+    { "number": "INC0011804", "title": "My Servicenow account is inactive", "expect": { "escalation_when_escalated": true, "caller_not_merged": true, "no_self_reference": true, "no_other_system_article": true },
+      "notes": "look-alike INC0011685 is a different caller (Abel Tuter) and was escalated, not fixed; our own 23 Sep work notes must not count as evidence; the Workday and Salesforce SOPs are not matches" },
+    { "number": "INC0012237", "title": "VPN Error message- trying to connect to VPN via Cisco Secure Client", "expect": { "uses_matched_article": "KB0010417" },
+      "notes": "the VPN article is matched and was not cited last time" },
+    { "number": "INC0012375", "title": "account password locked in servicenow", "expect": { "no_other_system_article": true },
+      "notes": "Salesforce and Workday SOPs were flagged as matches for a ServiceNow account" },
+    { "number": "INC0012426", "title": "workday password reset", "expect": { "uses_matched_article": "SOP0010188" } },
+    { "number": "INC1201607", "title": "Microsoft Edge Browser - Customer unable to load MS Edge Browser application.", "expect": { "no_evidence_stated": true },
+      "notes": "no article and no look-alike; must say so and propose escalation, not pad" },
+    { "number": "INC1212246", "title": "PC very sluggish", "expect": { "no_evidence_stated": true, "no_hollow_precedent": true } },
+    { "number": "INC1212406", "title": "Outlook: The user can't send attachments", "expect": { "no_evidence_stated": true } },
+    { "number": "INC0012438", "title": "There is an error in the MID server - MID_FILE_MONITOR", "expect": { "uses_matched_article": "KBSGC0000012", "no_hollow_precedent": true },
+      "notes": "INC0012439 auto-closed because the application name was missing: hollow" },
+    { "number": "INC1169015", "title": "\"log in failed\" when she logs into Canto on any iPad", "expect": { "no_other_system_article": true, "no_evidence_stated": true },
+      "notes": "a security-observables article was cited last time" }
+  ]
+}

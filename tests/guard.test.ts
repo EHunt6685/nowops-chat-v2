@@ -6,6 +6,11 @@ describe('tokenise', () => {
     expect(tokenise('How do I reset my SAP password')).toEqual(['how', 'reset', 'sap', 'password'])
   })
 
+  it('keeps two-character codes that carry a digit, like a priority', () => {
+    expect(tokenise('P1 attainment')).toEqual(['p1', 'attainment'])
+    expect(tokenise('give them an E3 licence')).toEqual(['give', 'them', 'e3', 'licence'])
+  })
+
   it('keeps characters that appear in error codes', () => {
     expect(tokenise('ORA-01017 invalid $HOME path')).toEqual(['ora-01017', 'invalid', '$home', 'path'])
   })
@@ -33,6 +38,12 @@ describe('hasEnoughTokens', () => {
     expect(hasEnoughTokens('how many incidents')).toBe(true)
     expect(hasEnoughTokens('how many users do we have')).toBe(true)
     expect(hasEnoughTokens('what is our uptime')).toBe(true)
+  })
+
+  it('lets a tile name with a priority code through', () => {
+    // "P1 attainment" was declined for free because "P1" is two characters. It is a dashboard tile.
+    expect(hasEnoughTokens('P1 attainment')).toBe(true)
+    expect(hasEnoughTokens('open P1')).toBe(true)
   })
 
   it('accepts a real question', () => {

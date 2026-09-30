@@ -1,5 +1,6 @@
 /**
- * Lowercase, strip punctuation, drop 1-2 character tokens.
+ * Lowercase, strip punctuation, drop 1-2 character tokens — except two-character codes with a
+ * digit in them ("P1", "E3"), which carry meaning: "P1 attainment" is a tile name, not noise.
  * `$`, `.`, `-` and `_` survive so error codes stay intact.
  *
  * No stopword list. One was tried and it declined "how many incidents" for free,
@@ -13,7 +14,7 @@ export function tokenise(s: string): string[] {
     .toLowerCase()
     .replace(/[^a-z0-9$._\- ]/g, ' ')
     .split(/\s+/)
-    .filter((t) => t.length > 2)
+    .filter((t) => t.length > 2 || (t.length === 2 && /\d/.test(t)))
 }
 
 /** Two real words. Not configurable: nobody has ever wanted a different number. */

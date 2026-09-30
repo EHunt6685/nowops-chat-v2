@@ -4,6 +4,7 @@ import { parseConfig, type Config } from '../src/config.js'
 import type { Article } from '../src/servicenow/types.js'
 import { ServiceNowUnavailableError } from '../src/servicenow/types.js'
 import type { Reply } from '../src/llm/client.js'
+import { makeDefinitions } from '../src/definitions.js'
 
 const cfg: Config = parseConfig({
   ANTHROPIC_API_KEY: 'sk-test-key-1234567890',
@@ -24,6 +25,13 @@ const okSn = (articles: Article[] = [article('a', 'Reset SAP password')]) => ({
 })
 
 const noStats = { run: vi.fn() }
+
+// A scanned tenant with open states confirmed and no SLA record matched, so the P1 SLA tiles are off.
+const kpis = makeDefinitions(() => ({
+  params: { open_states: '1,2,3' },
+  tables: { incident: { present: true, missing_fields: [] }, task_sla: { present: true, missing_fields: [] } },
+  confirmed: true,
+}))
 
 /** Minimal HTTP driver so the tests need no supertest dependency. */
 async function post(app: ReturnType<typeof makeApp>, body: unknown) {
@@ -48,13 +56,13 @@ function fakeLlm(reply: () => Reply) {
 
 describe('POST /api/chat', () => {
   it('rejects an empty message', async () => {
-    const app = makeApp({ cfg, sn: okSn(), stats: noStats, llm: fakeLlm(() => ({ kind: 'no_answer' })) })
+    const app = makeApp({ cfg, sn: okSn(), stats: noStats, llm: fakeLlm(() => ({ kind: 'no_answer', about: 'knowledge' })) })
     const r = await post(app, { message: '' })
     expect(r.status).toBe(400)
   })
 
   it('rejects a malformed JSON body with 400, not 500', async () => {
-    const app = makeApp({ cfg, sn: okSn(), stats: noStats, llm: fakeLlm(() => ({ kind: 'no_answer' })) })
+    const app = makeApp({ cfg, sn: okSn(), stats: noStats, llm: fakeLlm(() => ({ kind: 'no_answer', about: 'knowledge' })) })
     const server = app.listen(0)
     const port = (server.address() as { port: number }).port
     try {
@@ -134,7 +142,7 @@ describe('POST /api/chat', () => {
         kind: 'metric',
         request: { table: 'incident', filter: 'active=true', aggregate: 'count', label: 'open incidents' },
       })
-      .mockResolvedValueOnce({ kind: 'no_answer' })
+      .mockResolvedValueOnce({ kind: 'no_answer', about: 'knowledge' })
     const run = vi.fn(async () => ({
       table: 'incident', filter: 'active=true', aggregate: 'count' as const, value: 5513, url: 'u',
     }))
@@ -148,29 +156,107 @@ describe('POST /api/chat', () => {
     expect(second.history[1]?.content).toContain('active=true')
   })
 
-  it('answers a counting question from a NowOps definition before asking the model', async () => {
-    const decide = vi.fn()
+  it('runs the tile query when the model names a NowOps definition', async () => {
+    const decide = vi.fn(async (_o: unknown) => ({ kind: 'definition' as const, id: 'open_incidents' }))
     const search = vi.fn(async () => [])
     const run = vi.fn(async (_r: unknown) => ({ table: 'incident', filter: 'stateIN1,2,3', aggregate: 'count' as const, label: 'open tickets', value: 5403, url: 'u' }))
-    const app = makeApp({
-      cfg, sn: { search, health: async () => ({ ok: true }) }, stats: { run }, llm: { preflight: async () => {}, decide },
-      kpis: { match: (q) => /open/.test(q) ? { id: 'open_incidents', name: 'Open Tickets', meaning: 'the client\'s open states', request: { table: 'incident', filter: 'stateIN1,2,3', aggregate: 'count', label: 'open tickets' } } : null },
-    })
-    const r = await post(app, { message: 'how many open incidents do we have' })
+    const app = makeApp({ cfg, sn: { search, health: async () => ({ ok: true }) }, stats: { run }, llm: { preflight: async () => {}, decide }, kpis })
+    // No counting verb: the model, not a regex, decides this is a count.
+    const r = await post(app, { message: 'open incidents right now' })
     expect(r.body.kind).toBe('metric')
     expect((r.body.definition as { id: string }).id).toBe('open_incidents')
     expect(run.mock.calls[0]?.[0]).toMatchObject({ filter: 'stateIN1,2,3' })
-    expect(decide).not.toHaveBeenCalled()
-    expect(search).not.toHaveBeenCalled()
+    // The model saw the catalogue it chose from.
+    const seen = decide.mock.calls[0]?.[0] as unknown as { catalogue?: { id: string }[] }
+    expect(seen.catalogue?.map((c) => c.id)).toContain('open_incidents')
   })
 
-  it('skips the knowledge search for a counting question and passes who is asking to the model', async () => {
-    const decide = vi.fn(async (_o: unknown) => ({ kind: 'no_answer' as const }))
+  it('explains a definition the instance cannot answer instead of composing a substitute', async () => {
+    const run = vi.fn()
+    const app = makeApp({ cfg, sn: okSn([]), stats: { run }, llm: fakeLlm(() => ({ kind: 'definition', id: 'sla_p1_met' })), kpis })
+    const r = await post(app, { message: 'P1 SLAs met' })
+    expect(r.body.gateReason).toBe('definition_unavailable')
+    expect(String(r.body.answer)).toContain('P1 resolution SLAs met')
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('says "no data yet" for a tier B definition that returns zero, as the tile does', async () => {
+    const run = vi.fn(async () => ({ table: 'sc_req_item', filter: 'state=3', aggregate: 'avg' as const, field: 'calendar_duration', value: '00:00:00', url: 'u' }))
+    const tenant = makeDefinitions(() => ({ params: { open_states: '1,2,3' }, tables: null }))
+    const app = makeApp({ cfg, sn: okSn([]), stats: { run }, llm: fakeLlm(() => ({ kind: 'definition', id: 'ritm_fulfilment_time' })), kpis: tenant })
+    const r = await post(app, { message: 'how long does fulfilment take' })
+    expect(r.body.gateReason).toBe('definition_no_data')
+    expect(r.body.kind).toBe('decline')
+    expect(String(r.body.answer)).toContain('nothing is recorded')
+  })
+
+  it('declines a definition id that is not in the catalogue', async () => {
+    const run = vi.fn()
+    const app = makeApp({ cfg, sn: okSn([]), stats: { run }, llm: fakeLlm(() => ({ kind: 'definition', id: 'made_up_tile' })), kpis })
+    const r = await post(app, { message: 'made up tile' })
+    expect(r.body.gateReason).toBe('count_unmatched')
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('words a decline for the kind of question the model said it was', async () => {
+    const app = (about: 'knowledge' | 'count' | 'other') =>
+      makeApp({ cfg, sn: okSn([]), stats: noStats, llm: fakeLlm(() => ({ kind: 'no_answer', about })) })
+    expect((await post(app('count'), { message: 'network breached SLA by support group' })).body.gateReason).toBe('count_unmatched')
+    expect((await post(app('knowledge'), { message: 'how do I fix the printer' })).body.gateReason).toBe('model_declined')
+    expect((await post(app('other'), { message: 'what is the capital of France' })).body.gateReason).toBe('out_of_scope')
+  })
+
+  it('passes clamped page facts to the model and returns a PAGE answer labelled as the page\'s', async () => {
+    const decide = vi.fn(async (_o: unknown) => ({ kind: 'page' as const, text: '3 tickets are waiting on your reply.' }))
+    const app = makeApp({ cfg, sn: okSn([]), stats: noStats, llm: { preflight: async () => {}, decide } })
+    const facts = {
+      loadedAt: '2026-09-30T13:41:00Z',
+      queue: { assigned_to_me: 7, unassigned_in_my_groups: '12', waiting_on_my_reply: 3, reopened: 1, changed_last_4h: 4, sla_breached_or_breaching_2h: 2, first: { number: 'INC0000017', title: 'x'.repeat(500) } },
+      ticket: { number: 'INC0000017', title: 'VPN down', slas: [{ name: 'P1 resolution', breached: true, pct: 140 }, 'junk'], similar: [], same_title: ['INC0000020', 7], articles: [], secret: 'dropped' },
+    }
+    const r = await post(app, { message: 'how many tickets are waiting on my reply', context: { page: 'queue', facts } })
+    expect(r.body.kind).toBe('page')
+    expect(r.body.grounded).toBe(true)
+    expect(r.body.loadedAt).toBe('2026-09-30T13:41:00Z')
+    const seen = (decide.mock.calls[0]?.[0] as unknown as { context: { facts: Record<string, any> } }).context.facts
+    expect(seen.queue.unassigned_in_my_groups).toBe(12)
+    expect(seen.queue.first.title).toHaveLength(120)
+    expect(seen.ticket.slas).toHaveLength(1)
+    expect(seen.ticket.same_title).toEqual(['INC0000020'])
+    expect('secret' in seen.ticket).toBe(false)
+  })
+
+  it('searches the open ticket\'s title as well, and its articles lead', async () => {
+    const search = vi.fn(async (q: string) => q === 'How do I fix this?' ? [article('generic', 'Managing Settings in Internet Explorer')] : [article('mine', 'Salesforce account inactive or locked')])
+    const decide = vi.fn(async (_o: unknown) => ({ kind: 'no_answer' as const, about: 'knowledge' as const }))
+    const app = makeApp({ cfg, sn: { search, health: async () => ({ ok: true }) }, stats: noStats, llm: { preflight: async () => {}, decide } })
+    await post(app, { message: 'How do I fix this?', context: { page: 'ticket', ticket: 'INC0011804', facts: { ticket: { number: 'INC0011804', title: 'Salesforce account inactive', slas: [], similar: [], same_title: [], articles: [] } } } })
+    expect(search).toHaveBeenCalledWith('Salesforce account inactive')
+    const seen = decide.mock.calls[0]?.[0] as unknown as { articles: { id: string }[] }
+    expect(seen.articles.map((a) => a.id)).toEqual(['mine', 'generic'])
+  })
+
+  it('does not show a PAGE answer when the page sent no facts to answer from', async () => {
+    const app = makeApp({ cfg, sn: okSn([]), stats: noStats, llm: fakeLlm(() => ({ kind: 'page', text: 'You have 3 waiting.' })) })
+    const r = await post(app, { message: 'how many tickets are waiting on my reply' })
+    expect(r.body.kind).toBe('decline')
+    expect(r.body.gateReason).toBe('needs_page')
+  })
+
+  it('tells the user to open their queue when a page question arrives with no page facts', async () => {
+    const app = makeApp({ cfg, sn: okSn([]), stats: noStats, llm: fakeLlm(() => ({ kind: 'no_answer', about: 'page' })) })
+    const r = await post(app, { message: 'how many tickets are waiting on my reply' })
+    expect(r.body.gateReason).toBe('needs_page')
+    expect(String(r.body.answer)).toContain('Open your queue')
+  })
+
+  it('searches for every question and passes who is asking to the model', async () => {
+    const decide = vi.fn(async (_o: unknown) => ({ kind: 'no_answer' as const, about: 'count' as const }))
     const search = vi.fn(async () => [])
     const app = makeApp({ cfg, sn: { search, health: async () => ({ ok: true }) }, stats: noStats, llm: { preflight: async () => {}, decide } })
     const ctx = { user: { id: 'a'.repeat(32), name: 'David Dan', groups: [{ id: 'b'.repeat(32), name: 'Network' }] }, page: 'queue', junk: 'ignored' }
     await post(app, { message: 'how many tickets are assigned to me', context: ctx })
-    expect(search).not.toHaveBeenCalled()
+    expect(search).toHaveBeenCalledTimes(1)
     const seen = decide.mock.calls[0]?.[0] as unknown as { context?: { user?: { id: string }; page?: string } }
     expect(seen.context?.user?.id).toBe('a'.repeat(32))
     expect(seen.context?.page).toBe('queue')
@@ -178,7 +264,7 @@ describe('POST /api/chat', () => {
   })
 
   it('drops articles that share no real word with the question', async () => {
-    const decide = vi.fn(async (_o: unknown) => ({ kind: 'no_answer' as const }))
+    const decide = vi.fn(async (_o: unknown) => ({ kind: 'no_answer' as const, about: 'knowledge' as const }))
     const app = makeApp({ cfg, sn: okSn([article('x', 'Wrong Manager Assigned in Expense Approval')]), stats: noStats, llm: { preflight: async () => {}, decide } })
     await post(app, { message: 'where is the printer queue for building seven' })
     const seen = decide.mock.calls[0]?.[0] as unknown as { articles: unknown[] }
@@ -269,7 +355,7 @@ describe('POST /api/chat', () => {
         health: async () => ({ ok: false }),
       },
       stats: noStats,
-      llm: fakeLlm(() => ({ kind: 'no_answer' })),
+      llm: fakeLlm(() => ({ kind: 'no_answer', about: 'knowledge' })),
     })
     const r = await post(app, { message: 'how do I reset my SAP password' })
     expect(r.status).toBe(503)

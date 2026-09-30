@@ -7,27 +7,34 @@ import { dirname, join } from 'node:path'
 import { loadConfig } from '../src/config.js'
 import { makeSnClient } from '../src/servicenow/client.js'
 import { makeStats } from '../src/servicenow/stats.js'
-import { mask } from '../src/log.js'
-import { DEFINITIONS, fieldsOf, type Definition } from './definitions.js'
+import { log, mask } from '../src/log.js'
+import { DEFINITIONS, fieldsOf, makeDefinitions } from '../src/definitions.js'
 import { makeSearch } from '../src/servicenow/search.js'
 import { makeLlm } from '../src/llm/client.js'
 import { makeApp as makeChatApp } from '../src/server.js'
+import { sameSystem, classifyOutcome, isNowOpsNote, describePrecedent, noEvidence, type Outcome } from '../src/resolve/evidence.js'
 
 const cfg = loadConfig()
 const sn = makeSnClient(cfg)
 const stats = makeStats(sn)
 const app = express()
 app.use(express.json())
-// The front door is the sign-in page. /index.html still serves the older onboarding prototype.
+// The front door is the sign-in page; app-preview.html is the one page, from sign-in to dashboard, Resolve and chat.
 app.get('/', (_req, res) => res.sendFile(join(dirname(fileURLToPath(import.meta.url)), 'public', 'app-preview.html')))
-app.use(express.static(join(dirname(fileURLToPath(import.meta.url)), 'public')))
+// Pages change often while this is a prototype. no-cache means the browser revalidates every time (the ETag
+// makes that cheap), so nobody runs yesterday's page script against today's server.
+app.use(express.static(join(dirname(fileURLToPath(import.meta.url)), 'public'), { setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }))
 // The real chatbot, same ServiceNow client, same guardrails. Its /api/chat and /api/health
 // live alongside the mockup's routes so "Ask NowOps" can open a chat panel on any page.
-app.use(makeChatApp({ cfg, sn: makeSearch(sn), stats, llm: makeLlm(cfg), kpis: { match: matchKpi }, allowedTables: scannedTables }))
 
 // One tenant, in memory: the "small database" from the decision log, as an object.
-const state: { user?: string; profile?: any; params?: Record<string, string>; confirmed?: boolean } = {}
-const get = <T,>(p: string) => sn.get<T>(p).catch(() => null)
+const state: { profile?: any; params?: Record<string, string>; confirmed?: boolean } = {}
+// One source of truth for what a tile counts; before the scan every table reads as not present.
+const defs = makeDefinitions(() => ({ params: state.params, tables: state.profile?.tables ?? {}, confirmed: state.confirmed }))
+app.use(makeChatApp({ cfg, sn: makeSearch(sn), stats, llm: makeLlm(cfg), kpis: defs, allowedTables: scannedTables }))
+// Every ServiceNow request goes through here; the count is what a scan reports, so the read can show its work.
+let snCalls = 0
+const get = <T,>(p: string) => { snCalls++; return sn.get<T>(p).catch(() => null) }
 type Rec = Record<string, string>
 const STANDARD_STATES: Record<string, string> = { '1': 'New', '2': 'In Progress', '3': 'On Hold', '6': 'Resolved', '7': 'Closed', '8': 'Canceled' }
 
@@ -35,32 +42,36 @@ const STANDARD_STATES: Record<string, string> = { '1': 'New', '2': 'In Progress'
 const TABLES: Record<string, string[]> = {}
 for (const d of DEFINITIONS) if (d.kind !== 'ratio') TABLES[d.table] = [...new Set([...(TABLES[d.table] ?? []), ...fieldsOf(d)])]
 
-app.post('/api/signin', (req, res) => { state.user = String(req.body.user || 'sdm@ust.com'); res.json({ user: state.user, tenant: 'Acme (demo tenant)' }) })
 // Who is signed in, for the app header. Null until /api/signin has run; the page falls back to its own default.
-app.get('/api/me', (_req, res) => res.json({ user: state.user ?? null, tenant: 'Acme (demo tenant)' }))
+// Sign-in is on the page, not the server: the page keeps the signed-in name itself and reads only the tenant here.
+app.get('/api/me', (_req, res) => res.json({ user: null, tenant: 'Acme (demo tenant)' }))
 
 app.get('/api/connection', (_req, res) => res.json({
   instance_url: cfg.sn.instanceUrl, client_id: mask(cfg.sn.clientId), credential: 'held in secrets store (prefilled from .env)',
 }))
 
 app.post('/api/scan', async (_req, res) => {
+  const t0 = Date.now(), c0 = snCalls
   const tables: Record<string, any> = {}
-  for (const [table, fields] of Object.entries(TABLES)) {
+  // Five tables at a time: the read is watched live, and one at a time took most of it.
+  const tablesP = pool(Object.entries(TABLES), 5, async ([table, fields]) => {
     // One timeout must not record a table as absent: every definition on it would go dark. Probe twice.
     const probe = () => get<{ result: Rec[] }>(`/api/now/table/${table}?sysparm_fields=sys_id,${fields.join(',')}&sysparm_limit=1`)
     const r = (await probe()) ?? (await probe())
     // Still nothing: a network failure is "unknown", not "absent". Keep the last good scan's answer for
     // this table if there was one; otherwise mark it unreachable so the reason shows on the tile.
-    if (!r) { const prev = state.profile?.tables?.[table]; tables[table] = prev?.present ? { ...prev, stale: true } : { present: false, reason: 'not reachable during the scan; re-run the scan' }; continue }
+    if (!r) { const prev = state.profile?.tables?.[table]; tables[table] = prev?.present ? { ...prev, stale: true } : { present: false, reason: 'not reachable during the scan; re-run the scan' }; return }
     const rec = r.result[0]
     const cnt = await get<{ result: { stats: { count: string } } }>(`/api/now/stats/${table}?sysparm_count=true`)
     tables[table] = { present: true, rows: cnt ? Number(cnt.result.stats.count) : null, missing_fields: rec ? fields.filter((f) => !(f in rec)) : [] }
-  }
+  })
   // Incident states: the client's labels for the standard six, plus every custom state —
   // in use or merely defined — because a ticket can move into a defined state tomorrow.
-  const ch = await get<{ result: Rec[] }>(`/api/now/table/sys_choice?sysparm_query=${encodeURIComponent('name=incident^element=state^inactive=false^language=en')}&sysparm_fields=value,label`)
+  const chP = get<{ result: Rec[] }>(`/api/now/table/sys_choice?sysparm_query=${encodeURIComponent('name=incident^element=state^inactive=false^language=en')}&sysparm_fields=value,label`)
+  const ch = await chP
   const choices = (ch?.result ?? []).sort((a, b) => Number(a.value) - Number(b.value))
-  const seen = await get<{ result: { groupby_fields: { value: string }[]; stats: { count: string } }[] }>(`/api/now/stats/incident?sysparm_count=true&sysparm_group_by=state`)
+  const seenP = get<{ result: { groupby_fields: { value: string }[]; stats: { count: string } }[] }>(`/api/now/stats/incident?sysparm_count=true&sysparm_group_by=state`)
+  const seen = await seenP
   const inUse = Object.fromEntries((seen?.result ?? []).map((r) => [r.groupby_fields[0]!.value, Number(r.stats.count)]))
   const standard_states = Object.entries(STANDARD_STATES).map(([value, shipped]) => ({ value, shipped, label: choices.find((c) => c.value === value)?.label ?? '(not defined)', count: inUse[value] ?? 0 }))
   const customValues = new Set([...choices.map((c) => c.value), ...Object.keys(inUse)].filter((v) => !(v in STANDARD_STATES)))
@@ -68,13 +79,16 @@ app.post('/api/scan', async (_req, res) => {
     value, label: choices.find((c) => c.value === value)?.label ?? '(in use but not in choice list)', count: inUse[value] ?? 0, default: 'open',
   }))
   // SLA definitions: candidates per priority. Exactly one match → shown read-only.
-  const slas = await get<{ result: Rec[] }>(`/api/now/table/contract_sla?sysparm_query=${encodeURIComponent('collection=incident^type=SLA^active=true^target=resolution')}&sysparm_fields=sys_id,name,duration&sysparm_display_value=true&sysparm_limit=50`)
-  const slaList = slas?.result ?? []
+  const slasP = get<{ result: Rec[] }>(`/api/now/table/contract_sla?sysparm_query=${encodeURIComponent('collection=incident^type=SLA^active=true^target=resolution')}&sysparm_fields=sys_id,name,duration&sysparm_display_value=true&sysparm_limit=50`)
+  const slaList = (await slasP)?.result ?? []
   const sla_matches = Object.fromEntries([1, 2, 3, 4].map((p) => {
     const candidates = slaList.filter((s) => new RegExp(`\\b(P${p}|Priority ${p})\\b`, 'i').test(s.name))
     return [`sla_p${p}_resolution`, { priority: p, candidates, selected: candidates.length === 1 ? candidates[0]!.sys_id : '', sure: candidates.length === 1 }]
   }))
-  state.profile = { scanned_at: new Date().toISOString(), tables, standard_states, custom_states, sla_definitions: slaList, sla_matches }
+  await tablesP  // states and SLA definitions were fetched alongside the table probes
+  const took_ms = Date.now() - t0, requests = snCalls - c0
+  state.profile = { scanned_at: new Date().toISOString(), took_ms, requests, tables, standard_states, custom_states, sla_definitions: slaList, sla_matches }
+  log('scan.done', { instance: cfg.sn.instanceUrl, requests, took_ms, tables_present: Object.values(tables).filter((t: any) => t.present).length, tables: Object.keys(tables).length })
   state.params = undefined; state.confirmed = undefined
   res.json(state.profile)
 })
@@ -84,81 +98,21 @@ function applyParams(slas: Record<string, string>, openExtra: string[], confirme
   state.params = { ...slas, open_states: ['1', '2', '3', ...openExtra].join(',') }
   state.confirmed = confirmed
 }
-app.post('/api/confirm', (req, res) => { applyParams(req.body.slas, req.body.open_states ?? [], true); res.json({ ...state.params, confirmed: true }) })
 app.post('/api/skip-confirm', (_req, res) => {
   const p = state.profile
   const slas = Object.fromEntries(Object.entries(p.sla_matches).map(([k, m]: [string, any]) => [k, m.selected]))
   applyParams(slas, p.custom_states.map((s: any) => s.value), false) // conservative default: custom states count as open
   res.json({ ...state.params, confirmed: false })
 })
-
-const resolved = (filter: string) => filter.replace(/\{\{(\w+)\}\}/g, (_, k) => state.params?.[k] || `{{${k}}}`)
-const usesParam = (d: Definition) => d.kind !== 'ratio' && /\{\{/.test(d.filter)
-
-function validate() {
-  const rows = DEFINITIONS.map((d) => {
-    if (d.kind === 'ratio') return { ...d, status: 'derived', reason: `${d.num} ÷ ${d.den}` }
-    const t = state.profile?.tables[d.table]
-    let status = 'available', reason = ''
-    if (!t?.present) { status = 'unavailable'; reason = t?.reason ? `table ${d.table} ${t.reason}` : `table ${d.table} not present` }
-    else {
-      const miss = fieldsOf(d).filter((f) => t.missing_fields.includes(f))
-      if (miss.length) { status = 'unavailable'; reason = `field ${miss.join(', ')} not on ${d.table}` }
-      else if (/\{\{/.test(resolved(d.filter))) { status = 'unavailable'; reason = 'no matching SLA record on this instance' }
-    }
-    return { ...d, filter_resolved: resolved(d.filter), status, reason, assumed: usesParam(d) && state.confirmed === false }
-  })
-  // a ratio is available only if both parts are
-  for (const r of rows) if (r.kind === 'ratio') {
-    const parts = [r.num, r.den].map((id) => rows.find((x) => x.id === id))
-    if (parts.some((p) => !p || p.status !== 'available')) { r.status = 'unavailable'; r.reason = 'a component is unavailable' }
-    else { r.status = 'available'; (r as any).assumed = parts.some((p) => (p as any).assumed) }
-  }
-  return rows
-}
+// Definitions, validation and the tenant parameters live in src/definitions.ts, shared with the
+// standalone chatbot server. The chatbot no longer matches questions to tiles by word: the model
+// names a definition id from the catalogue and the server runs that tile's query (D-004).
+const resolved = (filter: string) => defs.resolve(filter)
+const validate = () => defs.rows() as any[]
 app.get('/api/validate', (_req, res) => res.json(validate()))
+// The last scan and the parameters built from it, so a page opened after the scan can show what was read.
+app.get('/api/profile', (_req, res) => res.json({ profile: state.profile ?? null, params: state.params ?? null, confirmed: state.confirmed ?? null }))
 
-// ---- The chatbot reads the definitions before it writes a query (D-004).
-// A counting question that names a KPI runs that KPI's own resolved filter, so "open" means what the
-// dashboard says it means. Matching is by words: every word of the definition's name must be in the
-// question after the same normalisation ("incidents" and "tickets" are one word here). The longest
-// matching name wins, so "open p1 tickets" beats "open tickets". Ratios and unavailable rows never match.
-// Matching is by words after one normalisation on both sides ("incidents" and "tickets" are one word,
-// "share", "percent" and "%" are one word). A definition scores by how many of its name words the
-// question contains; it needs half of them, and if only one, a distinctive one (not "tickets" or "open").
-// Highest score wins, ties to the longer name. The same function, in JavaScript, runs on the page.
-// Word level: synonyms to one canonical word, then plurals folded ("articles" and "article", "uses" and "use").
-const CANON: [RegExp, string][] = [[/^(incidents?|tickets?|tkts?)$/, 'tickets'], [/^(p1|critical)$/, 'p1'], [/^breach(ed|es|ing)?$/, 'breaches'], [/^changes?$/, 'changes'], [/^problems?$/, 'problems'], [/^slas?$/, 'sla'], [/^approvals?$/, 'approval'], [/^(pct|share|percent|percentage|proportion)$/, 'pct'], [/^(mean|average)$/, 'avg'], [/^servers?$/, 'servers'], [/^(kb|knowledge)$/, 'knowledge'], [/^licen[cs]es?$/, 'licence']]
-const normalise = (s: string) => ` ${s.toLowerCase().replace(/\(.*?\)/g, ' ').replace(/%/g, ' pct ').replace(/priority ?([1-5])/g, 'p$1').replace(/[^a-z0-9> ]/g, ' ').split(/\s+/).filter(Boolean).map((w) => { for (const [re, to] of CANON) if (re.test(w)) return to; return w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w }).join(' ')} `
-const NAME_STOP = new Set(['now', 'with', 'a', 'the', 'of', 'and', 'or', 'to', 'in', '>', 'house', 'related'])
-const GENERIC = new Set(['tickets', 'open', 'changes', 'sla', 'problems', 'active', 'total', 'all', 'count', 'time', 'avg', 'pct', 'rate', 'item', 'use', 'day', 'with'])
-export function scoreName(question: string, name: string): number {
-  const q = normalise(question)
-  const words = normalise(name).trim().split(' ').filter((w) => w && !NAME_STOP.has(w))
-  if (!words.length) return 0
-  const hit = words.filter((w) => q.includes(` ${w} `))
-  if (hit.length / words.length < 0.5) return 0
-  if (hit.length === 1 && words.length > 1 && GENERIC.has(hit[0]!)) return 0
-  return hit.length / words.length + hit.length * 0.01
-}
-function matchKpi(question: string) {
-  const rows = validate()
-  // Score every definition first. If the best name is unavailable on this instance, say so;
-  // never slide to a worse name that happens to be available.
-  let best: { d: (typeof rows)[number]; s: number } | null = null
-  for (const d of rows) { const s = scoreName(question, d.name); if (s && (!best || s > best.s)) best = { d, s } }
-  if (!best) return null
-  if (best.d.status !== 'available') return { id: best.d.id, name: best.d.name, meaning: best.d.meaning, unavailable: best.d.reason || 'not available on this instance' }
-  const d = best.d, label = d.name.toLowerCase().replace(/\s*\(.*?\)/g, '')
-  const req = (x: Definition) => x.kind === 'ratio' ? null : { table: x.table, filter: resolved(x.filter), aggregate: x.aggregate, ...(x.field ? { field: x.field } : {}), label }
-  if (d.kind === 'ratio') {
-    const num = DEFINITIONS.find((x) => x.id === d.num), den = DEFINITIONS.find((x) => x.id === d.den)
-    const n = num && req(num), m = den && req(den)
-    if (!n || !m) return null
-    return { id: d.id, name: d.name, meaning: d.meaning, request: n, ratio: { num: n, den: m } }
-  }
-  return { id: d.id, name: d.name, meaning: d.meaning, request: req(d)! }
-}
 /** Tables the instance scan found. Null before a scan: nothing to check against, so nothing is rejected. */
 function scannedTables() { return state.profile ? new Set(Object.entries(state.profile.tables as Record<string, { present: boolean }>).filter(([, t]) => t.present).map(([k]) => k)) : null }
 
@@ -378,7 +332,7 @@ app.get('/api/list', async (req, res) => {
   }))
 })
 
-/** Figures only the next dashboard (app-next.html) uses. Additive: the current page never calls this.
+/** Figures beyond the core catalogue that the dashboard's live loader applies by tile id.
     Tiles come back in the same shape as /api/dashboard rows so the page renders them with stat(). */
 app.get('/api/next', async (_req, res) => {
   const open = state.params?.open_states ?? '1,2,3'
@@ -447,8 +401,7 @@ function asIncidentShape(r: Row, kind: Kind): Row {
   out.cmdb_ci = { value: '', display_value: '' }
   return out
 }
-/** Close notes that teach nothing. Measured on abhrademo4: bulk clean-ups and scripts. */
-const JUNK_NOTE = /demo data|remediation for Memorial|closed via script|data cleanup|not available from (the )?provided information/i
+
 const FIXED = /work(?:ing|s|ed) (?:fine|now|again|ok)|(?:issue|problem) (?:is |was |has been )?(?:resolved|fixed)|resolved the issue|is resolved|fixed the/i
 const STOP = new Set('the a an and or of to in on for is are with this that my not can cannot unable issue error please help via when from'.split(' '))
 const words = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w))
@@ -632,7 +585,7 @@ async function ticketDetail(number: string) {
     const catField = 'cat_item', catId = kind === 'incident' ? '' : vv(raw0, catField)
     const textQ = `123TEXTQUERY321=${title.replace(/[\^=&]/g, ' ').slice(0, 150)}`
     const simQ = kind === 'incident' ? `stateIN6,7^close_notesISNOTEMPTY^sys_id!=${id}^${textQ}` : catId ? `${catField}=${catId}^state=3^close_notesISNOTEMPTY^sys_id!=${id}` : `state=3^close_notesISNOTEMPTY^sys_id!=${id}^${textQ}`
-    const simFields = kind === 'incident' ? 'sys_id,number,short_description,close_notes,close_code,resolved_by,assignment_group,resolved_at,opened_at,category' : `sys_id,number,short_description,close_notes,closed_by,assignment_group,closed_at,opened_at,${catField}`
+    const simFields = kind === 'incident' ? 'sys_id,number,short_description,close_notes,close_code,resolved_by,assignment_group,resolved_at,opened_at,category,caller_id' : `sys_id,number,short_description,close_notes,closed_by,assignment_group,closed_at,opened_at,${catField},requested_for`
     const sameQ = `active=true^short_description=${title}^sys_id!=${id}`
     const ritmId = kind === 'sc_req_item' ? id : ''
     // Everything below depends only on the record just read, so the reads go out together.
@@ -645,13 +598,21 @@ async function ticketDetail(number: string) {
       ritmId ? rows('sc_item_option_mtom', `request_item=${ritmId}`, 'sc_item_option.item_option_new.question_text,sc_item_option.value', 25) : [],
       ritmId ? rows('sysapproval_approver', `sysapproval=${ritmId}`, 'sys_id,approver,state,comments,sys_created_on', 20) : [],
     ])
-    const journal = jRaw.map((j) => ({ kind: vv(j, 'element'), text: vv(j, 'value'), at: vv(j, 'sys_created_on'), by: vv(j, 'sys_created_by') }))
+    // Notes NowOps wrote itself (earlier suggestions, record fixes) are flagged: they are not findings.
+    const journal = jRaw.map((j) => ({ kind: vv(j, 'element'), text: vv(j, 'value'), at: vv(j, 'sys_created_on'), by: vv(j, 'sys_created_by'), nowops: isNowOpsNote(vv(j, 'value')) }))
     const slas = slaRaw.map((s) => ({ name: dv(s, 'sla'), breached: vv(s, 'has_breached') === 'true', pct: Number(vv(s, 'business_percentage')) || 0, breach_time: dv(s, 'breach_time'), stage: dv(s, 'stage') }))
     const byF = kind === 'incident' ? 'resolved_by' : 'closed_by', atF = kind === 'incident' ? 'resolved_at' : 'closed_at'
-    const similar = simRaw.filter((s) => !JUNK_NOTE.test(vv(s, 'close_notes'))).slice(0, 4)
-      .map((s) => ({ number: vv(s, 'number'), title: vv(s, 'short_description'), close_notes: vv(s, 'close_notes'), close_code: dv(s, 'close_code'), resolved_by: dv(s, byF), resolved_by_id: vv(s, byF), group: dv(s, 'assignment_group'), group_id: vv(s, 'assignment_group'), category: vv(s, kind === 'incident' ? 'category' : catField), category_label: dv(s, kind === 'incident' ? 'category' : catField), resolved_at: vv(s, atF), opened_at: vv(s, 'opened_at'), url: `${cfg.sn.instanceUrl}/${table}.do?sys_id=${vv(s, 'sys_id')}` }))
+    // Each look-alike carries what its notes really record (resolved, escalated, hollow) and whose
+    // ticket it was. Hollow ones teach nothing and are dropped; escalated ones stay, marked, so the
+    // step generator proposes an escalation rather than a fix nobody has shown works.
+    const similar = simRaw
+      .map((s) => ({ number: vv(s, 'number'), title: vv(s, 'short_description'), close_notes: vv(s, 'close_notes'), close_code: dv(s, 'close_code'), resolved_by: dv(s, byF), resolved_by_id: vv(s, byF), group: dv(s, 'assignment_group'), group_id: vv(s, 'assignment_group'), category: vv(s, kind === 'incident' ? 'category' : catField), category_label: dv(s, kind === 'incident' ? 'category' : catField), resolved_at: vv(s, atF), opened_at: vv(s, 'opened_at'), caller: dv(s, kind === 'incident' ? 'caller_id' : 'requested_for'), outcome: classifyOutcome(vv(s, 'close_notes')) as Outcome, url: `${cfg.sn.instanceUrl}/${table}.do?sys_id=${vv(s, 'sys_id')}` }))
+      .filter((s) => s.outcome !== 'hollow').slice(0, 4)
     const sameTitle = sameRaw.map((s) => ({ number: vv(s, 'number'), caller: dv(s, 'caller_id'), group: dv(s, 'assignment_group'), assigned_to: dv(s, 'assigned_to'), opened_at: vv(s, 'opened_at'), state: dv(s, 'state') }))
-    const kb = kbRaw.slice(0, 3).map((a) => ({ number: a.label ?? '', title: a.title, url: a.url, excerpt: a.body.slice(0, 220), match: overlap(title, a.title) >= 2 }))
+    // An article about another system is never a match, however many words it shares: a Workday SOP
+    // for a ServiceNow account, a Yardi guide for Edge. It is kept in the list, flagged, so the page
+    // can show why it was set aside, but the step generator never sees it.
+    const kb = kbRaw.slice(0, 3).map((a) => { const same = sameSystem(title, a.title); return { number: a.label ?? '', title: a.title, url: a.url, excerpt: a.body.slice(0, 220), match: same && overlap(title, a.title) >= 2, otherSystem: !same } })
     // The request behind the item: what was asked for and its approvals.
     const request = ritmId ? {
       ritm: number, ritm_id: ritmId, request: dv(raw0, 'request'),
@@ -734,31 +695,49 @@ function stepsByRules(d: Detail) {
   const lastNote = [...d.journal].reverse().find((j) => j.kind === 'work_notes')
   if (lastNote && FIXED.test(lastNote.text)) steps.push({ text: `Ask ${caller} whether it has stayed fixed since ${lastNote.at.slice(0, 10)}. The last work note says it works but nobody confirmed with the caller.`, source: `work note of ${lastNote.at.slice(0, 10)}` })
   if (d.missing.some((m) => m.startsWith('Who reported') || m.startsWith('What happened'))) steps.push({ text: `Ask ${caller} what exactly happens, since when, and which device: the ticket does not say.`, source: 'empty caller or description on the record' })
+  const matched = d.kb.filter((k) => k.match && !k.otherSystem)
   // One step per distinct fix: two look-alikes closed with the same note are one step, citing both.
+  // A look-alike that was only escalated is proposed as an escalation, never as a fix.
   const seenFix = new Map<string, { text: string; source: string }>()
   for (const s of d.similar) {
+    const other = s.caller && s.caller !== d.fields.caller_id ? ', a different caller' : ''
+    if (s.outcome === 'escalated') {
+      if (![...seenFix.values()].some((v) => v.text.startsWith('Escalate'))) steps.push({ text: `Escalate to ${s.group || 'the resolving team'} as ${s.number} was: that ticket records an escalation, not a fix.`, source: `${s.number}${other}, escalated ${s.resolved_at.slice(0, 10)}` })
+      seenFix.set(`esc:${s.number}`, { text: 'Escalate', source: '' })
+      continue
+    }
     const res = first((section(s.close_notes, 'Resolution') || section(s.close_notes, 'Actions Taken') || s.close_notes).replace(/\s+/g, ' '), 200)
-    const k = norm(res); const cite = `${s.number}, closed ${s.resolved_at.slice(0, 10)}${s.resolved_by ? ' by ' + s.resolved_by : ''}`
+    const k = norm(res); const cite = `${s.number}${other}, closed ${s.resolved_at.slice(0, 10)}${s.resolved_by ? ' by ' + s.resolved_by : ''}`
     if (seenFix.has(k)) { seenFix.get(k)!.source += `; also ${s.number}`; continue }
-    if (seenFix.size >= 2) continue
+    if ([...seenFix.keys()].filter((x) => !x.startsWith('esc:')).length >= 2) continue
     const st = { text: `Try what closed ${s.number}: ${res}`, source: cite }; seenFix.set(k, st); steps.push(st)
   }
-  for (const k of d.kb.filter((k) => k.match).slice(0, 1)) steps.push({ text: `Follow ${k.number} "${k.title}".`, source: `${k.number}, published knowledge` })
+  for (const k of matched.slice(0, 1)) steps.push({ text: `Follow ${k.number} "${k.title}".`, source: `${k.number}, published knowledge` })
+  if (noEvidence(d.similar, matched.length)) steps.push({ text: `No published article or resolved look-alike covers "${first(d.title, 80)}". Escalate to the team for ${d.fields.category || 'this category'} with the symptom and what the caller has tried.`, source: 'no evidence on this instance' })
   if (d.sameTitle.length >= 2) steps.push({ text: `Raise one problem record and link the ${d.sameTitle.length + 1} open tickets with this exact title, so one fix closes them all.`, source: `${d.sameTitle.length} other open incidents with the same short description` })
   if (!d.fields.cmdb_ci) steps.push({ text: 'Record the affected device or service as the configuration item.', source: 'configuration item is empty' })
   steps.push({ text: `When ${caller} confirms, resolve with the close note drafted below.`, source: 'standard verification step' })
   return steps
 }
-const STEPS_SYSTEM = `You write next steps for an IT service desk agent. Use ONLY the facts supplied. Return JSON only: {"steps":[{"text":"one concrete action, one sentence","source":"which supplied item it came from, e.g. INC0012158 close note, KB0010463, work note of 2026-08-24, or 'inferred'"}]}. Five to seven steps, in the order verify, act, test, confirm with caller, document, resolve. Never invent ticket or article numbers.`
+const STEPS_SYSTEM = `You write next steps for an IT service desk agent. Use ONLY the facts supplied. Return JSON only: {"steps":[{"text":"one concrete action, one sentence","source":"which supplied item it came from, e.g. INC0012158 close note, KB0010463, work note of 2026-08-24, or 'inferred'"}]}. Never invent ticket or article numbers.
+
+Rules, each learned from a wrong answer on this instance:
+- An article marked [MATCHES THE TICKET] is the fix. Its resolution steps go in, citing it. Articles listed as "set aside, about another system" do not exist for you.
+- Look-alikes are other people's tickets. Never write that this caller was fixed before, never carry a look-alike's dates or caller onto this ticket. Cite them as "INC… (different caller)".
+- A look-alike marked ESCALATED shows no fix. Propose the same escalation, to the same team, and say the precedent was escalated. Do not write "reactivate as done previously" or any step that claims a prior fix.
+- Journal lines marked [EARLIER NOWOPS SUGGESTION] are suggestions this tool made before. They are not findings; do not cite them as evidence that something happened.
+- When the Evidence line says NONE: write three to five steps only. One says plainly that no published article or resolved look-alike covers this ticket; one proposes escalation to the team the category implies, with the ticket's symptom summarised; the rest are what the record still needs. Do not pad with generic verify, test, confirm and document lines.
+- Otherwise five to seven steps, in the order verify, act, test, confirm with caller, document, resolve. Record gaps from "Ticket check" are one step each, cited to it.`
 const DRAFT_SYSTEM = `You draft text for an IT service desk agent from supplied ticket records. Use ONLY the supplied facts. Wrap text copied or closely paraphrased from the supplied work notes in <mark class="rec">…</mark>, and anything inferred from similar tickets or not yet confirmed in <mark class="inf">…</mark>. Return exactly the format requested, no preamble.`
 function facts(d: Detail) {
   const req = d.request ? [`Request: ${d.request.ritm} under ${d.request.request}; catalog item ${d.request.cat_item || 'none'}; requested for ${d.request.requested_for || 'not recorded'}; stage ${d.request.stage || 'n/a'}; approval ${d.request.approval || 'n/a'}; due ${d.request.due_date || 'none'}`,
     `Variables:\n${d.request.variables.map((v) => `${v.q}: ${first(v.v, 200)}`).join('\n') || '(none)'}`,
     `Approvals:\n${d.request.approvals.map((a) => `${a.approver}: ${a.state}${a.comments ? ' · ' + first(a.comments, 120) : ''}`).join('\n') || '(none)'}`] : []
   return [`${d.kind_word.toUpperCase()} ${d.number}: ${d.title}`, `Fields: priority ${d.fields.priority}; state ${d.fields.state}; group ${d.fields.assignment_group}; assigned to ${d.fields.assigned_to || 'nobody'}; ${d.kind === 'incident' ? 'caller' : 'requested for'} ${d.fields.caller_id || 'not recorded'}; ${d.kind === 'incident' ? 'category' : 'catalog item'} ${d.fields.category}; CI ${d.fields.cmdb_ci || 'none'}; opened ${d.fields.opened_at}`, ...req,
-    `Description: ${d.fields.description || '(empty)'}`, `Journal:\n${d.journal.map((j) => `[${j.at}] ${j.kind} by ${j.by}: ${first(j.text.replace(/\s+/g, ' '), 300)}`).join('\n') || '(none)'}`,
-    `Similar resolved tickets:\n${d.similar.map((s) => `${s.number} (${s.resolved_at.slice(0, 10)}, ${s.resolved_by || s.group}): ${first(s.close_notes.replace(/\s+/g, ' '), 500)}`).join('\n') || '(none)'}`,
-    `Knowledge articles:\n${d.kb.map((k) => `${k.number} "${k.title}": ${k.excerpt}`).join('\n') || '(none)'}`,
+    `Description: ${d.fields.description || '(empty)'}`, `Journal:\n${d.journal.map((j) => `[${j.at}] ${j.kind} by ${j.by}${j.nowops ? ' [EARLIER NOWOPS SUGGESTION, not a finding]' : ''}: ${first(j.text.replace(/\s+/g, ' '), 300)}`).join('\n') || '(none)'}`,
+    `Look-alike tickets (other tickets, usually other callers; never say this caller was fixed before):\n${d.similar.map((s) => describePrecedent(s, d.fields.caller_id)).filter(Boolean).join('\n') || '(none)'}`,
+    `Knowledge articles about the same system:\n${d.kb.filter((k) => !k.otherSystem).map((k) => `${k.number}${k.match ? ' [MATCHES THE TICKET]' : ''} "${k.title}": ${k.excerpt}`).join('\n') || '(none)'}${d.kb.some((k) => k.otherSystem) ? `\nSet aside, about another system: ${d.kb.filter((k) => k.otherSystem).map((k) => k.number).join(', ')}` : ''}`,
+    `Evidence: ${noEvidence(d.similar, d.kb.filter((k) => k.match && !k.otherSystem).length) ? 'NONE. No same-system article and no resolved look-alike. Say so in one step and propose escalation; do not pad.' : 'present, see above.'}`,
     `Open tickets with the same title: ${d.sameTitle.map((s) => s.number).join(', ') || 'none'}`, `Ticket check, open lines: ${d.checks.filter((c) => !c.ok).map((c) => `${c.label} is ${c.current}${c.fix ? ` (proposed: ${c.fix.value})` : ''}`).join('; ') || 'none, the record is complete'}`].join('\n\n')
 }
 // Writes and model calls go to the server log. ServiceNow holds the record of what changed;
@@ -781,7 +760,7 @@ app.post('/api/resolve/steps/:number', async (req, res) => {
 
 // "Where this stands": two sentences, model only, and only when there is more to read than fits on
 // screen. A one-line ticket gets nothing; the description is already in view.
-const BRIEF_SYSTEM = `You brief an IT service desk agent who is about to work a ticket. Use ONLY the supplied facts. Write at most two plain sentences: what is wrong, what has been done so far, and what is blocking or what happens next. Every claim must be traceable to a supplied field, journal entry or SLA. Do not restate the ticket number, state or priority. Do not say more review is needed. If the facts do not support a sentence, leave it out. Plain text.`
+const BRIEF_SYSTEM = `You brief an IT service desk agent who is about to work a ticket. Use ONLY the supplied facts. Write at most two plain sentences: what is wrong, what has been done so far, and what is blocking or what happens next. Every claim must be traceable to a supplied field, journal entry or SLA. Attribute a journal entry to its recorded author or to "the agent", never to the assignee or anyone else by guess. Look-alike tickets are other people's tickets: never present their outcome as something that happened on this one. Do not restate the ticket number, state or priority. Do not say more review is needed. If the facts do not support a sentence, leave it out. Plain text.`
 app.post('/api/resolve/brief/:number', async (req, res) => {
   const d = await ticketDetail(String(req.params.number).toUpperCase()); if (!d) return res.status(404).json({ error: 'not found' })
   const enough = (d.fields.description || '').length > 300 || d.journal.length >= 3 || Number(d.raw.reopen_count) > 0
@@ -796,7 +775,7 @@ app.post('/api/resolve/draft/:number', async (req, res) => {
   const d = await ticketDetail(String(req.params.number).toUpperCase()); if (!d) return res.status(404).json({ error: 'not found' })
   const kind = String(req.body?.kind ?? 'close')
   // Work notes worth quoting: not automation chatter, and not the notes NowOps itself writes on actions.
-  const notes = d.journal.filter((j) => j.kind === 'work_notes' && !/^\[?AURA|SOP is not identified|via NowOps( by [^.]+)?\.?$|^Reverted by NowOps/i.test(j.text.trim()))
+  const notes = d.journal.filter((j) => j.kind === 'work_notes' && !j.nowops && !/^\[?AURA|SOP is not identified/i.test(j.text.trim()))
   const caller = d.fields.caller_id || 'the caller'
   const sim = d.similar[0]
   let html = '', title = ''
@@ -813,9 +792,9 @@ app.post('/api/resolve/draft/:number', async (req, res) => {
       html = `<h4>What was requested</h4>${esc(caller)} asked for ${esc(d.fields.category || d.title)}. ${asked}\n<h4>What was done</h4>${done}\n<h4>Confirmed by</h4><mark class="inf">Confirmation from ${esc(caller)} pending.</mark>\n\nCLOSE_CODE: Closed Complete`
     }
   } else if (kind === 'close') {
-    const req_ = `Write resolution notes with exactly these headings on their own lines: Problem / Actions taken / Root cause / Resolution. Plain prose, past tense, 60-120 words total. Then on a final line: CLOSE_CODE: one of Solved (Permanently), Solved (Workaround/Temporarily), Not Solved (Not Reproducible), Closed/Resolved by Caller, Duplicate.`
+    const req_ = `Write resolution notes with exactly these headings on their own lines: Problem / Actions taken / Root cause / Resolution. Plain prose, past tense, 60-120 words total. Then on a final line: CLOSE_CODE: one of Solved (Permanently), Solved (Workaround/Temporarily), Not Solved (Not Reproducible), Closed/Resolved by Caller, Duplicate. A close code is a claim about what happened on THIS ticket: pick one only when this ticket's own work notes or comments record a validated outcome. If nothing on this ticket records a fix (the look-alikes do not count), write Resolution as what is still outstanding and put CLOSE_CODE: Not ready to close. Never write Not Reproducible for a ticket nobody has tried to reproduce.`
     const m = await model('close note', d, DRAFT_SYSTEM, `${facts(d)}\n\n${req_}`)
-    if (m) html = m.replace(/^(Problem|Actions taken|Root cause|Resolution)\s*:?\s*$/gim, '<h4>$1</h4').replace(/\n(?=CLOSE_CODE)/, '\n\n')
+    if (m) html = m.replace(/^(Problem|Actions taken|Root cause|Resolution)\s*:?\s*$/gim, '<h4>$1</h4>').replace(/\n(?=CLOSE_CODE)/, '\n\n')
     else {
       const acts = notes.length ? notes.map((n) => `<mark class="rec">${esc(first(n.text.replace(/\s+/g, ' '), 220))}</mark>`).join(' ') : `<mark class="inf">No work notes were recorded. Steps you tick will appear here.</mark>`
       const rc = sim ? `<mark class="inf">${esc(first(section(sim.close_notes, 'Root Cause') || 'To be confirmed.', 240))}${section(sim.close_notes, 'Root Cause') ? ` (as recorded on ${sim.number})` : ''}</mark>` : '<mark class="inf">To be confirmed.</mark>'
@@ -836,9 +815,14 @@ app.post('/api/resolve/draft/:number', async (req, res) => {
     const gaps = d.checks.filter((c) => !c.ok && !c.fix && c.ask && ['description', 'cmdb_ci', 'caller'].includes(c.key))
     const asks = gaps.map((c) => c.ask!.replace(/^Ask \S+ /, ''))
     const confirm = d.checks.some((c) => c.key === 'confirm' && !c.ok)
-    const m = await model('message to caller', d, DRAFT_SYSTEM, `${facts(d)}\n\nWrite a short, friendly comment to ${caller} from the agent. ${confirm ? 'The last work note says it works: ask them to confirm it is fixed, and say the ticket closes on their yes.' : asks.length ? `Ask only for: ${asks.join('; ')}.` : 'Ask them to confirm it is still happening.'} The comments in the journal are the caller's own replies: never ask for anything they have already given there, and acknowledge what they did give. Under 80 words. Plain text, no markup.`)
-    html = m ? esc(m) : `Hi ${esc(caller.split(' ')[0]!)}, I am picking up your ticket "${esc(d.title)}"${d.fields.opened_at ? ` from ${d.fields.opened_at.slice(0, 10)}` : ''}. ${confirm ? 'The notes suggest it was fixed. Can you confirm it is still working? If yes, I will close the ticket.' : asks.length ? `To move it forward I need: ${asks.join('; ')}.` : 'Could you confirm it is still happening?'} Thanks.`
+    // No caller, nobody to write to: a message asking "who reported this" has no recipient.
+    if (!d.fields.caller_id) return res.json({ kind, title: '', html: 'No caller is recorded on this ticket, so there is nobody to send a message to. Find out who reported it and set the caller first; the message can be drafted after that.', source: 'rules' })
+    const m = await model('message to caller', d, DRAFT_SYSTEM, `${facts(d)}\n\nWrite a short, friendly comment to ${caller} from the agent. ${confirm ? 'The last work note says it works: ask them to confirm it is fixed, and say the ticket closes on their yes.' : asks.length ? `Ask only for: ${asks.join('; ')}.` : 'Ask them to confirm it is still happening.'} The comments in the journal are the caller's own replies: never ask for anything they have already given there, and acknowledge what they did give. This message goes to the caller, so use only this ticket's own fields, comments and work notes: never mention look-alike tickets, and never suggest the issue may be fixed or reactivated unless a note on THIS ticket says so. Under 80 words. Plain text, no markup, no <mark> tags.`)
+    // The model is told to mark quoted text elsewhere; a message to a caller carries no markup.
+    html = m ? esc(m.replace(/<\/?mark[^>]*>/g, '')) : `Hi ${esc(caller.split(' ')[0]!)}, I am picking up your ticket "${esc(d.title)}"${d.fields.opened_at ? ` from ${d.fields.opened_at.slice(0, 10)}` : ''}. ${confirm ? 'The notes suggest it was fixed. Can you confirm it is still working? If yes, I will close the ticket.' : asks.length ? `To move it forward I need: ${asks.join('; ')}.` : 'Could you confirm it is still happening?'} Thanks.`
   } else if (kind === 'problem') {
+    // One ticket is not a recurrence. The steps only propose a problem record at three or more.
+    if (d.sameTitle.length < 1) return res.json({ kind, title: '', html: `No other open incident has the title "${esc(d.title)}", so there is no recurrence to record. A problem record is drafted when at least two open tickets share the title.`, source: 'rules' })
     html = `${esc(d.title)}\n\n${d.sameTitle.length + 1} open incidents share this exact title: ${[d.number, ...d.sameTitle.map((s) => s.number)].join(', ')}.${sim ? ` ${d.similar.length} earlier one${d.similar.length > 1 ? 's were' : ' was'} closed (${d.similar.map((s) => s.number).join(', ')}); the recorded resolution on ${sim.number} was: ${esc(first((section(sim.close_notes, 'Resolution') || sim.close_notes).replace(/\s+/g, ' '), 300))}` : ''}`
     title = `Recurring: ${d.title}`
   } else return res.status(400).json({ error: 'kind must be close, kb, message or problem' })

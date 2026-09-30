@@ -1,5 +1,9 @@
-// Throwaway prototype: the NowOps definitions table. {{open_states}} and {{sla_pN_resolution}}
-// are tenant parameters filled from the confirm step. Tier B rows carry the decision in `meaning`.
+// The NowOps definitions table: one row per dashboard tile, shared by the dashboard and the chatbot so
+// the two can never disagree on what "open" or "breached" means (D-004). {{open_states}} and
+// {{sla_pN_resolution}} are tenant parameters filled from the scan and confirm steps. Tier B rows carry
+// the decision in `meaning`.
+import type { MetricRequest } from './servicenow/stats.js'
+
 export type Definition =
   | { kind?: 'query'; id: string; name: string; meaning: string; table: string; filter: string; aggregate: 'count' | 'avg' | 'min'; field?: string; dashboard: 'QBR' | 'App360'; group: string; tier?: 'B' }
   | { kind: 'ratio'; id: string; name: string; meaning: string; num: string; den: string; dashboard: 'QBR' | 'App360'; group: string; tier?: 'B' }
@@ -99,4 +103,140 @@ export function fieldsOf(d: Definition): string[] {
   }
   if (d.field) names.add(d.field)
   return [...names]
+}
+
+// ---- What the chatbot needs from the table.
+
+/** One row of the catalogue the model reads. Meaning is included only where names alone are ambiguous. */
+export interface CatalogueEntry { id: string; name: string; meaning?: string; available: boolean }
+
+/** A definition resolved for one tenant: the same request the dashboard tile runs. */
+export type KpiMatch =
+  | { id: string; name: string; meaning: string; request: MetricRequest; ratio?: { num: MetricRequest; den: MetricRequest }; tier?: 'B'; unavailable?: undefined }
+  | { id: string; name: string; meaning: string; unavailable: string; request?: undefined; ratio?: undefined; tier?: 'B' }
+
+/**
+ * Tier B rows exist on the instance but may hold no data: zero rows, or an average duration of zero
+ * because the field is never populated. Both mean "nothing recorded yet", not a figure of zero.
+ * The dashboard tile shows "no data yet" for these; the chatbot must not read the zero out loud.
+ */
+export function isNoDataYet(m: KpiMatch, value: number | string): boolean {
+  return m.tier === 'B' && (value === 0 || String(value) === '00:00:00')
+}
+
+/** What the instance scan learned about each table. Null means no scan has run: tables are assumed present. */
+export type TableProfile = Record<string, { present: boolean; missing_fields?: string[]; reason?: string }>
+
+export interface TenantSource {
+  /** Values for {{open_states}} and {{sla_pN_resolution}}; a missing key leaves that definition unavailable. */
+  params?: Record<string, string>
+  tables?: TableProfile | null
+  /** False when the defaults were accepted without review; rows using a parameter are then marked assumed. */
+  confirmed?: boolean
+}
+
+export type ValidatedRow = Definition & { status: 'available' | 'unavailable' | 'derived'; reason: string; filter_resolved?: string; assumed?: boolean }
+
+export interface Kpis {
+  /** Every definition with its availability for this tenant, in table order. What the dashboard renders. */
+  rows(): ValidatedRow[]
+  /** Ids and names for the model's DEFINITIONS block. Unavailable rows stay listed, marked, so the model names them rather than composing a substitute. */
+  catalogue(): CatalogueEntry[]
+  /** The tile's own query for an id the model chose. Null for an id that is not a definition. */
+  byId(id: string): KpiMatch | null
+  /** Word-overlap match, kept for diagnostics and the page's tile search. Not used for routing. */
+  match(question: string): KpiMatch | null
+  /** True when an available definition counts on this table: a composed metric there may be a prompt failure. */
+  coversTable(table: string): boolean
+  /** Fill tenant parameters into any filter string. */
+  resolve(filter: string): string
+}
+
+/** Tables where several definitions share vocabulary, so the model needs the meaning to tell them apart. */
+const AMBIGUOUS_TABLES = new Set(['task_sla', 'metric_instance', 'cmdb_rel_ci', 'sysapproval_approver'])
+
+// Word-level normalisation shared with the page copy: synonyms to one canonical word, then plurals folded.
+const CANON: [RegExp, string][] = [[/^(incidents?|tickets?|tkts?)$/, 'tickets'], [/^(p1|critical)$/, 'p1'], [/^(breach(ed|es|ing)?|violat(ed|ions?|es)?|missed)$/, 'breaches'], [/^changes?$/, 'changes'], [/^problems?$/, 'problems'], [/^slas?$/, 'sla'], [/^approvals?$/, 'approval'], [/^(pct|share|percent|percentage|proportion)$/, 'pct'], [/^(mean|average)$/, 'avg'], [/^servers?$/, 'servers'], [/^(kb|knowledge)$/, 'knowledge'], [/^licen[cs]es?$/, 'licence']]
+const normalise = (s: string) => ` ${s.toLowerCase().replace(/\(.*?\)/g, ' ').replace(/%/g, ' pct ').replace(/priority ?([1-5])/g, 'p$1').replace(/[^a-z0-9> ]/g, ' ').split(/\s+/).filter(Boolean).map((w) => { for (const [re, to] of CANON) if (re.test(w)) return to; return w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w }).join(' ')} `
+const NAME_STOP = new Set(['now', 'with', 'a', 'the', 'of', 'and', 'or', 'to', 'in', '>', 'house', 'related'])
+const GENERIC = new Set(['tickets', 'open', 'changes', 'sla', 'problems', 'active', 'total', 'all', 'count', 'time', 'avg', 'pct', 'rate', 'item', 'use', 'day', 'with'])
+/** How well a question matches a definition name: share of name words present; 0 below half, or on a lone generic word. */
+export function scoreName(question: string, name: string): number {
+  const q = normalise(question)
+  const words = normalise(name).trim().split(' ').filter((w) => w && !NAME_STOP.has(w))
+  if (!words.length) return 0
+  const hit = words.filter((w) => q.includes(` ${w} `))
+  if (hit.length / words.length < 0.5) return 0
+  if (hit.length === 1 && words.length > 1 && GENERIC.has(hit[0]!)) return 0
+  return hit.length / words.length + hit.length * 0.01
+}
+
+/** Shape of a definition id as the model may write it. Anything else is not looked up. */
+export const DEFINITION_ID_RE = /^[a-z][a-z0-9_]*$/
+
+export function makeDefinitions(source: () => TenantSource): Kpis {
+  const resolve = (filter: string, params?: Record<string, string>) => filter.replace(/\{\{(\w+)\}\}/g, (_, k) => params?.[k] || `{{${k}}}`)
+  const usesParam = (d: Definition) => d.kind !== 'ratio' && /\{\{/.test(d.filter)
+
+  function rows(): ValidatedRow[] {
+    const { params, tables, confirmed } = source()
+    const out: ValidatedRow[] = DEFINITIONS.map((d) => {
+      if (d.kind === 'ratio') return { ...d, status: 'derived', reason: `${d.num} ÷ ${d.den}` }
+      let status: ValidatedRow['status'] = 'available', reason = ''
+      // No scan yet: nothing is known against the table, so nothing is rejected on that ground.
+      const t = tables ? tables[d.table] : { present: true, missing_fields: [] as string[] }
+      if (!t?.present) { status = 'unavailable'; reason = t?.reason ? `table ${d.table} ${t.reason}` : `table ${d.table} not present` }
+      else {
+        const miss = fieldsOf(d).filter((f) => (t.missing_fields ?? []).includes(f))
+        if (miss.length) { status = 'unavailable'; reason = `field ${miss.join(', ')} not on ${d.table}` }
+        else if (/\{\{/.test(resolve(d.filter, params))) { status = 'unavailable'; reason = params ? 'no matching SLA record on this instance' : 'tenant parameters not set; run the instance scan in NowOps' }
+      }
+      return { ...d, filter_resolved: resolve(d.filter, params), status, reason, assumed: usesParam(d) && confirmed === false }
+    })
+    // a ratio is available only if both parts are
+    for (const r of out) if (r.kind === 'ratio') {
+      const parts = [r.num, r.den].map((id) => out.find((x) => x.id === id))
+      if (parts.some((p) => !p || p.status !== 'available')) { r.status = 'unavailable'; r.reason = 'a component is unavailable' }
+      else { r.status = 'available'; r.assumed = parts.some((p) => p!.assumed) }
+    }
+    return out
+  }
+
+  const toMatch = (d: ValidatedRow, all: ValidatedRow[]): KpiMatch | null => {
+    const tier = d.tier ? { tier: d.tier } : {}
+    if (d.status !== 'available') return { id: d.id, name: d.name, meaning: d.meaning, unavailable: d.reason || 'not available on this instance', ...tier }
+    const label = d.name.toLowerCase().replace(/\s*\(.*?\)/g, '')
+    const req = (x: ValidatedRow | undefined): MetricRequest | null => !x || x.kind === 'ratio' ? null : { table: x.table, filter: x.filter_resolved ?? x.filter, aggregate: x.aggregate, ...(x.field ? { field: x.field } : {}), label }
+    if (d.kind === 'ratio') {
+      const n = req(all.find((x) => x.id === d.num)), m = req(all.find((x) => x.id === d.den))
+      if (!n || !m) return null
+      return { id: d.id, name: d.name, meaning: d.meaning, request: n, ratio: { num: n, den: m }, ...tier }
+    }
+    return { id: d.id, name: d.name, meaning: d.meaning, request: req(d)!, ...tier }
+  }
+
+  return {
+    rows,
+    catalogue() {
+      return rows().map((d) => ({
+        id: d.id, name: d.name, available: d.status === 'available',
+        ...((d.kind !== 'ratio' && AMBIGUOUS_TABLES.has(d.table)) || d.tier === 'B' ? { meaning: d.meaning } : {}),
+      }))
+    },
+    byId(id) {
+      const all = rows()
+      const d = all.find((x) => x.id === id)
+      return d ? toMatch(d, all) : null
+    },
+    match(question) {
+      const all = rows()
+      let best: { d: ValidatedRow; s: number } | null = null
+      for (const d of all) { const s = scoreName(question, d.name); if (s && (!best || s > best.s)) best = { d, s } }
+      return best ? toMatch(best.d, all) : null
+    },
+    coversTable(table) {
+      return rows().some((d) => d.kind !== 'ratio' && d.table === table && d.status === 'available')
+    },
+    resolve(filter) { return resolve(filter, source().params) },
+  }
 }

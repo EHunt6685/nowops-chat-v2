@@ -43,12 +43,18 @@ function renderSources(el, data) {
 
   if (!data.grounded || !data.sources || data.sources.length === 0) {
     line.classList.add('none')
-    line.textContent =
-      data.gateReason === 'servicenow_unavailable'
-        ? 'Knowledge base unreachable — not answered'
-        : data.gateReason === 'metric_unavailable'
-          ? 'Could not run that query — not answered'
-          : 'No knowledge base match — not answered'
+    // Worded for what the model said the question was, not for which lane a regex chose.
+    const why = {
+      servicenow_unavailable: 'Knowledge base unreachable — not answered',
+      metric_unavailable: 'Could not run that query — not answered',
+      definition_unavailable: 'Defined, but not available on this instance — not answered',
+      definition_no_data: 'Defined, but nothing recorded for it on this instance yet — not answered',
+      count_unmatched: 'No dashboard definition fits and no safe query could be written — not answered',
+      out_of_scope: 'Not about this instance — not answered',
+      needs_page: 'About your own queue or ticket; ask from the Resolve page — not answered',
+      too_few_tokens: 'Too short to search on — not answered',
+    }
+    line.textContent = why[data.gateReason] ?? 'No knowledge base match — not answered'
     el.appendChild(line)
     return
   }

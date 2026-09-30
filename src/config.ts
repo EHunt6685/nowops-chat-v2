@@ -18,6 +18,10 @@ const Schema = z.object({
   // that uses it — see MIN_TOKENS, SEARCH_LIMIT, TIMEOUT_MS.
   RETRY_ENABLED: z.enum(['true', 'false']).default('true'),
   LLM_MODE: z.enum(['live', 'stub']).default('live'),
+
+  // Incident states the client counts as open, for the standalone server's dashboard definitions.
+  // NowOps proper learns this from the instance scan; here it is the ServiceNow standard three.
+  OPEN_STATES: z.string().regex(/^\d+(,\d+)*$/, 'OPEN_STATES must be comma-separated state values').default('1,2,3'),
 })
 
 export interface Config {
@@ -27,6 +31,7 @@ export interface Config {
   claudeModel: string
   retryEnabled: boolean
   llmMode: 'live' | 'stub'
+  openStates: string
   sn: {
     instanceUrl: string
     clientId: string
@@ -50,6 +55,7 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     claudeModel: e.CLAUDE_MODEL,
     retryEnabled: e.RETRY_ENABLED === 'true',
     llmMode: e.LLM_MODE,
+    openStates: e.OPEN_STATES,
     sn: {
       instanceUrl: e.SN_INSTANCE_URL.replace(/\/$/, ''),
       clientId: e.SN_CLIENT_ID,
