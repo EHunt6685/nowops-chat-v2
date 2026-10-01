@@ -97,11 +97,11 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]):where(:not(#studio *, #rwrap *, #cwrap *)) {
     color-scheme: dark;
-    --ground: #081314; --plane: #0c1a1b; --surface: #122224; --surface-2: #172b2d; --sunk: #0e1d1f;
-    --line: #213638; --line-2: #2d4749;
+    --ground: #101f21; --plane: #142527; --surface: #1a2f31; --surface-2: #21393b; --sunk: #16292b;
+    --line: #2a4345; --line-2: #365456;
     --ink: #e8f1f0; --ink-2: #a9bdbc; --muted: #7d9392;
     --brand: #1fb0c4; --brand-ink: #80cbd6; --brand-2: #0097ac; --brand-wash: #103a3b; --brand-glow: rgba(31, 176, 196, .18);
-    --deep: #041011; --deep-2: #0a2224;
+    --deep: #0b1c1e; --deep-2: #102a2c;
     --s1: #0097ac; --s2: #e85f4f; --s3: #3987e5; --s4: #c98500; --s5: #d55181;
     --mark-quiet: #3a5153; --grid: #1c3133; --axis: #2d4749;
     --seq-1: #133536; --seq-2: #16514f; --seq-3: #137170; --seq-4: #0097ac; --seq-5: #4fbfd0; --seq-6: #a6dde6;
@@ -111,11 +111,11 @@
 }
 :root[data-theme="dark"]:where(:not(#studio *, #rwrap *, #cwrap *)) {
   color-scheme: dark;
-  --ground: #081314; --plane: #0c1a1b; --surface: #122224; --surface-2: #172b2d; --sunk: #0e1d1f;
-  --line: #213638; --line-2: #2d4749;
+  --ground: #101f21; --plane: #142527; --surface: #1a2f31; --surface-2: #21393b; --sunk: #16292b;
+  --line: #2a4345; --line-2: #365456;
   --ink: #e8f1f0; --ink-2: #a9bdbc; --muted: #7d9392;
   --brand: #1fb0c4; --brand-ink: #80cbd6; --brand-2: #0097ac; --brand-wash: #103a3b; --brand-glow: rgba(31, 176, 196, .18);
-  --deep: #041011; --deep-2: #0a2224;
+  --deep: #0b1c1e; --deep-2: #102a2c;
   --s1: #0097ac; --s2: #e85f4f; --s3: #3987e5; --s4: #c98500; --s5: #d55181;
   --mark-quiet: #3a5153; --grid: #1c3133; --axis: #2d4749;
   --seq-1: #133536; --seq-2: #16514f; --seq-3: #137170; --seq-4: #0097ac; --seq-5: #4fbfd0; --seq-6: #a6dde6;
@@ -260,6 +260,7 @@ main:where(:not(#studio *, #rwrap *, #cwrap *)) { flex: 1; padding: 4px 26px 140
 .ki:where(:not(#studio *, #rwrap *, #cwrap *)) { width: 30px; height: 30px; border-radius: 9px; background: var(--acc-bg); color: var(--acc-ink); display: grid; place-items: center; flex: none }
 .ki .ic:where(:not(#studio *, #rwrap *, #cwrap *)) { width: 16px; height: 16px }
 .kh h3:where(:not(#studio *, #rwrap *, #cwrap *)) { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink-2); line-height: 1.3; flex: 1; min-width: 0 }
+.ptag:where(:not(#studio *, #rwrap *, #cwrap *)) { font-size: 10.5px; font-weight: 500; color: var(--muted); border: 1px solid var(--line-2); border-radius: 999px; padding: 1px 7px; white-space: nowrap; vertical-align: middle; margin-left: 6px }
 .badge:where(:not(#studio *, #rwrap *, #cwrap *)) { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px 0 6px; border-radius: 6px; font-size: 11.5px; font-weight: 700; white-space: nowrap; flex: none }
 .badge svg:where(:not(#studio *, #rwrap *, #cwrap *)) { width: 12px; height: 12px }
 .badge.watch:where(:not(#studio *, #rwrap *, #cwrap *)) { background: var(--warn-wash); color: var(--warn-ink) } .badge.watch svg:where(:not(#studio *, #rwrap *, #cwrap *)) { color: var(--warn) }
@@ -415,7 +416,7 @@ body:where(:not(#studio *, #rwrap *, #cwrap *))::before { content: ''; position:
 .am-body:where(:not(#studio *, #rwrap *, #cwrap *)) { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px }
 
 :root { --am-bg: #f2f7f8; --am-dot: rgba(0,110,116,.13); --am-glow: rgba(0,151,172,.09); --am-edge: color-mix(in oklab, #006e74 30%, #f2f7f8); --am-lit: #006e74; --am-svc: #006e74; --am-srv: #003c51; --am-db: #0097ac; --am-app: #7a7480 }
-:root[data-theme="dark"]:where(:not(#studio *, #rwrap *, #cwrap *)) { --am-bg: #0f1e20; --am-dot: rgba(128,203,214,.09); --am-glow: rgba(43,179,177,.08); --am-edge: color-mix(in oklab, #80cbd6 26%, #0f1e20); --am-lit: #80cbd6; --am-svc: #1fb0c4; --am-srv: #8fc3d6; --am-db: #3cc3d6; --am-app: #a7a1ad }
+:root[data-theme="dark"]:where(:not(#studio *, #rwrap *, #cwrap *)) { --am-bg: #142527; --am-dot: rgba(128,203,214,.09); --am-glow: rgba(43,179,177,.08); --am-edge: color-mix(in oklab, #80cbd6 26%, #142527); --am-lit: #80cbd6; --am-svc: #1fb0c4; --am-srv: #8fc3d6; --am-db: #3cc3d6; --am-app: #a7a1ad }
 .am-cv:where(:not(#studio *, #rwrap *, #cwrap *)) { position: relative; height: 540px; border-radius: 16px; overflow: hidden; isolation: isolate; background: radial-gradient(55% 65% at 50% 50%, var(--am-glow), transparent 70%), var(--am-bg); box-shadow: inset 0 0 0 1px var(--line) }
 .am-cv:where(:not(#studio *, #rwrap *, #cwrap *))::before { content: ''; position: absolute; inset: 0; z-index: -1; background-image: radial-gradient(var(--am-dot) 1px, transparent 1.3px); background-size: 22px 22px; -webkit-mask-image: radial-gradient(80% 80% at 50% 50%, #000, transparent); mask-image: radial-gradient(80% 80% at 50% 50%, #000, transparent) }
 .am-cv svg:where(:not(#studio *, #rwrap *, #cwrap *)) { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; user-select: none } .am-cv svg.drag:where(:not(#studio *, #rwrap *, #cwrap *)) { cursor: grabbing }
@@ -579,7 +580,7 @@ main:where(:not(#studio *, #rwrap *, #cwrap *))::after { content: ''; position: 
 <style>
 /* ---- calm: less glow everywhere; light mode softer than dark ---- */
 :root { --glow: rgba(0,151,172,.26); --spot: transparent; --slab-0: #124f51; --slab-1: #0d3c3e; --slab-2: #0a3133 }
-:root[data-theme="dark"] { --glow: rgba(128,203,214,.55); --spot: rgba(128,203,214,.035); --slab-0: #0a3a3c; --slab-1: #052527; --slab-2: #031415 }
+:root[data-theme="dark"] { --glow: rgba(128,203,214,.55); --spot: rgba(128,203,214,.035); --slab-0: #0e4548; --slab-1: #0a3134; --slab-2: #082224 }
 .hero { background: radial-gradient(120% 150% at 0% 0%, var(--slab-0) 0%, var(--slab-1) 55%, var(--slab-2) 100%); box-shadow: 0 20px 40px -30px rgba(0,60,81,.3), inset 0 1px 0 rgba(255,255,255,.04) }
 .fx .bl { opacity: .16 }
 .fx .spot { display: none }
@@ -2004,8 +2005,8 @@ body.studio-on { overflow: hidden }
           stat('sla_breached', 'SLA breaches', 24380, { sub: 'completed resolution SLAs that breached', meaning: 'Incident SLAs that have breached', table: 'task_sla', agg: 'count', filter: 'has_breached=true^task.sys_class_name=incident', span: 6 }),
         ] },
         { h: 'Trend and where breaches land', cards: [
-          { k: 'cols', id: 'sla_by_month', title: 'SLAs met and breached, per month', sub: 'Completed incident resolution SLAs by created month', labels: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'], series: [{ name: 'Met', values: [0, 0, 17957, 108, 43, 7240] }, { name: 'Breached', values: [189, 216, 6130, 0, 99, 6] }], note: 'April, May, July and August hold far fewer records than the other months. That is how this instance was loaded, not a change in service.', table: 'task_sla', filter: SLA_INC, by: 'sys_created_on month', span: 6 },
-          bars('breaches_by_group', 'Breached SLAs by support group', [['Network', 5514], ['Hardware', 4941], ['Application Development', 4337], ['Service Desk', 4235], ['Database', 4220], ['Unassigned', 1110], ['L2 - Shared Application Support', 21], ['Application Support', 2]], { table: 'task_sla', by: 'task.assignment_group', filter: 'has_breached=true^task.sys_class_name=incident', highlight: 0, span: 6 }),
+          { k: 'cols', id: 'sla_by_month', title: 'SLAs met and breached, per month', sub: 'Completed incident resolution SLAs by created month', labels: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'], series: [{ name: 'Met', values: [0, 0, 17957, 108, 43, 7240] }, { name: 'Breached', values: [189, 216, 6130, 0, 99, 6] }], note: 'April, May, July and August hold far fewer records than the other months. That is how this instance was loaded, not a change in service.', table: 'task_sla', filter: SLA_INC, by: 'sys_created_on month', period: 'months', span: 6 },
+          bars('breaches_by_group', 'Breached SLAs by support group', [['Network', 5514], ['Hardware', 4941], ['Application Development', 4337], ['Service Desk', 4235], ['Database', 4220], ['Unassigned', 1110], ['L2 - Shared Application Support', 21], ['Application Support', 2]], { table: 'task_sla', by: 'task.assignment_group', filter: 'has_breached=true^task.sys_class_name=incident', when: 'end_time', highlight: 0, span: 6 }),
         ] },
       ],
     },
@@ -2015,8 +2016,8 @@ body.studio-on { overflow: hidden }
       lede: 'Opened against resolved, time to resolve, handovers and rework.',
       blocks: [
         { cards: [
-          { k: 'lines', id: 'opened_vs_resolved', title: 'Opened and resolved incidents, per month', sub: 'Six calendar months', labels: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'], series: [{ name: 'Opened', values: [5970, 3865, 4931, 177, 71, 8376] }, { name: 'Resolved', values: [5153, 3555, 799, 104, 213, 7245] }], note: 'July and August hold far fewer records than the other months. That is how this instance was loaded, not a change in service.', table: 'incident', filter: 'opened_at / resolved_at by month', by: 'month', span: 8 },
-          { k: 'cols', id: 'inc_vs_ritm', title: 'Incidents and request items opened', sub: 'Break-fix against standardised service', labels: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'], series: [{ name: 'Incidents', values: [5970, 3865, 4931, 177, 71, 8376] }, { name: 'Request items', values: [0, 0, 240, 227, 131, 237] }], stacked: true, table: 'incident, sc_req_item', filter: 'opened_at by month', by: 'month', span: 4 },
+          { k: 'lines', id: 'opened_vs_resolved', title: 'Opened and resolved incidents, per month', sub: 'Six calendar months', labels: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'], series: [{ name: 'Opened', values: [5970, 3865, 4931, 177, 71, 8376] }, { name: 'Resolved', values: [5153, 3555, 799, 104, 213, 7245] }], note: 'July and August hold far fewer records than the other months. That is how this instance was loaded, not a change in service.', table: 'incident', filter: 'opened_at / resolved_at by month', by: 'month', period: 'months', span: 8 },
+          { k: 'cols', id: 'inc_vs_ritm', title: 'Incidents and request items opened', sub: 'Break-fix against standardised service', labels: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'], series: [{ name: 'Incidents', values: [5970, 3865, 4931, 177, 71, 8376] }, { name: 'Request items', values: [0, 0, 240, 227, 131, 237] }], stacked: true, table: 'incident, sc_req_item', filter: 'opened_at by month', by: 'month', period: 'months', span: 4 },
           { k: 'list', id: 'open_by_title', title: 'What keeps coming back', sub: 'Open incidents by title. Each row is a problem record waiting to be raised.', rows: [['Integration error for new starter request', 41], ['My ServiceNow account is inactive', 34], ['Disable the user account in ServiceNow', 29], ['BitLocker recovery key', 19], ['Integration error for leaver request', 19], ['Forgot my Workday password', 16], ['SAP password reset', 13], ['Unable to log in to the system', 12]], total: 183, table: 'incident', by: 'short_description', filter: OPEN, span: 6 },
           { k: 'dur', id: 'mttr_by_priority', title: 'Mean time to resolve, by priority', sub: 'Average calendar duration of resolved or closed incidents', rows: [['P1', 354.3, 'days', 7521], ['P2', 28.1, 'hours', 10355], ['P3', 5.9, 'days', 3102], ['P4', 47.5, 'hours', 8218]], note: 'P1 is skewed by incidents opened in 2015 to 2018 and closed years later. Read it as a data-quality signal, not a service level.', table: 'incident', agg: 'avg(calendar_duration)', filter: 'stateIN6,7^priority=<n>', span: 6 },
         ] },
@@ -2039,8 +2040,8 @@ body.studio-on { overflow: hidden }
           stat('change_success_rate', 'Change success', '87.5%', { sub: 'of changes that recorded an outcome', num: 14, den: 16, note: 'Thin: only 16 of 158 changes carry a close code.', meaning: 'Successful ÷ changes with a close code', table: 'change_request', agg: 'ratio', numFilter: 'close_code=successful', denFilter: 'close_codeISNOTEMPTY', span: 4 }),
           stat('emergency_change_pct', 'Emergency share', '6.3%', { sub: 'of all 158 changes', num: 10, den: 158, meaning: 'Emergency ÷ all changes', table: 'change_request', agg: 'ratio', numFilter: 'type=emergency', denFilter: '', span: 4 }),
           stat('approval_time', 'Approval cycle', '2m 45s', { sub: 'ServiceNow metric, Change Approval', meaning: 'Average duration of the ServiceNow metric "Change Approval"', table: 'metric_instance', agg: 'avg(duration)', filter: 'definition.name=Change Approval^calculation_complete=true', span: 4 }),
-          { k: 'split', id: 'all_changes_by_type', title: 'Changes by type', sub: 'All 158 change requests', rows: [['Normal', 87], ['Comprehensive', 48], ['Standard', 13], ['Emergency', 10]], table: 'change_request', by: 'type', filter: '', span: 6 },
-          { k: 'split', id: 'changes_by_close', title: 'Changes by close code', sub: 'Of the 16 that recorded an outcome', rows: [['Successful', 14], ['Unsuccessful', 2]], table: 'change_request', by: 'close_code', filter: 'close_codeISNOTEMPTY', span: 6 },
+          { k: 'split', id: 'all_changes_by_type', title: 'Changes by type', sub: 'All 158 change requests', rows: [['Normal', 87], ['Comprehensive', 48], ['Standard', 13], ['Emergency', 10]], table: 'change_request', by: 'type', filter: '', when: 'opened_at', span: 6 },
+          { k: 'split', id: 'changes_by_close', title: 'Changes by close code', sub: 'Of the 16 that recorded an outcome', rows: [['Successful', 14], ['Unsuccessful', 2]], table: 'change_request', by: 'close_code', filter: 'close_codeISNOTEMPTY', when: 'closed_at', span: 6 },
         ] },
       ],
     },
@@ -2054,7 +2055,7 @@ body.studio-on { overflow: hidden }
           stat('csat_responses', 'Survey responses', 78, { sub: 'completed assessments', meaning: 'Completed assessment instances (CSAT). Needs surveys to be running.', table: 'asmt_assessment_instance', agg: 'count', filter: 'state=complete', span: 4 }),
           stat('kb_stale', 'Stale articles', 522, { sub: 'of 732 published, untouched for 180 days', status: 'watch', num: 522, den: 732, meaning: 'Published articles not updated in 180 days', table: 'kb_knowledge', agg: 'count', filter: 'workflow_state=published^sys_updated_on<javascript:gs.daysAgoStart(180)', span: 4 }),
           { k: 'split', id: 'kb_by_base', title: 'Published articles by knowledge base', sub: '732 published', rows: [['Security Incident', 450], ['No knowledge base', 85], ['Knowledge', 77], ['IT', 59], ['Other 11 bases', 61]], table: 'kb_knowledge', by: 'kb_knowledge_base', filter: 'workflow_state=published', span: 6 },
-          bars('uses_by_base', 'Article uses by knowledge base', [['IT', 93], ['Knowledge', 42], ['Security Incident', 15], ['SOP', 10], ['No knowledge base', 9]], { sub: 'Security Incident holds 61% of articles but draws 9% of uses', table: 'kb_use', by: 'article.kb_knowledge_base', filter: '', highlight: 0, span: 6 }),
+          bars('uses_by_base', 'Article uses by knowledge base', [['IT', 93], ['Knowledge', 42], ['Security Incident', 15], ['SOP', 10], ['No knowledge base', 9]], { sub: 'Security Incident holds 61% of articles but draws 9% of uses', table: 'kb_use', by: 'article.kb_knowledge_base', filter: '', when: 'sys_created_on', highlight: 0, span: 6 }),
         ] },
       ],
     },
@@ -2855,7 +2856,7 @@ window.APPMAP = {"26e46e5b0a0a0bb4005d1146846c429c":{"name":"SAP Controlling","c
     const sub = c.value == null ? c.reason : c.sub || ''
     return `<article class="card kpi${c.mini ? ' mini' : ''}${c.value == null ? ' off' : ''} s${c.span}" style="--span:${c.span};--i:${i}" data-card="${c.id}" tabindex="0" role="button" aria-label="${esc(c.title)}: ${esc(h)}. Show what it counts">
       <span class="comet"></span>${DRILL[c.id] && c.value != null ? DR_BTN : ''}${c.status ? `<span class="sacc ${c.status}"></span>` : ''}
-      <div class="kh">${c.mini ? '' : `<span class="ki">${icon(iconFor(c))}</span>`}<h3>${esc(c.title)}</h3>${badge(c.status)}</div>
+      <div class="kh">${c.mini ? '' : `<span class="ki">${icon(iconFor(c))}</span>`}<h3>${esc(c.title)}</h3>${ptag(c)}${badge(c.status)}</div>
       <div class="kv"><span class="n ${cls}" ${c.value != null && /\d/.test(h) ? `data-roll="${esc(h)}"` : ''}>${esc(h)}</span></div>
       ${sub ? `<p class="ks">${esc(sub)}</p>` : ''}
       ${false /* scale bar removed: c.scale && c.value != null ? '<div class="kfoot">' + bulletHTML(c) + '</div>' : */ ? '' : c.num != null && c.den != null && c.value != null ? `<div class="kfoot">${progHTML(c)}</div>` : ''}
@@ -2864,7 +2865,7 @@ window.APPMAP = {"26e46e5b0a0a0bb4005d1146846c429c":{"name":"SAP Controlling","c
   function chartCard(c, i) {
     const sub = c.sub || ''
     return `<article class="card cc" style="--span:${c.span};--i:${i}" data-card="${c.id}">
-      <div class="ch"><div class="tt"><h3>${esc(c.title)}</h3>${sub ? `<p>${esc(sub)}</p>` : ''}</div>
+      <div class="ch"><div class="tt"><h3>${esc(c.title)}${ptag(c)}</h3>${sub ? `<p>${esc(sub)}</p>` : ''}</div>
         <div class="tools">${dataTable(c) ? `<button type="button" class="tool" data-tbl aria-label="Show as a table" title="Show as a table">${ic('table')}</button>` : ''}${'' /* pop-up disabled: <button type="button" class="tool" data-def aria-label="What this counts" title="What this counts">${ic('help')}</button> */}</div></div>
       <div class="viz" data-viz="${c.id}"></div>${dataTable(c) ? `<div class="dtbl">${dataTable(c)}</div>` : ''}
       ${c.note && FORM[c.id] !== 'gauge' ? `<div class="note">${ic('info')}<span>${esc(c.note)}</span></div>` : ''}
@@ -2890,18 +2891,25 @@ window.APPMAP = {"26e46e5b0a0a0bb4005d1146846c429c":{"name":"SAP Controlling","c
 
   // ================================================================= routing and render
   let appPick = null, lastKey = '', lastPage = ''
-  const route = () => { const [p, s] = location.hash.slice(1).split('/'); const page = PAGES[p] ? p : 'strategic'; const sec = PAGES[page].sections.find((x) => x.id === s) || PAGES[page].sections[0]; return { page, sec } }
+  // Period lives in the hash after the section: #strategic/commitments&period=30d. "all" is the default and adds nothing.
+  const PERIODS = [['all', 'All time'], ['30d', 'Last 30 days'], ['quarter', 'Last quarter'], ['year', 'Last 12 months']]
+  const periodOf = () => { const p = new URLSearchParams(location.hash.split('&').slice(1).join('&')).get('period'); return PERIODS.some(([k]) => k === p) ? p : 'all' }
+  const psuf = () => periodOf() === 'all' ? '' : '&period=' + periodOf()
+  let curPeriod = 'all', curPage = ''
+  const ptag = (c) => curPage !== 'strategic' || curPeriod === 'all' ? '' : c.period === 'months' ? '<span class="ptag" title="This chart always shows the last six calendar months">six months</span>' : c.period ? '' : '<span class="ptag" title="A count of what is true now. The period does not apply to it.">as of now</span>'
+  const route = () => { const [p, s] = location.hash.slice(1).split('&')[0].split('/'); const page = PAGES[p] ? p : 'strategic'; const sec = PAGES[page].sections.find((x) => x.id === s) || PAGES[page].sections[0]; return { page, sec } }
   // the slab carries the section's headline figures: every stat in its first block when that block has no heading
   const heroCards = (sec) => { const b = sec.blocks[0]; return b.h ? [] : b.cards.filter((c) => c.k === 'stat') }
   function render() {
     const { page, sec } = route(), key = page + '/' + sec.id, first = key !== lastKey, samePage = page === lastPage
-    lastKey = key; lastPage = page
-    $('plinks').innerHTML = Object.entries(PAGES).map(([id, p]) => `<a href="#${id}/${p.sections[0].id}" class="${id === page ? 'on' : ''}"${id === page ? ' aria-current="page"' : ''}>${ic(id)}<span>${p.name}</span></a>`).join('')
-    $('slinks').innerHTML = PAGES[page].sections.map((s) => `<a href="#${page}/${s.id}" class="${s.id === sec.id ? 'on' : ''}"${s.id === sec.id ? ' aria-current="page"' : ''}>${icon(s.id)}${esc(s.name)}</a>`).join('')
+    lastKey = key; lastPage = page; curPage = page; curPeriod = periodOf()
+    $('plinks').innerHTML = Object.entries(PAGES).map(([id, p]) => `<a href="#${id}/${p.sections[0].id}${psuf()}" class="${id === page ? 'on' : ''}"${id === page ? ' aria-current="page"' : ''}>${ic(id)}<span>${p.name}</span></a>`).join('')
+    $('slinks').innerHTML = PAGES[page].sections.map((s) => `<a href="#${page}/${s.id}${psuf()}" class="${s.id === sec.id ? 'on' : ''}"${s.id === sec.id ? ' aria-current="page"' : ''}>${icon(s.id)}${esc(s.name)}</a>`).join('')
     slide($('pind'), $('plinks').querySelector('.on'), true)
     slide($('sind'), $('slinks').querySelector('.on'), samePage)
-    const allTime = page === 'strategic', anim = first && !reduce
-    const head = $('head'); head.innerHTML = `<div><h1>${esc(sec.question)}</h1><p>${esc(sec.lede)}</p></div><div class="ctx">${allTime ? `<label class="period">Period <select disabled title="The date range arrives with a live instance; these are all-time figures"><option>${window.NOWOPS_LIVE_ON ? 'All time, live' : 'All time, as measured on 26 Sep'}</option></select></label>` : ''}</div>`
+    const allTime = page === 'strategic', anim = first && !reduce, live = location.protocol !== 'file:'
+    const head = $('head'); head.innerHTML = `<div><h1>${esc(sec.question)}</h1><p>${esc(sec.lede)}</p></div><div class="ctx">${allTime ? `<label class="period">Period <select id="period" ${live ? '' : 'disabled'} title="${live ? 'Figures that describe a period follow this range. Counts of what is true now are marked as of now.' : 'The date range needs a live instance; this snapshot holds all-time figures'}">${live ? PERIODS.map(([k, l]) => `<option value="${k}" ${k === curPeriod ? 'selected' : ''}>${l}</option>`).join('') : '<option>All time, as measured on 26 Sep</option>'}</select></label>` : ''}</div>`
+    const psel = $('period'); if (psel) psel.onchange = () => { const v = psel.value; location.hash = `#${page}/${sec.id}${v === 'all' ? '' : '&period=' + v}`; if (window.NOWOPS_SET_RANGE) NOWOPS_SET_RANGE(v) }
     const dim = sec.app && appPick && appPick !== sec.app.name && !window.NOWOPS_LIVE_ON
     $('hextra').innerHTML = sec.app ? `<div class="appsel${anim ? ' enter' : ''}" style="--i:1"><label for="app">Application</label><select id="app">${[sec.app.name, ...sec.app.others].map((n) => `<option ${n === (appPick || sec.app.name) ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select><span>${dim ? 'Not in this snapshot' : `Criticality ${esc(sec.app.criticality)}`}</span></div>` : ''
     const hc = heroCards(sec), hset = new Set(hc.map((c) => c.id))
@@ -3780,6 +3788,12 @@ paintHistory(); modeLite()
   // the snapshot hard-codes the open states; the server resolves them per instance
   const liveQ = (f) => String(f || '').split(NW.OPEN).join('stateIN{{open_states}}')
   const toast = (m) => { const t = document.getElementById('toast'); if (!t) return; t.textContent = m; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 5200) }
+  // Period: read from the hash, passed to every endpoint as ?range=. The server applies it only to definitions that
+  // name a date field, and says so with row.period. Charts built from a GROUP BY get the clause appended here.
+  const RANGE_DAYS = { '30d': 30, quarter: 90, year: 365 }
+  const rangeOf = () => { const p = new URLSearchParams(location.hash.split('&').slice(1).join('&')).get('period'); return RANGE_DAYS[p] ? p : 'all' }
+  let range = rangeOf(), runN = 0
+  const rangeClause = (field) => field && RANGE_DAYS[range] ? `^${field}>=javascript:gs.daysAgoStart(${RANGE_DAYS[range]})` : ''
   const rerender = () => { if (window.NOWOPS_IS_DASH && NOWOPS_IS_DASH(location.hash) && /^#(strategic|operational)/.test(location.hash) && window.NOWOPS_RENDER_SOFT) NOWOPS_RENDER_SOFT() }
 
   // ---- formatting the server's raw values the way the snapshot wrote them
@@ -3799,6 +3813,8 @@ paintHistory(); modeLite()
   function setStat(c, d) {
     if (!c || !d) return false
     if (d.status !== 'available') { c.value = null; c.off = /unavailable|not available|error/.test(d.status) ? 'unavailable' : 'no data yet'; c.reason = d.reason || 'not measurable on this instance'; return true }
+    // a ratio over an empty period: nothing to divide, so say so rather than show a dash
+    if ((d.kind === 'ratio' || c.agg === 'ratio') && String(d.value) === '—') { c.value = null; c.off = 'no data yet'; c.reason = d.period && range !== 'all' ? 'nothing recorded in this period' : 'nothing to divide'; c.period = !!d.period; return true }
     delete c.off; delete c.reason
     let v = d.value
     if (d.kind === 'ratio' || c.agg === 'ratio') { v = String(v); ratioParts(c, d) }
@@ -3806,7 +3822,10 @@ paintHistory(); modeLite()
     else if (/^(min|max)/.test(c.agg || '') && /^\d{4}-\d\d-\d\d/.test(String(v))) { const dt = String(v); v = fmtDate(dt); c.sub = `opened at ${dt.slice(11, 16)}, still open` }
     else if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v)) v = +v
     c.value = v
+    c.period = !!d.period
     if (d.filter_resolved && c.agg !== 'ratio') c.filter = d.filter_resolved
+    // a ratio's two filters, so the detail panel shows the range clause on both parts
+    if (c.agg === 'ratio' && /  ÷  /.test(d.filter_resolved || '')) { const [n, m] = d.filter_resolved.split('  ÷  '); c.numFilter = n === '(all)' ? '' : n; c.denFilter = m === '(all)' ? '' : m }
     if (d.url) c.url = d.url
     if (d.detail && !/÷/.test(d.detail) && c.sub === '') c.sub = d.detail
     scrubSub(c); restatus(c)
@@ -3816,7 +3835,10 @@ paintHistory(); modeLite()
   // ---- charts: rows from one GROUP BY
   const top = (c) => c.k === 'tree' ? 12 : c.k === 'list' ? 8 : c.k === 'stack' ? 60 : Math.max(5, (c.rows || []).length)
   async function setBreakdown(c) {
-    const j = await api(`/api/breakdown?table=${enc(c.table)}&by=${enc(c.by.replace(/\s/g, ''))}&q=${enc(liveQ(c.filter))}&top=${top(c)}`)
+    const base = c.baseFilter ?? (c.baseFilter = c.filter || '')
+    const q = (liveQ(base) + rangeClause(c.when)).replace(/^\^/, '')
+    const j = await api(`/api/breakdown?table=${enc(c.table)}&by=${enc(c.by.replace(/\s/g, ''))}&q=${enc(q)}&top=${top(c)}`)
+    c.period = !!c.when
     const by = c.by
     if (c.k === 'stack') {
       // two fields: rows per first key, values per second key in the card's key order (new second keys are appended)
@@ -3848,11 +3870,11 @@ paintHistory(); modeLite()
   function setSeries(s, next) {
     let c
     if ((c = card('age_by_priority')) && s.aging?.length) { c.colKeys = s.aging.map((a) => a.bucket.replace(/ d$/, ' days')); c.data = ['P1', 'P2', 'P3', 'P4'].map((p) => s.aging.map((a) => a[p] ?? 0)); const mx = Math.max(...c.data.flat()); c.sub = `Darker cells hold more tickets. Shade is binned on a log scale because counts span 0 to ${fmtN(mx)}.` }
-    if ((c = card('attainment_by_priority')) && s.attainment?.length) { c.rows = s.attainment.filter((a) => a.all).map((a) => [a.priority, a.met, a.all]); const ok = c.rows.filter(([, m, d]) => 100 * m / d >= c.target).map((r) => r[0]); c.sub = ok.length === c.rows.length ? `Every priority clears the ${c.target}% target` : ok.length ? `Only ${listOf(ok)} clear${ok.length === 1 ? 's' : ''} the ${c.target}% target` : `No priority clears the ${c.target}% target` }
+    if ((c = card('attainment_by_priority')) && s.attainment?.length) { c.period = true; c.filter = (s.attainment[0].q || '').replace(/\^task\.priority=\d/, ''); c.rows = s.attainment.filter((a) => a.all).map((a) => [a.priority, a.met, a.all]); const ok = c.rows.filter(([, m, d]) => 100 * m / d >= c.target).map((r) => r[0]); c.sub = ok.length === c.rows.length ? `Every priority clears the ${c.target}% target` : ok.length ? `Only ${listOf(ok)} clear${ok.length === 1 ? 's' : ''} the ${c.target}% target` : `No priority clears the ${c.target}% target` }
     if ((c = card('sla_by_month')) && s.months?.length) { c.labels = s.months.map((m) => m.label); c.series = [{ name: 'Met', values: s.months.map((m) => m.met ?? 0) }, { name: 'Breached', values: s.months.map((m) => m.breached ?? 0) }]; c.note = monthNote(thin(s.months, 'met'), 'records') }
     if ((c = card('opened_vs_resolved')) && s.months?.length) { c.labels = s.months.map((m) => m.label); c.series = [{ name: 'Opened', values: s.months.map((m) => m.opened ?? 0) }, { name: 'Resolved', values: s.months.map((m) => m.resolved ?? 0) }]; c.note = monthNote(thin(s.months, 'opened'), 'records') }
     if ((c = card('inc_vs_ritm')) && s.months?.length) { c.labels = s.months.map((m) => m.label); c.series = [{ name: 'Incidents', values: s.months.map((m) => m.opened ?? 0) }, { name: 'Request items', values: s.months.map((m, i) => next?.months?.[i]?.requests ?? 0) }] }
-    if ((c = card('mttr_by_priority')) && s.mttr?.length) { c.rows = s.mttr.filter((m) => m.hours != null).map((m) => m.hours >= 48 ? [m.priority, +(m.hours / 24).toFixed(1), 'days', m.n ?? 0] : [m.priority, +m.hours.toFixed(1), 'hours', m.n ?? 0]) }
+    if ((c = card('mttr_by_priority')) && s.mttr?.length) { c.period = true; c.filter = (s.mttr[0].q || '').replace(/priority=\d/, 'priority=<n>'); c.rows = s.mttr.filter((m) => m.hours != null).map((m) => m.hours >= 48 ? [m.priority, +(m.hours / 24).toFixed(1), 'days', m.n ?? 0] : [m.priority, +m.hours.toFixed(1), 'hours', m.n ?? 0]) }
   }
 
   // ---- Application 360: the six tiles follow the picked application
@@ -3915,7 +3937,8 @@ paintHistory(); modeLite()
     let rows, next, series, live
     setFigures('loading')
     try { live = await connect() } catch (e) { setFigures('snapshot', e.message); toast(`No live figures: ${e.message}. Showing the 26 September snapshot.`); return }
-    try { [rows, next, series] = await Promise.all([api('/api/dashboard?group='), api('/api/next').catch(() => null), api('/api/series').catch(() => null)]) }
+    const me = ++runN, rq = `&range=${range}`
+    try { [rows, next, series] = await Promise.all([api('/api/dashboard?group=' + rq), api('/api/next?x=1' + rq).catch(() => null), api('/api/series?x=1' + rq).catch(() => null)]) }
     catch (e) { setFigures('snapshot', e.message); toast(`Live figures are not available (${e.message}). Showing the 26 September snapshot.`); return }
     const host = live.name
     window.NOWOPS_LIVE_OFF = live.rows.filter((r) => r.kind !== 'ratio' && r.status !== 'available').map((r) => [r.name, r.status, r.reason || ''])
@@ -3929,7 +3952,7 @@ paintHistory(); modeLite()
     if ((c = card('aged_90')) && byId.aged_90?.status === 'available') { const d = new Date(); d.setDate(d.getDate() - 90); c.sub = `opened before ${d.getDate()} ${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][d.getMonth()]}` }
     window.NOWOPS_LIVE = { rows, next, series, host, at: Date.now() }
     // the gauge and the warranty coverage are built from several rows
-    if ((c = card('sla_attainment')) && byId.sla_attainment?.status === 'available') { c.value = +parseFloat(byId.sla_attainment.value).toFixed(1); ratioParts(c, byId.sla_attainment) }
+    if ((c = card('sla_attainment')) && byId.sla_attainment?.status === 'available') { c.value = +parseFloat(byId.sla_attainment.value).toFixed(1); ratioParts(c, byId.sla_attainment); c.period = true; const [n, m] = (byId.sla_attainment.filter_resolved || '').split('  ÷  '); if (m) { c.numFilter = n; c.denFilter = m } }
     if ((c = card('warranty_coverage')) && ['servers', 'servers_no_warranty', 'warranty_expired', 'warranty_90d'].every((k) => byId[k]?.status === 'available')) { c.total = +byId.servers.value; c.rows = [['No warranty date', +byId.servers_no_warranty.value], ['Expired', +byId.warranty_expired.value], ['Ends within 90 days', +byId.warranty_90d.value]]; c.sub = `${fmtN(c.total)} servers` }
     if (series) setSeries(series, next)
     window.NOWOPS_LIVE_ON = host; window.NOWOPS_LIVE_AT = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -3937,7 +3960,7 @@ paintHistory(); modeLite()
     // charts, a few at a time; the server caches each group-by for a few minutes
     const charts = [...cards.values()].filter((x) => x.table && x.by && ['bars', 'tree', 'list', 'split', 'stack'].includes(x.k) && !/,\s/.test(x.table) && !/^(month|ordered|opened_at)/.test(x.by))
     let scanNote = false, failed = 0
-    await pool(charts, 4, async (x) => { try { await setBreakdown(x) } catch (e) { failed++; if (/scanned yet/.test(e.message)) scanNote = true; else console.warn('chart', x.id, e.message) } })
+    await pool(charts, 4, async (x) => { if (me !== runN) return; try { await setBreakdown(x) } catch (e) { failed++; if (/scanned yet/.test(e.message)) scanNote = true; else console.warn('chart', x.id, e.message) } })
     // business applications with a criticality: one group-by, minus the empty bucket
     try { const j = await api(`/api/breakdown?table=cmdb_ci_business_app&by=business_criticality&q=&top=20`); if ((c = card('apps_criticality'))) { const all = j.rows.reduce((s, r) => s + r.v, 0), none = j.rows.find((r) => r.k === '(empty)')?.v ?? 0; c.value = all - none; c.sub = none === all ? `all ${fmtN(all)} are unassigned; no criticality recorded` : `of ${fmtN(all)} business applications` } } catch {}
     // top entitlements by cost: a read-only list
@@ -3949,6 +3972,8 @@ paintHistory(); modeLite()
   // Opened on the dashboard, the page reads at once; opened at sign-in, the connect stage starts the read.
   let runP = null
   window.NOWOPS_LIVE_RUN = () => runP ??= run()
+  // The Period select changes the range and re-reads everything; a run that is overtaken by a newer one stops quietly.
+  window.NOWOPS_SET_RANGE = (r) => { const nr = RANGE_DAYS[r] ? r : 'all'; if (nr === range) return; range = nr; toast(`Reading ${({ '30d': 'the last 30 days', quarter: 'the last quarter', year: 'the last 12 months' })[nr] || 'all time'}…`); runP = run() }
   if (!document.body.classList.contains('studio-on')) NOWOPS_LIVE_RUN()
 })()
 </script>

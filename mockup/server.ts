@@ -135,12 +135,19 @@ const cached = async <T,>(key: string, make: () => Promise<T>): Promise<T> => {
   inflight.set(key, p); return p
 }
 
+/** Period: a definition that names a date field (`when`) is a thing that happened, and takes the range.
+ *  Definitions without one are true as of now and ignore it. "all" adds nothing, so all-time stays exactly what it was. */
+const RANGES: Record<string, number> = { '30d': 30, '90d': 90, quarter: 90, year: 365 }
+const rangeOf = (q: unknown) => { const r = String(q ?? 'all'); return RANGES[r] ? r : 'all' }
+const rangeClause = (range: string, field?: string) => field && RANGES[range] ? `^${field}>=javascript:gs.daysAgoStart(${RANGES[range]})` : ''
+
 app.get('/api/dashboard', async (req, res) => {
-  const group = String(req.query.group ?? '').trim()
-  const rows: any[] = await cached(`dash:${group}:${JSON.stringify(state.params)}`, async () => {
+  const group = String(req.query.group ?? '').trim(), range = rangeOf(req.query.range)
+  const rows: any[] = await cached(`dash:${group}:${range}:${JSON.stringify(state.params)}`, async () => {
   const rows: any[] = validate()
   await pool(rows.filter((d) => d.status === 'available' && d.kind !== 'ratio'), 6, async (d) => {
-    const extra = group && d.table === 'incident' ? `^assignment_group.name=${group}` : ''
+    const extra = (group && d.table === 'incident' ? `^assignment_group.name=${group}` : '') + rangeClause(range, d.when)
+    d.period = !!d.when; d.range = range
     try {
       const r = await stats.run({ table: d.table, filter: (d.filter_resolved + extra).replace(/^\^/, ''), aggregate: d.aggregate, field: d.field })
       Object.assign(d, { filter_resolved: r.filter, value: r.value, url: r.url })
@@ -153,6 +160,7 @@ app.get('/api/dashboard', async (req, res) => {
   })
   for (const d of rows) if (d.kind === 'ratio' && d.status === 'available') {
     const n = rows.find((x) => x.id === d.num), m = rows.find((x) => x.id === d.den)
+    d.period = !!(n?.period || m?.period); d.range = range
     // A ratio over parts that have no data yet is itself "no data yet", not a dash.
     const part = [n, m].find((p) => p && p.status !== 'available')
     if (part) { d.status = part.status; d.reason = part.reason; continue }
@@ -179,23 +187,24 @@ const hours = (s: string | null | undefined) => {
 const monthQ = (f: string, i: number) => `${f}BETWEENjavascript:gs.monthsAgoStart(${i})@javascript:gs.monthsAgoEnd(${i})`
 const monthLabel = (i: number) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i); return d.toLocaleString('en', { month: 'short' }) }
 
-app.get('/api/series', async (_req, res) => {
-  const open = state.params?.open_states ?? '1,2,3'
-  const out = await cached(`series:${open}`, async () => {
-    const slaBase = 'stage=completed^sla.type=SLA^task.sys_class_name=incident'
+app.get('/api/series', async (req, res) => {
+  const open = state.params?.open_states ?? '1,2,3', range = rangeOf(req.query.range)
+  const out = await cached(`series:${open}:${range}`, async () => {
+    // Attainment and MTTR are period figures and take the range; the monthly lines and the aging buckets keep their own windows.
+    const slaBase0 = 'stage=completed^sla.type=SLA^task.sys_class_name=incident', slaBase = slaBase0 + rangeClause(range, 'end_time')
     const out: any = { months: [], attainment: [], mttr: [], aging: [] }
     const jobs: (() => Promise<void>)[] = []
     for (let i = 5; i >= 0; i--) {
       const m: any = { label: monthLabel(i), opened_q: monthQ('opened_at', i), resolved_q: monthQ('resolved_at', i) }
       out.months.push(m)
       jobs.push(async () => { m.opened = await count('incident', m.opened_q) }, async () => { m.resolved = await count('incident', m.resolved_q) },
-        async () => { m.met = await count('task_sla', `${monthQ('sys_created_on', i)}^${slaBase}^has_breached=false`) },
-        async () => { m.breached = await count('task_sla', `${monthQ('sys_created_on', i)}^${slaBase}^has_breached=true`) })
+        async () => { m.met = await count('task_sla', `${monthQ('sys_created_on', i)}^${slaBase0}^has_breached=false`) },
+        async () => { m.breached = await count('task_sla', `${monthQ('sys_created_on', i)}^${slaBase0}^has_breached=true`) })
     }
     for (const p of [1, 2, 3, 4]) {
       const q = `${slaBase}^task.priority=${p}`, a: any = { priority: `P${p}`, q }; out.attainment.push(a)
       jobs.push(async () => { a.met = await count('task_sla', `${q}^has_breached=false`); a.all = await count('task_sla', q); a.pct = a.met !== null && a.all ? 100 * a.met / a.all : null })
-      const mq = `stateIN6,7^priority=${p}`, mt: any = { priority: `P${p}`, q: mq }; out.mttr.push(mt)
+      const mq = `stateIN6,7^priority=${p}${rangeClause(range, 'resolved_at')}`, mt: any = { priority: `P${p}`, q: mq }; out.mttr.push(mt)
       jobs.push(async () => { const r = await stats.run({ table: 'incident', filter: mq, aggregate: 'avg', field: 'calendar_duration' }).catch(() => null); mt.hours = hours(r ? String(r.value) : null); mt.raw = r?.value ?? null; mt.n = await count('incident', mq) })
     }
     const buckets: [string, string][] = [['0–7 d', 'opened_at>=javascript:gs.daysAgoStart(7)'], ['7–30 d', 'opened_at<javascript:gs.daysAgoStart(7)^opened_at>=javascript:gs.daysAgoStart(30)'], ['30–90 d', 'opened_at<javascript:gs.daysAgoStart(30)^opened_at>=javascript:gs.daysAgoStart(90)'], ['90+ d', 'opened_at<javascript:gs.daysAgoStart(90)']]
@@ -334,15 +343,16 @@ app.get('/api/list', async (req, res) => {
 
 /** Figures beyond the core catalogue that the dashboard's live loader applies by tile id.
     Tiles come back in the same shape as /api/dashboard rows so the page renders them with stat(). */
-app.get('/api/next', async (_req, res) => {
-  const open = state.params?.open_states ?? '1,2,3'
-  res.json(await cached(`next:${open}`, async () => {
+app.get('/api/next', async (req, res) => {
+  const open = state.params?.open_states ?? '1,2,3', range = rangeOf(req.query.range), rc = rangeClause(range, 'resolved_at')
+  res.json(await cached(`next:${open}:${range}`, async () => {
     const url = (t: string, q: string) => `${cfg.sn.instanceUrl}/${t}_list.do?sysparm_query=${enc(q)}`
     const tile = (id: string, name: string, table: string, filter: string, meaning: string, value: unknown, extra: Record<string, unknown> = {}) =>
       ({ id, name, kind: 'metric', status: value === null || value === undefined ? 'not available' : 'available', reason: value == null ? 'ServiceNow did not answer' : undefined, table, aggregate: 'count', filter_resolved: filter, meaning, value, url: url(table, filter), ...extra })
     const months: any[] = [], jobs: (() => Promise<void>)[] = []
     for (let i = 5; i >= 0; i--) { const m: any = { label: monthLabel(i), q: monthQ('opened_at', i) }; months.push(m); jobs.push(async () => { m.requests = await count('sc_req_item', m.q) }) }
-    const uq = `stateIN${open}^assigned_toISEMPTY`, mq = 'stateIN6,7^priorityIN1,2', aq = 'stateIN6,7^resolved_by.name=AURA Agent', rq = 'stateIN6,7^resolved_byISNOTEMPTY'
+    // MTTR and automation share are period figures (resolved in the range); unassigned and stale articles are as of now.
+    const uq = `stateIN${open}^assigned_toISEMPTY`, mq = `stateIN6,7^priorityIN1,2${rc}`, aq = `stateIN6,7^resolved_by.name=AURA Agent${rc}`, rq = `stateIN6,7^resolved_byISNOTEMPTY${rc}`
     const sq = 'workflow_state=published^sys_updated_on<javascript:gs.daysAgoStart(180)', kq = 'workflow_state=published'
     let unassigned: number | null = null, majorN: number | null = null, majorRaw: string | null = null, autoN: number | null = null, resolvedN: number | null = null, staleN: number | null = null, kbN: number | null = null
     jobs.push(async () => { unassigned = await count('incident', uq) },
@@ -353,8 +363,8 @@ app.get('/api/next', async (_req, res) => {
     const share = autoN === null || !resolvedN ? null : `${(100 * autoN / resolvedN).toFixed(1)}%`
     return { months, tiles: {
       unassigned: tile('unassigned', 'Unassigned incidents', 'incident', uq, 'Open incidents with nobody assigned', unassigned),
-      major_mttr: tile('major_mttr', 'MTTR, P1 and P2', 'incident', mq, 'Average calendar duration of resolved P1 and P2 incidents', majorRaw, { aggregate: 'avg', field: 'calendar_duration', detail: `${(majorN ?? 0).toLocaleString('en-US')} incidents` }),
-      automation_share: tile('automation_share', 'Resolved by automation', 'incident', aq, 'Resolved incidents whose resolver is the AURA automation account, over all resolved incidents with a named resolver', share, { kind: 'ratio', detail: `${(autoN ?? 0).toLocaleString('en-US')} ÷ ${(resolvedN ?? 0).toLocaleString('en-US')}`, filter_resolved: `${aq}  ÷  ${rq}` }),
+      major_mttr: tile('major_mttr', 'MTTR, P1 and P2', 'incident', mq, 'Average calendar duration of resolved P1 and P2 incidents', majorRaw, { aggregate: 'avg', field: 'calendar_duration', detail: `${(majorN ?? 0).toLocaleString('en-US')} incidents`, period: true, range }),
+      automation_share: tile('automation_share', 'Resolved by automation', 'incident', aq, 'Resolved incidents whose resolver is the AURA automation account, over all resolved incidents with a named resolver', share, { kind: 'ratio', detail: `${(autoN ?? 0).toLocaleString('en-US')} ÷ ${(resolvedN ?? 0).toLocaleString('en-US')}`, filter_resolved: `${aq}  ÷  ${rq}`, period: true, range }),
       kb_stale: tile('kb_stale', 'Stale articles', 'kb_knowledge', sq, 'Published articles not updated in 180 days', staleN, { detail: `of ${(kbN ?? 0).toLocaleString('en-US')} published` }),
     } }
   }))
