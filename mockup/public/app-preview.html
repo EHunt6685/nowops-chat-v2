@@ -75,7 +75,7 @@
   --on-deep-2: #9fcdd6;
 
   
-  --s1: #0097ac; --s2: #fc6a59; --s3: #2a78d6; --s4: #eda100; --s5: #e87ba4;
+  --s1: #0097ac; --s2: #fc6a59; --s3: #881e87; --s4: #01b27c; --s5: #7a7480;
   --mark-quiet: #b9c6c5;
   --grid: #e4eaea; --axis: #c5d0cf;
   --seq-1: #d7eef2; --seq-2: #a6dde6; --seq-3: #5fbfcf; --seq-4: #0097ac; --seq-5: #006e74; --seq-6: #003c51;
@@ -102,7 +102,7 @@
     --ink: #e8f1f0; --ink-2: #a9bdbc; --muted: #7d9392;
     --brand: #1fb0c4; --brand-ink: #80cbd6; --brand-2: #0097ac; --brand-wash: #103a3b; --brand-glow: rgba(31, 176, 196, .18);
     --deep: #0b1c1e; --deep-2: #102a2c;
-    --s1: #0097ac; --s2: #e85f4f; --s3: #3987e5; --s4: #c98500; --s5: #d55181;
+    --s1: #0097ac; --s2: #e85f4f; --s3: #b05ab0; --s4: #05a371; --s5: #8a93a8;
     --mark-quiet: #3a5153; --grid: #1c3133; --axis: #2d4749;
     --seq-1: #133536; --seq-2: #16514f; --seq-3: #137170; --seq-4: #0097ac; --seq-5: #4fbfd0; --seq-6: #a6dde6;
     --good-ink: #5fd35f; --good-wash: #10301a; --warn-ink: #f4c35a; --warn-wash: #33290d; --crit-ink: #f08a8a; --crit-wash: #3a1718;
@@ -116,7 +116,7 @@
   --ink: #e8f1f0; --ink-2: #a9bdbc; --muted: #7d9392;
   --brand: #1fb0c4; --brand-ink: #80cbd6; --brand-2: #0097ac; --brand-wash: #103a3b; --brand-glow: rgba(31, 176, 196, .18);
   --deep: #0b1c1e; --deep-2: #102a2c;
-  --s1: #0097ac; --s2: #e85f4f; --s3: #3987e5; --s4: #c98500; --s5: #d55181;
+  --s1: #0097ac; --s2: #e85f4f; --s3: #b05ab0; --s4: #05a371; --s5: #8a93a8;
   --mark-quiet: #3a5153; --grid: #1c3133; --axis: #2d4749;
   --seq-1: #133536; --seq-2: #16514f; --seq-3: #137170; --seq-4: #0097ac; --seq-5: #4fbfd0; --seq-6: #a6dde6;
   --good-ink: #5fd35f; --good-wash: #10301a; --warn-ink: #f4c35a; --warn-wash: #33290d; --crit-ink: #f08a8a; --crit-wash: #3a1718;
@@ -683,20 +683,20 @@ main:where(:not(#studio *, #rwrap *, #cwrap *))::after { content: ''; position: 
   --ink:#2a2622;--ink2:#6e675f;--muted:#a0988e;
   --acc:var(--ust-teal);--acc-ink:var(--ust-teal-2);--acc-bg:#e1f1f0;--neg:#d64545;--neg-ink:#b03a3a;--neg-bg:#fbe9e6;--warn-ink:#8a6100;--warn-bg:#fbf0d3;
   --mark:var(--ust-teal);--mark2:#aaa39a;--track:#ebe5db;--grid:#f0ebe3;--axis:#d7cfc2;
-  --t1:rgba(42,120,214,.13);--t2:rgba(252,106,89,.13);--t3:rgba(27,175,122,.14);--t4:rgba(237,161,0,.16);--t5:rgba(232,123,164,.14);--tt:rgba(0,151,172,.14);
+  --t1:rgba(0,60,81,.12);--t2:rgba(252,106,89,.13);--t3:rgba(1,178,124,.14);--t4:rgba(219,211,189,.45);--t5:rgba(136,30,135,.12);--tt:rgba(0,151,172,.14);
   --g1:#d5f0f0;--g2:#a9e1e2;--g3:#74cdce;--g4:#3db3b5;--g5:#0097ac;--g6:#0a5556;
-  --s1:#2a78d6;--s2:#fc6a59;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;
+  --s1:#0097ac;--s2:#fc6a59;--s3:#881e87;--s4:#01b27c;--s5:#7a7480;
   --shadow:0 1px 2px rgba(0,0,0,.04),0 10px 30px rgba(0,0,0,.06);--shadow-lg:0 2px 4px rgba(0,0,0,.05),0 24px 60px rgba(0,0,0,.12);
   --sans:Aptos,"Aptos Display","Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;--mono:var(--sans);
   --r:16px;--r-sm:10px}
 [data-theme="dark"] :is(#rwrap, #cwrap) {color-scheme:dark;
   --bg:#141210;--frame:#1c1917;--main:#1c1917;--card:#262220;--card2:#2c2825;--line:#342f2a;--line2:#403a34;
   --ink:#f4f0ea;--ink2:#b1a99f;--muted:#7e766c;
-  --t1:rgba(57,135,229,.2);--t2:rgba(217,89,38,.2);--t3:rgba(25,158,112,.2);--t4:rgba(201,133,0,.22);--t5:rgba(213,81,129,.2);--tt:rgba(34,168,170,.2);
+  --t1:rgba(128,203,214,.16);--t2:rgba(232,95,79,.2);--t3:rgba(5,163,113,.2);--t4:rgba(219,211,189,.18);--t5:rgba(176,90,176,.2);--tt:rgba(34,168,170,.2);
   --acc:#5fd0d2;--acc-ink:#5fd0d2;--acc-bg:rgba(95,208,210,.14);--neg:#f27b7b;--neg-ink:#f27b7b;--neg-bg:rgba(242,123,123,.13);--warn-ink:#f5c04a;--warn-bg:rgba(245,192,74,.13);
   --mark:#22a8aa;--mark2:#6b7079;--track:#332e2a;--grid:#2b2724;--axis:#463f38;
   --g1:#0a4546;--g2:#0b5f60;--g3:#0f7c7e;--g4:#1a9a9c;--g5:#3dbcbe;--g6:#7fdcdd;
-  --s1:#3987e5;--s2:#e85f4f;--s3:#199e70;--s4:#c98500;--s5:#d55181;
+  --s1:#0097ac;--s2:#e85f4f;--s3:#b05ab0;--s4:#05a371;--s5:#8a93a8;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);--shadow-lg:0 2px 4px rgba(0,0,0,.4),0 24px 60px rgba(0,0,0,.55)}
 :is(#rwrap, #cwrap) * {box-sizing:border-box}
 :is(#rwrap, #cwrap) {height:100%}
@@ -1527,18 +1527,16 @@ body.studio-on .askfade { display: none }
   --bg: #ffffff; --surface: #ffffff; --ink: #231f20; --ink-2: #435a5c; --muted: #56696c; --line: #d8e1e0; --line-2: #c3cfce;
   --teal: #0097ac; --teal-d: #006e74; --deep: #003c51; --phos: #80cbd6; --wash: #e1f1f1; --ember: #fc6a59;
   --sans: "Schibsted Grotesk", system-ui, sans-serif; --mono: "JetBrains Mono", Consolas, monospace;
-  --ease: cubic-bezier(0.23, 1, 0.32, 1); --top: 72px; --col: 500px;
+  --ease: cubic-bezier(0.23, 1, 0.32, 1); --top: 0px; --col: 500px;
 }
 #studio * { box-sizing: border-box; margin: 0 }
 #studio { height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden }
 #studio [hidden] { display: none !important }
 
 
-#studio header { position: fixed; top: 0; left: 0; right: 0; height: var(--top); display: flex; align-items: center; justify-content: space-between; padding: 0 44px; border-bottom: 0 solid var(--line); background: rgba(238,242,241,.85); backdrop-filter: blur(10px); z-index: 10 }
-#studio .st-brand { display: flex; align-items: center; gap: 12px }
+#studio .st-brand { position: absolute; top: 28px; left: 44px; display: flex; align-items: center; gap: 12px }
 #studio .st-brand svg { width: 21px; height: 23px; color: var(--teal-d) }
 #studio .st-brand b { font-size: 17px; letter-spacing: -.01em }
-#studio .st-brand span { color: var(--muted); font-size: 13px; padding-left: 14px; border-left: 1px solid var(--line-2) }
 #studio .st-prog { display: flex; gap: 18px; align-items: center }
 #studio .st-prog div { width: 132px; font-size: 12.5px; color: var(--muted); font-weight: 500 }
 #studio .st-prog div::before { content: ''; display: block; height: 3px; border-radius: 3px; margin-bottom: 8px; background: linear-gradient(90deg, var(--teal) var(--p, 0%), var(--line) var(--p, 0%)) }
@@ -1547,7 +1545,7 @@ body.studio-on .askfade { display: none }
 #studio .who i { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 12px; font-weight: 700; color: #fff; background: var(--deep) }
 
 
-#studio .col { position: fixed; left: 0; top: var(--top); bottom: 0; width: var(--col); padding: 28px 44px; display: flex; align-items: safe center; background: var(--surface); border-right: 0 solid var(--line); z-index: 5; overflow-y: auto; scrollbar-width: none }
+#studio .col { position: fixed; left: 0; top: var(--top); bottom: 0; width: var(--col); padding: 80px 44px 28px; display: flex; align-items: safe center; background: var(--surface); border-right: 0 solid var(--line); z-index: 5; overflow-y: auto; scrollbar-width: none }
 #studio .pane { width: 100% }
 #studio .pane h2 { font-size: 32px; line-height: 1.06; letter-spacing: -.035em; font-weight: 760 }
 #studio .pane h2 .w { display: inline-block; overflow: hidden; vertical-align: top; padding-bottom: .06em; margin-bottom: -.06em }
@@ -1609,7 +1607,7 @@ body.studio-on .askfade { display: none }
 #studio .linkbtn { display: inline-block; margin-top: 16px; background: none; border: 0; padding: 4px 0; font: inherit; font-size: 13.5px; color: var(--ink-2); cursor: pointer; text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--line-2) }
 
 
-#studio .stage { position: fixed; left: var(--col); right: 20px; top: calc(var(--top) + 8px); bottom: 20px; overflow: hidden; container-type: inline-size; border-radius: 28px; background: #eef2f1; box-shadow: inset 0 0 0 1px var(--line) }
+#studio .stage { position: fixed; left: var(--col); right: 20px; top: 20px; bottom: 20px; overflow: hidden; container-type: inline-size; border-radius: 28px; background: #eef2f1; box-shadow: inset 0 0 0 1px var(--line) }
 #studio #st-mesh { position: absolute; inset: 0; width: 100%; height: 100%; transition: opacity 1.2s var(--ease) }
 #studio .stage.data #st-mesh { opacity: 0 }
 #studio .stage .dots { opacity: .55 }
@@ -1791,12 +1789,11 @@ body.studio-on { overflow: hidden }
 
 
 <div id="studio">
-<header>
-  <div class="st-brand"><span id="logo" style="display:contents"></span><b>NowOps</b><span>ServiceNow operations, measured</span></div>
-  <div class="st-prog" id="prog"><div class="on">Sign in</div><div>Connect ServiceNow</div><div>First read</div><div class="who" id="st-who"><i id="who-i">U</i><span id="who-n"></span></div></div>
-</header>
+<!-- progress and signed-in name: still read by the script, no longer shown -->
+<div class="st-prog" id="prog" hidden><div class="on">Sign in</div><div>Connect ServiceNow</div><div>First read</div><div class="who" id="st-who"><i id="who-i">U</i><span id="who-n"></span></div></div>
 
 <aside class="col">
+  <div class="st-brand"><span id="logo" style="display:contents"></span><b>NowOps</b></div>
   <!-- sign in: one field first; the domain decides the route -->
   <div class="pane" data-pane="signin">
     <h2 class="rise">Sign in to NowOps</h2>
@@ -2483,7 +2480,7 @@ window.APPMAP = {"26e46e5b0a0a0bb4005d1146846c429c":{"name":"SAP Controlling","c
   }
   function catbar(c) {
     let rows = c.rows.slice(), t = total(c), cols
-    if (c.k === 'coverage') { rows.push(['Covered for more than 90 days', c.total - rows.reduce((a, r) => a + r[1], 0)]); t = c.total; cols = ['var(--mark-quiet)', 'var(--s2)', 'var(--s4)', 'var(--s1)'] }
+    if (c.k === 'coverage') { rows.push(['Covered for more than 90 days', c.total - rows.reduce((a, r) => a + r[1], 0)]); t = c.total; cols = ['var(--mark-quiet)', 'var(--s2)', 'var(--warn)', 'var(--s1)'] }
     else cols = colorsFor({ rows })
     return `<div class="sync"><div class="cbar gx">${rows.map(([l, v], i) => v ? `<i data-k="${i}" style="flex:${v};background-color:${cols[i]}"${tipRows(l, [[cols[i], '', fmt(v), share(v, t)]])}></i>` : '').join('')}</div>${keyList(rows, cols, t)}</div>`
   }
@@ -2636,10 +2633,12 @@ window.APPMAP = {"26e46e5b0a0a0bb4005d1146846c429c":{"name":"SAP Controlling","c
   function hstack(c, w) {
     const id = c.id, cols = c.keys.length === 2 ? ['var(--brand-2)', 'var(--mark-quiet)'] : ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)']
     const totals = c.rows.map(([, vs]) => vs.reduce((a, b) => a + b, 0)), mx = Math.max(...totals), lw = Math.min(200, Math.max(...c.rows.map((r) => tw(r[0], 12))) + 12), RH = 26, bw = w - lw - 40
+    // live labels can run past the 200px label column; trim to fit, the tooltip keeps the full name
+    const cut = (t, max) => { if (tw(t, 12) <= max) return t; let u = t; while (u.length > 1 && tw(u + '…', 12) > max) u = u.slice(0, -1); return u.trimEnd() + '…' }
     let g = ''
     c.rows.forEach(([l, vs], i) => {
       let x = lw; const y = i * RH
-      g += `<g${tipRows(l, vs.map((v, k) => [cols[k], c.keys[k], String(v)]).filter((r) => r[2] !== '0'))}><rect x="0" y="${y}" width="${w}" height="${RH}" fill="transparent"/><text x="${lw - 10}" y="${y + 17}" text-anchor="end" style="font-size:12px;fill:var(--ink)">${esc(l)}</text>`
+      g += `<g${tipRows(l, vs.map((v, k) => [cols[k], c.keys[k], String(v)]).filter((r) => r[2] !== '0'))}><rect x="0" y="${y}" width="${w}" height="${RH}" fill="transparent"/><text x="${lw - 10}" y="${y + 17}" text-anchor="end" style="font-size:12px;fill:var(--ink)">${esc(cut(l, lw - 12))}</text>`
       vs.forEach((v, k) => { if (!v) return; const sw = (v / mx) * bw; g += `<rect class="gx col" style="--i:${i}" x="${x}" y="${y + 5}" width="${Math.max(sw - 1.5, 1)}" height="${RH - 10}" rx="3" fill="${cols[k]}"/>`; x += sw })
       g += `<rect class="gx" style="--i:${i}" x="${lw}" y="${y + 5}" width="${Math.max(x - lw - 1.5, 1)}" height="${RH - 10}" rx="3" fill="url(#${id}-sh)"/><text class="v" x="${x + 6}" y="${y + 17}" style="font-size:11.5px">${totals[i]}</text></g>`
     })
