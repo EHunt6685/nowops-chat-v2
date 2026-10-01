@@ -81,12 +81,12 @@ const clauses = (f: string) =>
   f.split('^').map((c) => c.trim()).filter(Boolean).sort().join('^')
 
 const describe = (r: Reply) =>
-  r.kind === 'definition' ? `DEFINITION ${r.id}` : r.kind === 'metric' ? `METRIC ${r.request.table} · ${r.request.filter || '(all)'}` : r.kind === 'no_answer' ? `NO_ANSWER ${r.about}` : r.kind.toUpperCase()
+  r.kind === 'definition' ? `DEFINITION ${r.id}${r.group ? ' + GROUP ' + r.group : ''}` : r.kind === 'metric' ? `METRIC ${r.request.table} · ${r.request.filter || '(all)'}` : r.kind === 'no_answer' ? `NO_ANSWER ${r.about}` : r.kind.toUpperCase()
 
 /** --routing: the guard for what the regex used to do by hand. */
 async function runRouting(): Promise<void> {
   const fx = JSON.parse(readFileSync('tests/fixtures/routing-eval.json', 'utf8')) as {
-    shouldPick: { id: string; question: string; definition: string; context?: FixtureContext; history?: FixtureHistory }[]
+    shouldPick: { id: string; question: string; definition: string; group?: string; context?: FixtureContext; history?: FixtureHistory }[]
     shouldCompose: { id: string; question: string; table: string }[]
     shouldAnswerFromPage: { id: string; question: string; expect: string; context?: FixtureContext }[]
     shouldDecline: { id: string; question: string; why: string }[]
@@ -96,10 +96,10 @@ async function runRouting(): Promise<void> {
   console.log('=== SHOULD PICK A DEFINITION ===')
   for (const q of fx.shouldPick) {
     const r = await decide(q.question, await retrieve(q.question), q.context, q.history)
-    const ok = r.kind === 'definition' && r.id === q.definition
+    const ok = r.kind === 'definition' && r.id === q.definition && (q.group ? r.group?.toLowerCase() === q.group.toLowerCase() : !r.group)
     if (ok) picked++
     const where = q.context ? `  (from ${q.context.page}${q.context.ticket ? ' ' + q.context.ticket : ''})` : q.history ? '  (follow-up)' : ''
-    console.log(`${q.id}  ${ok ? 'ok      ' : 'WRONG   '} ${describe(r).padEnd(40)} expected ${q.definition}${where}`)
+    console.log(`${q.id}  ${ok ? 'ok      ' : 'WRONG   '} ${describe(r).padEnd(40)} expected ${q.definition}${q.group ? ' + GROUP ' + q.group : ''}${where}`)
   }
 
   console.log('\n=== SHOULD COMPOSE (no tile fits) ===')

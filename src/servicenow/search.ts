@@ -6,6 +6,7 @@ interface SnRecord {
   number?: string
   short_description?: string
   text?: string
+  name?: string
 }
 
 const ENTITIES: Record<string, string> = {
@@ -60,6 +61,12 @@ export function makeSearch(sn: SnClient) {
         // Link by sys_id: number is not unique on this instance (D10).
         url: `${sn.instanceUrl}/kb_view.do?sys_kb_id=${r.sys_id}`,
       }))
+    },
+
+    /** Active groups whose name is exactly `name`. A lookup, never a LIKE: the chatbot must not guess. */
+    async groups(name: string): Promise<{ id: string; name: string }[]> {
+      const params = new URLSearchParams({ sysparm_fields: 'sys_id,name', sysparm_limit: '5', sysparm_query: `active=true^name=${name}` })
+      return (await call(`/api/now/table/sys_user_group?${params}`)).map((r) => ({ id: r.sys_id, name: r.name ?? '' }))
     },
 
     async health(): Promise<{ ok: boolean; detail?: string }> {

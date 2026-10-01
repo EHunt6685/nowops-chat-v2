@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
-  buildContextBlock, buildDefinitionsBlock, buildFactsBlock, parseReply, parseCitations, verifyCitations, stripCitationMarkup,
+  buildContextBlock, buildDefinitionsBlock, buildFactsBlock, makeLlm, parseReply, parseCitations, verifyCitations, stripCitationMarkup,
 } from '../src/llm/client.js'
 import type { Article } from '../src/servicenow/types.js'
+import { parseConfig } from '../src/config.js'
 
 const A = (id: string, title: string): Article =>
   ({ id, title, body: 'body', url: `https://sn/${id}`, label: `KB${id}` })
@@ -119,6 +120,8 @@ describe('parseReply', () => {
     expect(parseReply('DEFINITION open_p1', 'q')).toEqual({ kind: 'definition', id: 'open_p1' })
     expect(parseReply('DEFINITION\nsla_breached', 'q')).toEqual({ kind: 'definition', id: 'sla_breached' })
     expect(parseReply('DEFINITION: Open_P1', 'q')).toEqual({ kind: 'definition', id: 'open_p1' })
+    expect(parseReply('DEFINITION open_incidents\nGROUP Network', 'q')).toEqual({ kind: 'definition', id: 'open_incidents', group: 'Network' })
+    expect(parseReply('DEFINITION\nsla_breached\nGROUP: Database Support', 'q')).toEqual({ kind: 'definition', id: 'sla_breached', group: 'Database Support' })
   })
 
   it('declines a DEFINITION whose id is not shaped like one', () => {
@@ -204,5 +207,22 @@ describe('parseCitations and stripCitationMarkup', () => {
   })
   it('removes the markers once sources render separately', () => {
     expect(stripCitationMarkup('Do this [1]. Then that [2].')).toBe('Do this. Then that.')
+  })
+})
+
+describe('stub decide: a named group is handed to the server, a breakdown is declined', () => {
+  const llm = makeLlm(parseConfig({
+    LLM_MODE: 'stub', ANTHROPIC_API_KEY: 'sk-test-key-1234567890', ANTHROPIC_BASE_URL: 'https://llmproxy.example.com', CLAUDE_MODEL: 'm',
+    SN_INSTANCE_URL: 'https://sn.example.com', SN_CLIENT_ID: 'cid', SN_CLIENT_SECRET: 'csecret', SN_REFRESH_TOKEN: 'rtoken',
+  }))
+  const catalogue = [{ id: 'sla_breached', name: 'SLA Breaches (incidents)', available: true }, { id: 'open_incidents', name: 'Open Tickets', available: true }]
+  const ask = (question: string) => llm.decide({ question, articles: [], history: [], catalogue })
+  it('extracts the name the user wrote, minus filler', async () => {
+    expect(await ask('Breached SLAs by Network support group')).toEqual({ kind: 'definition', id: 'sla_breached', group: 'Network' })
+    expect(await ask('how many open tickets does the Database Admin team have')).toEqual({ kind: 'definition', id: 'open_incidents', group: 'Database Admin' })
+  })
+  it('declines "by group" with no name, and still names the bare tile', async () => {
+    expect(await ask('breached SLAs by support group')).toEqual({ kind: 'no_answer', about: 'count' })
+    expect(await ask('open tickets')).toEqual({ kind: 'definition', id: 'open_incidents' })
   })
 })

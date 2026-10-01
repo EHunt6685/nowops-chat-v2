@@ -198,10 +198,27 @@ describe('POST /api/chat', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
+  it('narrows a tile to a named group by looking the group up, never by guessing', async () => {
+    const run = vi.fn(async (req: { table: string; filter: string; label?: string }) => ({ table: req.table, filter: req.filter, aggregate: 'count' as const, value: 7, label: req.label, url: 'https://sn/x' }))
+    const groups = vi.fn(async (name: string) => (name === 'Network' ? [{ id: 'g'.repeat(32), name: 'Network' }] : []))
+    const llm = (group: string) => fakeLlm(() => ({ kind: 'definition', id: 'sla_breached', group }))
+    const r = await post(makeApp({ cfg, sn: { ...okSn([]), groups }, stats: { run }, llm: llm('Network'), kpis }), { message: 'breached SLAs for the Network group' })
+    expect(r.body.kind).toBe('metric')
+    expect(r.body.answer).toBe('7 sla breaches for the Network group')
+    expect(run.mock.calls[0]![0].filter).toContain(`^task.assignment_group=${'g'.repeat(32)}`)
+
+    const miss = await post(makeApp({ cfg, sn: { ...okSn([]), groups }, stats: { run }, llm: llm('Netwerk'), kpis }), { message: 'breached SLAs for the Netwerk group' })
+    expect(miss.body.gateReason).toBe('group_unresolved')
+    expect(miss.body.answer).toContain('No assignment group named "Netwerk"')
+
+    const noLookup = await post(makeApp({ cfg, sn: okSn([]), stats: { run }, llm: llm('Network'), kpis }), { message: 'breached SLAs for the Network group' })
+    expect(noLookup.body.gateReason).toBe('group_unresolved')
+  })
+
   it('words a decline for the kind of question the model said it was', async () => {
     const app = (about: 'knowledge' | 'count' | 'other') =>
       makeApp({ cfg, sn: okSn([]), stats: noStats, llm: fakeLlm(() => ({ kind: 'no_answer', about })) })
-    expect((await post(app('count'), { message: 'network breached SLA by support group' })).body.gateReason).toBe('count_unmatched')
+    expect((await post(app('count'), { message: 'breached SLAs by support group' })).body.gateReason).toBe('count_unmatched')
     expect((await post(app('knowledge'), { message: 'how do I fix the printer' })).body.gateReason).toBe('model_declined')
     expect((await post(app('other'), { message: 'what is the capital of France' })).body.gateReason).toBe('out_of_scope')
   })

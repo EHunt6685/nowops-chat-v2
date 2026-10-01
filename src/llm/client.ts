@@ -15,7 +15,7 @@ export type QuestionType = 'knowledge' | 'count' | 'page' | 'other'
 
 export type Reply =
   | { kind: 'answer'; text: string }
-  | { kind: 'definition'; id: string }
+  | { kind: 'definition'; id: string; group?: string }
   | { kind: 'metric'; request: MetricRequest }
   | { kind: 'page'; text: string }
   | { kind: 'search'; query: string }
@@ -63,7 +63,9 @@ ANSWER
 <your answer, grounded ONLY in the CONTEXT articles, citing each claim with the bracketed label it came from, like [1] or [2]. Cite only labels present in CONTEXT. Be concise; prefer numbered steps when the article gives steps.>
 
 DEFINITION <id>
-<nothing else. The id of the one DEFINITIONS entry that answers the question exactly. A definition always wins over a METRIC you would write yourself, because its query is the dashboard's own. Name an entry marked unavailable when it is what the user asked for; the server explains why it is off. Exactly means the question adds nothing the tile does not have: if it narrows the tile to a group, a person, a service, a priority, a category or a date range, the tile is the wrong answer even though it sounds right. Then write a METRIC if the narrowing needs no guessed name (a date range, a priority), otherwise NO_ANSWER count. "How many open incidents does the Network group have" is not the open-incidents tile; "open P1 incidents on the SAP service" is not the open-P1 tile; "SLA breaches for the Database team" is not the SLA-breaches tile. Read the whole question before naming a tile.>
+GROUP <name>   (optional second line)
+<nothing else. The id of the one DEFINITIONS entry that answers the question exactly. A definition always wins over a METRIC you would write yourself, because its query is the dashboard's own. Name an entry marked unavailable when it is what the user asked for; the server explains why it is off. Exactly means the question adds nothing the tile does not have: if it narrows the tile to a person, a service, a priority, a category or a date range, the tile is the wrong answer even though it sounds right. Then write a METRIC if the narrowing needs no guessed name (a date range, a priority), otherwise NO_ANSWER count. "open P1 incidents on the SAP service" is not the open-P1 tile. Read the whole question before naming a tile.
+The one narrowing a tile may carry is an assignment group: when the question names a group, add a GROUP line with the group's name exactly as the user wrote it, minus filler words such as group, team, support group. "How many open incidents does the Network group have" is DEFINITION open_incidents + GROUP Network; "SLA breaches for the Database team" is DEFINITION sla_breached + GROUP Database. The server looks the name up and declines if no group has it; you never guess a sys_id.>
 
 METRIC
 {"table":"<table>","filter":"<encoded query>","aggregate":"count|avg|sum|min|max","field":"<field, omit for count>","label":"<2-5 word noun phrase that reads after the number, e.g. open P1 incidents>"}
@@ -84,12 +86,12 @@ Rules for METRIC:
 - Only use fields you are confident exist on that table. A filter with an unknown field is rejected by the server and the question is declined — it is never silently ignored.
 - "Tickets" means incidents (table incident) unless the user names requests (sc_req_item), changes (change_request) or problems (problem). "All" or "total" means no active filter; only add active=true when the user says open, active, current or outstanding.
 - Breached SLAs are task_sla with has_breached=true. Security incidents are sn_si_incident.
-- Breakdowns ("by priority", "per group", "trend over time") are not supported: reply NO_ANSWER rather than returning a single total.
+- Breakdowns ("by priority", "per group", "trend over time") are not supported: reply NO_ANSWER rather than returning a single total. "By the Network group" names one group and is a DEFINITION + GROUP; "by group" with no name is a breakdown.
 - Relative dates use ServiceNow javascript functions, e.g. opened_at<javascript:gs.daysAgoStart(30)
 - Never invent a table or field you are not confident exists. Prefer NO_ANSWER.
 - If the data plainly does not exist in ServiceNow (uptime, latency, synthetic checks, anything from a monitoring tool), reply NO_ANSWER.
 - A USER block, when present, names the person asking with their sys_id and groups. "me", "my", "mine", "I" refer to that person: assigned_to=<user sys_id>; "my group" or "my team" is assignment_groupIN<group sys_ids>. "this ticket" is the TICKET number given. Without a USER block those words cannot be resolved: reply NO_ANSWER rather than counting everyone.
-- Never guess a group name, a person's name or any other value you cannot see in the question or the USER block: reply NO_ANSWER count.
+- Never guess a person's name or any other value you cannot see in the question or the USER block: reply NO_ANSWER count. A group name written in the question goes on a GROUP line under a DEFINITION, never into a filter.
 - A follow-up ("same for requests", "and for P2", "how many of those are P1") refers to the previous answer in the conversation. The earlier assistant turn records which definition or filter it used; pick the sibling definition (the requests version of an incidents tile, the P2 version of a P1 tile) or narrow the same filter. It is never out of scope.
 - The USER block may also say which page the user is on and which TICKET is open. That is where they are, not what they asked about: a question is about the whole instance unless it says "this ticket", "this one", "my queue", "my reply" or the like. "SLAs at risk" asked on a ticket page is the dashboard definition, not that ticket's SLAs.
 - "Waiting on my reply", "assigned to me", "my queue", "who is the caller", "this ticket" are PAGE questions: answer from PAGE FACTS with the PAGE form. They are never a METRIC, because they cannot be written as a query.
@@ -220,8 +222,12 @@ export function parseReply(raw: string, originalQuery: string): Reply {
   if (verb === 'DEFINITION') {
     // The id may follow on the verb line or on the next one. Shape-check only: the server
     // looks it up and declines an id that is not a definition.
-    const id = (arg ?? rest.split('\n')[0]?.trim() ?? '').toLowerCase()
-    return DEFINITION_ID_RE.test(id) ? { kind: 'definition', id } : { kind: 'no_answer', about: 'count' }
+    const restLines = rest.split('\n')
+    const id = (arg ?? restLines.shift()?.trim() ?? '').toLowerCase()
+    if (!DEFINITION_ID_RE.test(id)) return { kind: 'no_answer', about: 'count' }
+    // An optional "GROUP <name>" line narrows the tile. The name is text the server resolves; nothing is composed here.
+    const group = /^\s*GROUP\s*:?\s*(.+?)\s*$/i.exec(restLines[0] ?? '')?.[1]
+    return group ? { kind: 'definition', id, group } : { kind: 'definition', id }
   }
 
   if (verb === 'METRIC') {
@@ -316,7 +322,15 @@ export function makeStubLlm() {
       // A definition whose name the question echoes stands in for the model's judgement.
       let best: { id: string; s: number } | null = null
       for (const d of opts.catalogue ?? []) { const s = scoreName(q, d.name); if (s && (!best || s > best.s)) best = { id: d.id, s } }
-      if (best) return { kind: 'definition', id: best.id }
+      if (best) {
+        // "... the Network group", "by Database support team": the name goes to the server to look up.
+        // "by group" / "per team" with no name is a breakdown, declined like the live model would.
+        const named = /\b(?:by|for|to|in|of|does|at)\s+(?:the\s+)?([A-Za-z][\w&-]*(?:\s+[A-Za-z][\w&-]*){0,2}?)\s+(?:support\s+)?(?:group|team)\b/i.exec(q)?.[1]
+        const stop = /^(?:the|a|an|my|our|each|every|any|this|that|assignment|support)$/i
+        if (named && !stop.test(named) && !/^(?:my|our)\b/i.test(named)) return { kind: 'definition', id: best.id, group: named }
+        if (/\b(?:by|per)\s+(?:assignment\s+|support\s+)?(?:group|team)s?\b/i.test(q)) return { kind: 'no_answer', about: 'count' }
+        return { kind: 'definition', id: best.id }
+      }
       // Only nouns the fixture recognises. Anything else declines: a wrong number is worse than none.
       if (/how many|count of|number of/i.test(q)) {
         const t = /\b(change|changes)\b/i.test(q) ? ['change_request', 'open changes'] : /\bproblems?\b/i.test(q) ? ['problem', 'open problems'] : /\bsla\b.*\bbreach/i.test(q) ? ['task_sla', 'breached SLAs'] : /\b(incidents?|tickets?)\b/i.test(q) ? ['incident', 'open incidents'] : null

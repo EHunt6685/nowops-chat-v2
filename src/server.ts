@@ -34,6 +34,14 @@ const DECLINES: Record<QuestionType, { gateReason: string; text: string }> = {
 interface Sn {
   search(query: string): Promise<Article[]>
   health(): Promise<{ ok: boolean; detail?: string }>
+  /** Active groups named exactly `name`. Optional: a server without it declines group-narrowed questions. */
+  groups?(name: string): Promise<{ id: string; name: string }[]>
+}
+
+/** Narrow a tile's query to one assignment group. task_sla hangs off the task; every other tile table has the field itself. */
+function narrowToGroup(req: MetricRequest, group: { id: string; name: string }): MetricRequest {
+  const field = req.table === 'task_sla' ? 'task.assignment_group' : 'assignment_group'
+  return { ...req, filter: [req.filter, `${field}=${group.id}`].filter(Boolean).join('^'), label: `${req.label} for the ${group.name} group` }
 }
 
 interface Stats {
@@ -253,16 +261,27 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm; kpi
         if (!kpi.request) {
           return decline('definition_unavailable', `"${kpi.name}" is defined, but it is not available on this instance: ${kpi.unavailable}.`, { definition })
         }
+        // A named group is looked up, never guessed: exactly one active group with that name, or a decline that says so.
+        let group: { id: string; name: string } | null = null
+        if (reply.group) {
+          const found = sn.groups ? await sn.groups(reply.group).catch(() => null) : null
+          if (!found || found.length !== 1) {
+            log('chat.group_unresolved', { q: message, definition: kpi.id, group: reply.group, matches: found?.length ?? 'lookup failed' })
+            return decline('group_unresolved', found?.length ? `More than one assignment group is named "${reply.group}" on this instance, so I cannot tell which you mean.` : `No assignment group named "${reply.group}" exists on this instance, so I will not guess one.`, { definition })
+          }
+          group = found[0]!
+        }
+        const narrow = (r: MetricRequest) => (group ? narrowToGroup(r, group) : r)
         let result: MetricResult
         try {
           if (kpi.ratio) {
             // A ratio is two counts. The value is the percentage; the filter shows both queries.
-            const [n, d] = await Promise.all([stats.run(kpi.ratio.num), stats.run(kpi.ratio.den)])
+            const [n, d] = await Promise.all([stats.run(narrow(kpi.ratio.num)), stats.run(narrow(kpi.ratio.den))])
             const nv = Number(n.value), dv = Number(d.value)
-            result = { ...n, label: kpi.request.label, filter: `${n.filter || 'all'} ÷ ${d.filter || 'all'}`, value: dv > 0 && isFinite(nv) ? `${(100 * nv / dv).toFixed(1)}% (${nv.toLocaleString('en-US')} of ${dv.toLocaleString('en-US')})` : 'n/a, the denominator is 0' }
-          } else result = await stats.run(kpi.request)
+            result = { ...n, label: narrow(kpi.request).label, filter: `${n.filter || 'all'} ÷ ${d.filter || 'all'}`, value: dv > 0 && isFinite(nv) ? `${(100 * nv / dv).toFixed(1)}% (${nv.toLocaleString('en-US')} of ${dv.toLocaleString('en-US')})` : 'n/a, the denominator is 0' }
+          } else result = await stats.run(narrow(kpi.request))
         } catch (e) {
-          log('chat.definition_failed', { q: message, definition: kpi.id, detail: e instanceof Error ? e.message : String(e) })
+          log('chat.definition_failed', { q: message, definition: kpi.id, group: group?.name, detail: e instanceof Error ? e.message : String(e) })
           return decline('metric_unavailable', DECLINES.count.text, { definition })
         }
         // The tile says "no data yet" for this; the chatbot says the same rather than reading out a zero.
@@ -270,7 +289,7 @@ export function makeApp(deps: { cfg: Config; sn: Sn; stats: Stats; llm: Llm; kpi
           return decline('definition_no_data', `"${kpi.name}" is defined and its table exists here, but nothing is recorded for it on this instance yet: ${kpi.meaning}.`, { definition, metric: result })
         }
         const answer = metricSentence(result)
-        log('chat', { q: message, gate: 'definition', definition: kpi.id, value: result.value, retried, ms: Date.now() - started })
+        log('chat', { q: message, gate: 'definition', definition: kpi.id, group: group?.name, value: result.value, retried, ms: Date.now() - started })
         // The id goes into history so "and for P2" can reuse the tile rather than compose a fresh filter.
         remember(conversationId, history, message, `${answer} (definition ${kpi.id}: ${result.table} · ${result.filter || 'no filter'})`)
         return res.json({ answer, kind: 'metric', sources: [], metric: result, definition, grounded: true, gateReason: null, retried })
