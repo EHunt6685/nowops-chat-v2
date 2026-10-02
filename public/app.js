@@ -72,9 +72,9 @@ function renderSources(el, data) {
 async function loadHealth() {
   try {
     const h = await (await fetch('/api/health')).json()
-    healthEl.textContent = h.ok ? `ready · ${h.model}` : 'ServiceNow unreachable'
-    // Stub mode is coloured as a warning so nobody mistakes canned text for a real answer.
-    healthEl.className = `pill ${!h.ok ? 'bad' : h.llmMode === 'stub' ? 'warn' : 'ok'}`
+    const modelDown = h.llm && !h.llm.ok
+    healthEl.textContent = !h.ok ? 'ServiceNow unreachable' : modelDown ? 'model offline · chat unavailable' : `ready · ${h.model}`
+    healthEl.className = `pill ${!h.ok ? 'bad' : modelDown ? 'warn' : 'ok'}`
   } catch {
     healthEl.textContent = 'server unreachable'
     healthEl.className = 'pill bad'

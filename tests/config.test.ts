@@ -16,8 +16,7 @@ describe('parseConfig', () => {
   it('applies documented defaults', () => {
     const c = parseConfig(valid)
     expect(c.port).toBe(3000)
-    expect(c.retryEnabled).toBe(true)
-    expect(c.llmMode).toBe('live')
+    expect(c.openStates).toBe('1,2,3')
   })
 
   it('strips a trailing slash from both base URLs', () => {
@@ -38,8 +37,8 @@ describe('parseConfig', () => {
     expect(() => parseConfig({ ...valid, PORT: 'eighty' })).toThrow(/PORT/)
   })
 
-  it('rejects an unknown LLM_MODE', () => {
-    expect(() => parseConfig({ ...valid, LLM_MODE: 'demo' })).toThrow(/LLM_MODE/)
+  it('rejects OPEN_STATES that are not comma-separated numbers', () => {
+    expect(() => parseConfig({ ...valid, OPEN_STATES: 'new,open' })).toThrow(/OPEN_STATES/)
   })
 })
 

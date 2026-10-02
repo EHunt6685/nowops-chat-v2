@@ -14,10 +14,8 @@ const Schema = z.object({
   SN_CLIENT_SECRET: z.string().min(1, 'SN_CLIENT_SECRET is required'),
   SN_REFRESH_TOKEN: z.string().min(1, 'SN_REFRESH_TOKEN is required'),
 
-  // The only two behavioural switches. Everything else is a const in the file
-  // that uses it — see MIN_TOKENS, SEARCH_LIMIT, TIMEOUT_MS.
-  RETRY_ENABLED: z.enum(['true', 'false']).default('true'),
-  LLM_MODE: z.enum(['live', 'stub']).default('live'),
+  // No behavioural switches: a chatbot without a model is nothing, and there is one pipeline.
+  // Everything else is a const in the file that uses it — see MIN_TOKENS, SEARCH_LIMIT, STEP_BUDGET.
 
   // Incident states the client counts as open, for the standalone server's dashboard definitions.
   // NowOps proper learns this from the instance scan; here it is the ServiceNow standard three.
@@ -29,8 +27,6 @@ export interface Config {
   anthropicApiKey: string
   anthropicBaseUrl: string
   claudeModel: string
-  retryEnabled: boolean
-  llmMode: 'live' | 'stub'
   openStates: string
   sn: {
     instanceUrl: string
@@ -53,8 +49,6 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     // A trailing slash here produces '//v1/messages' against some gateways.
     anthropicBaseUrl: e.ANTHROPIC_BASE_URL.replace(/\/$/, ''),
     claudeModel: e.CLAUDE_MODEL,
-    retryEnabled: e.RETRY_ENABLED === 'true',
-    llmMode: e.LLM_MODE,
     openStates: e.OPEN_STATES,
     sn: {
       instanceUrl: e.SN_INSTANCE_URL.replace(/\/$/, ''),

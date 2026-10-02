@@ -1,9 +1,8 @@
 {
   "_meta": {
     "created": "2026-09-30",
-    "purpose": "Routing regression: does the model name the dashboard definition a question is about, compose only when no tile fits, and decline what it must not guess? Run with `npm run eval -- --routing`.",
-    "why": "The counting regex and word matcher were replaced by the model's own judgement on 2026-09-30. A word matcher fails visibly; a model picks the wrong tile quietly. This fixture is the guard.",
-    "scoring": "shouldPick passes when the reply is DEFINITION with the expected id, and with the expected group when one is given. shouldCompose passes when the reply is METRIC on the expected table (not a DEFINITION). shouldDecline passes when the reply is NO_ANSWER of any type."
+    "purpose": "The core question set: every question that broke an earlier design of the chatbot, kept so it can never break again. Run with `npm run eval -- --agent`, together with agent-eval.json (the paraphrase set). Scored as that file describes.",
+    "why": "The counting regex and word matcher were replaced by the model's own judgement on 2026-09-30, and the single-call pipeline by the tool loop on 2026-10-02. A wrong tile is the quiet failure: the number looks right and disagrees with the dashboard. This fixture is the guard."
   },
 
   "shouldPick": [
@@ -45,7 +44,8 @@
     { "id": "c-04", "question": "how many changes are scheduled for next week", "table": "change_request" },
     { "id": "c-05", "question": "how many vulnerable items are there in total", "table": "sn_vul_vulnerable_item", "notes": "the tile counts active items; 'in total' asks for all" },
     { "id": "c-06", "question": "how many P1 incidents were opened in the last 7 days", "table": "incident", "notes": "narrows a tile by a date range: compose, do not name Open P1 Incidents" },
-    { "id": "c-07", "question": "how many SLAs breached this month", "table": "task_sla", "notes": "narrows SLA Breaches by date: compose" }
+    { "id": "c-07", "question": "how many SLAs breached this month", "table": "task_sla", "notes": "narrows SLA Breaches by date: compose" },
+    { "id": "c-08", "question": "breached SLAs by support group", "table": "task_sla", "notes": "a breakdown: declined by the five-form pipeline, answered by the tool loop with aggregate (moved from shouldDecline 2026-10-02)" }
   ],
 
   "shouldAnswerFromPage": [
@@ -69,9 +69,8 @@
 
   "shouldDecline": [
     { "id": "n-02", "question": "how many incidents did Priya close last week", "why": "a person's name" },
-    { "id": "n-03", "question": "breached SLAs by support group", "why": "a breakdown; the chatbot returns one number" },
     { "id": "n-04", "question": "what is our uptime", "why": "no such data in ServiceNow" },
     { "id": "n-05", "question": "how many incidents will we get next month", "why": "a forecast" },
-    { "id": "n-08", "question": "open P1 incidents on the SAP service", "why": "narrows a tile by a service name" }
+    { "id": "n-08", "question": "open P1 incidents on the SAP service", "why": "SAP matches several services: must ask which, never pick one" }
   ]
 }

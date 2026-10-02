@@ -12,6 +12,7 @@ import { DEFINITIONS, fieldsOf, makeDefinitions } from '../src/definitions.js'
 import { makeSearch } from '../src/servicenow/search.js'
 import { makeLlm } from '../src/llm/client.js'
 import { makeApp as makeChatApp } from '../src/server.js'
+import { makeAgentModel } from '../src/llm/agent.js'
 import { sameSystem, classifyOutcome, isNowOpsNote, describePrecedent, noEvidence, type Outcome } from '../src/resolve/evidence.js'
 
 const cfg = loadConfig()
@@ -31,12 +32,13 @@ app.use(express.static(join(dirname(fileURLToPath(import.meta.url)), 'public'), 
 const state: { profile?: any; params?: Record<string, string>; confirmed?: boolean } = {}
 // One source of truth for what a tile counts; before the scan every table reads as not present.
 const defs = makeDefinitions(() => ({ params: state.params, tables: state.profile?.tables ?? {}, confirmed: state.confirmed }))
-app.use(makeChatApp({ cfg, sn: makeSearch(sn), stats, llm: makeLlm(cfg), kpis: defs, allowedTables: scannedTables }))
+app.use(makeChatApp({ cfg, sn: makeSearch(sn), kpis: defs, allowedTables: scannedTables, agent: makeAgentModel(cfg), snClient: sn, llm: makeLlm(cfg) }))
 // Every ServiceNow request goes through here; the count is what a scan reports, so the read can show its work.
 let snCalls = 0
 const get = <T,>(p: string) => { snCalls++; return sn.get<T>(p).catch(() => null) }
 type Rec = Record<string, string>
 const STANDARD_STATES: Record<string, string> = { '1': 'New', '2': 'In Progress', '3': 'On Hold', '6': 'Resolved', '7': 'Closed', '8': 'Canceled' }
+type StateClass = 'new' | 'in_progress' | 'on_hold' | 'resolved' | 'closed' | 'cancelled'
 
 // Tables to scan are derived from the definitions — the only list there is.
 const TABLES: Record<string, string[]> = {}
@@ -56,8 +58,12 @@ app.post('/api/scan', async (_req, res) => {
   // Five tables at a time: the read is watched live, and one at a time took most of it.
   const tablesP = pool(Object.entries(TABLES), 5, async ([table, fields]) => {
     // One timeout must not record a table as absent: every definition on it would go dark. Probe twice.
-    const probe = () => get<{ result: Rec[] }>(`/api/now/table/${table}?sysparm_fields=sys_id,${fields.join(',')}&sysparm_limit=1`)
-    const r = (await probe()) ?? (await probe())
+    // HTTP 400 "Invalid table" means the plugin is not installed: a definite reason, shown as such. Anything else
+    // that fails is unknown, not absent (D-011).
+    let notInstalled = false
+    const probe = () => { snCalls++; return sn.get<{ result: Rec[] }>(`/api/now/table/${table}?sysparm_fields=sys_id,${fields.join(',')}&sysparm_limit=1`).catch((e: Error) => { if (/HTTP 400/.test(e.message) && /Invalid table/i.test(e.message)) notInstalled = true; return null }) }
+    const r = (await probe()) ?? (notInstalled ? null : await probe())
+    if (notInstalled) { tables[table] = { present: false, reason: 'not installed on this instance' }; return }
     // Still nothing: a network failure is "unknown", not "absent". Keep the last good scan's answer for
     // this table if there was one; otherwise mark it unreachable so the reason shows on the tile.
     if (!r) { const prev = state.profile?.tables?.[table]; tables[table] = prev?.present ? { ...prev, stale: true } : { present: false, reason: 'not reachable during the scan; re-run the scan' }; return }
@@ -73,11 +79,23 @@ app.post('/api/scan', async (_req, res) => {
   const seenP = get<{ result: { groupby_fields: { value: string }[]; stats: { count: string } }[] }>(`/api/now/stats/incident?sysparm_count=true&sysparm_group_by=state`)
   const seen = await seenP
   const inUse = Object.fromEntries((seen?.result ?? []).map((r) => [r.groupby_fields[0]!.value, Number(r.stats.count)]))
-  const standard_states = Object.entries(STANDARD_STATES).map(([value, shipped]) => ({ value, shipped, label: choices.find((c) => c.value === value)?.label ?? '(not defined)', count: inUse[value] ?? 0 }))
+  // Every state, standard or custom, is classified by its label on this instance, never by its number: a client
+  // may renumber or rename any of them. An unlabelled state in use is open, the conservative reading (D-011).
+  const classify = (label: string): StateClass =>
+    /cancel/i.test(label) ? 'cancelled' : /closed|complete/i.test(label) ? 'closed' : /resolved|fixed/i.test(label) ? 'resolved'
+      : /hold|await|wait|pending|paused/i.test(label) ? 'on_hold' : /^new$|^open$/i.test(label) ? 'new' : 'in_progress'
+  const standard_states = Object.entries(STANDARD_STATES).map(([value, shipped]) => { const label = choices.find((c) => c.value === value)?.label ?? '(not defined)'; return { value, shipped, label, count: inUse[value] ?? 0, class: label === '(not defined)' ? classify(shipped) : classify(label) } })
   const customValues = new Set([...choices.map((c) => c.value), ...Object.keys(inUse)].filter((v) => !(v in STANDARD_STATES)))
-  const custom_states = [...customValues].sort((a, b) => Number(a) - Number(b)).map((value) => ({
-    value, label: choices.find((c) => c.value === value)?.label ?? '(in use but not in choice list)', count: inUse[value] ?? 0, default: 'open',
-  }))
+  const custom_states = [...customValues].sort((a, b) => Number(a) - Number(b)).map((value) => {
+    const label = choices.find((c) => c.value === value)?.label ?? '(in use but not in choice list)'
+    const cls = label.startsWith('(') ? 'in_progress' : classify(label)
+    return { value, label, count: inUse[value] ?? 0, class: cls, default: cls === 'cancelled' ? 'cancelled' : cls === 'closed' || cls === 'resolved' ? 'closed' : 'open' }
+  })
+  // The instance's own time zone and its automation accounts (users that resolve incidents and look like bots), proposed, not assumed.
+  const tzP = get<{ result: Rec[] }>(`/api/now/table/sys_properties?sysparm_query=${encodeURIComponent('name=glide.sys.default.tz')}&sysparm_fields=value&sysparm_limit=1`)
+  const botsP = get<{ result: { groupby_fields: { value: string; display_value: string }[]; stats: { count: string } }[] }>(`/api/now/stats/incident?sysparm_count=true&sysparm_display_value=all&sysparm_group_by=resolved_by&sysparm_query=${encodeURIComponent('resolved_byISNOTEMPTY')}`)
+  const time_zone = (await tzP)?.result?.[0]?.value || 'UTC'
+  const automation_candidates = ((await botsP)?.result ?? []).map((r) => ({ id: r.groupby_fields[0]!.value, name: r.groupby_fields[0]!.display_value, resolved: Number(r.stats.count) })).filter((u) => u.name && /\b(agent|bot|robot|rpa|automation|automated|integration|workflow|orchestrat\w*)\b/i.test(u.name))
   // SLA definitions: candidates per priority. Exactly one match → shown read-only.
   const slasP = get<{ result: Rec[] }>(`/api/now/table/contract_sla?sysparm_query=${encodeURIComponent('collection=incident^type=SLA^active=true^target=resolution')}&sysparm_fields=sys_id,name,duration&sysparm_display_value=true&sysparm_limit=50`)
   const slaList = (await slasP)?.result ?? []
@@ -87,21 +105,31 @@ app.post('/api/scan', async (_req, res) => {
   }))
   await tablesP  // states and SLA definitions were fetched alongside the table probes
   const took_ms = Date.now() - t0, requests = snCalls - c0
-  state.profile = { scanned_at: new Date().toISOString(), took_ms, requests, tables, standard_states, custom_states, sla_definitions: slaList, sla_matches }
+  state.profile = { scanned_at: new Date().toISOString(), took_ms, requests, tables, standard_states, custom_states, sla_definitions: slaList, sla_matches, time_zone, automation_candidates }
   log('scan.done', { instance: cfg.sn.instanceUrl, requests, took_ms, tables_present: Object.values(tables).filter((t: any) => t.present).length, tables: Object.keys(tables).length })
   state.params = undefined; state.confirmed = undefined
   res.json(state.profile)
 })
 
 /** Build tenant parameters from the confirm step (or from the scan's defaults when skipped). */
-function applyParams(slas: Record<string, string>, openExtra: string[], confirmed: boolean) {
-  state.params = { ...slas, open_states: ['1', '2', '3', ...openExtra].join(',') }
+/** Tenant parameters from the scan's classification of every state, its time zone and its automation accounts. Nothing is assumed from a state's number. */
+function applyParams(slas: Record<string, string>, confirmed: boolean) {
+  const p = state.profile
+  const all: { value: string; class: StateClass }[] = [...p.standard_states, ...p.custom_states]
+  const of = (...cls: StateClass[]) => all.filter((s) => cls.includes(s.class)).map((s) => s.value).join(',')
+  state.params = {
+    ...slas,
+    open_states: of('new', 'in_progress', 'on_hold'), in_progress_states: of('in_progress'), on_hold_states: of('on_hold'),
+    closed_states: of('resolved', 'closed'), cancelled_states: of('cancelled'),
+    time_zone: p.time_zone || 'UTC',
+    automation_accounts: (p.automation_candidates as { id: string }[]).map((u) => u.id).join(','),
+  }
   state.confirmed = confirmed
 }
 app.post('/api/skip-confirm', (_req, res) => {
   const p = state.profile
   const slas = Object.fromEntries(Object.entries(p.sla_matches).map(([k, m]: [string, any]) => [k, m.selected]))
-  applyParams(slas, p.custom_states.map((s: any) => s.value), false) // conservative default: custom states count as open
+  applyParams(slas, false) // the scan's own reading of the instance; Settings (D-009) is where a human corrects it
   res.json({ ...state.params, confirmed: false })
 })
 // Definitions, validation and the tenant parameters live in src/definitions.ts, shared with the
@@ -154,8 +182,22 @@ app.get('/api/dashboard', async (req, res) => {
       // Tier B: the table and field exist, but zero rows means "no data yet", not "zero".
       // Zero rows, or an average duration of zero (the field is never populated), both mean "no data yet".
       if (d.tier === 'B' && (r.value === 0 || String(r.value) === '00:00:00')) { d.status = 'no data yet'; d.reason = 'table and field exist; nothing recorded on this instance' }
+      // An average carries the number of records it rests on, read from the instance (D-011). None: no data. Few: thin.
+      if (d.aggregate === 'avg' && d.status === 'available') {
+        const n = Number((await stats.run({ table: d.table, filter: r.filter, aggregate: 'count' })).value)
+        d.n = n
+        if (n === 0) { d.status = 'no data yet'; d.reason = `no record has ${d.field} recorded` }
+        else { d.detail = `over ${n.toLocaleString('en-US')} record${n === 1 ? '' : 's'} with ${d.field} recorded`; if (n < 10) { d.status = 'thin data'; d.reason = `only ${n} record${n === 1 ? '' : 's'} carry ${d.field}; the average is not representative` } }
+      }
     } catch (e) { d.status = 'error'; d.reason = (e as Error).message }
   })
+  // A share is "x of y": the basis is another definition's count, read live. A zero basis is "no data", not zero.
+  for (const d of rows) if (d.basis && d.status === 'available') {
+    const b = rows.find((x) => x.id === d.basis)
+    if (!b || b.status !== 'available') continue
+    if (Number(b.value) === 0) { d.status = 'no data yet'; d.reason = `${b.name.toLowerCase()} is zero: nothing to measure` }
+    else d.detail = `of ${Number(b.value).toLocaleString('en-US')} ${b.name.toLowerCase()}`
+  }
   return rows
   })
   for (const d of rows) if (d.kind === 'ratio' && d.status === 'available') {
@@ -171,6 +213,25 @@ app.get('/api/dashboard', async (req, res) => {
   res.json(rows)
 })
 
+// ---- Connection-time checks (D-011): the audit that was done by hand on 2026-10-02, as code that runs on any
+// instance. Each check compares figures the instance returned with one another; a failure is shown, not hidden.
+app.get('/api/checks', async (_req, res) => {
+  const rows: any[] = await (await fetch(`http://localhost:${PORT}/api/dashboard`)).json()
+  const v = (id: string) => { const r = rows.find((x) => x.id === id); return r && r.status === 'available' ? Number(r.value) : null }
+  const checks: { id: string; ok: boolean | null; text: string }[] = []
+  const rule = (id: string, parts: (number | null)[], ok: (n: number[]) => boolean, text: (n: number[]) => string) => {
+    if (parts.some((p) => p === null)) return checks.push({ id, ok: null, text: 'not checkable: a tile it needs is unavailable' })
+    const n = parts as number[]; checks.push({ id, ok: ok(n), text: text(n) })
+  }
+  rule('sla_adds_up', [v('sla_breached'), v('sla_met'), v('sla_completed')], ([b, m, c]) => b! + m! === c!, ([b, m, c]) => `${b} breached + ${m} met = ${b! + m!}; completed is ${c}`)
+  rule('states_add_up', [v('open_incidents'), v('closed_incidents'), v('cancelled'), v('total_incidents')], ([o, c, x, t]) => o! + c! + x! === t!, ([o, c, x, t]) => `${o} open + ${c} closed + ${x} cancelled = ${o! + c! + x!}; total is ${t}${o! + c! + x! !== t! ? ` (${t! - o! - c! - x!} incidents are in a state the scan could not classify)` : ''}`)
+  rule('p1_attainment_parts', [v('sla_p1_met'), v('sla_p1_all')], ([m, a]) => m! <= a!, ([m, a]) => `${m} P1 SLAs met of ${a} completed`)
+  rule('warranty_basis', [v('servers_with_warranty'), v('servers_no_warranty'), v('servers')], ([w, n, s]) => w! + n! === s!, ([w, n, s]) => `${w} servers with a warranty date + ${n} without = ${w! + n!}; servers is ${s}`)
+  for (const r of rows) if (r.aggregate === 'avg' && r.n !== undefined) checks.push({ id: `coverage_${r.id}`, ok: r.n >= 10, text: `${r.name}: average over ${r.n} record${r.n === 1 ? '' : 's'} with ${r.field}` })
+  for (const r of rows) if (r.status === 'unavailable' || r.status === 'no data yet' || r.status === 'thin data') checks.push({ id: `tile_${r.id}`, ok: null, text: `${r.name}: ${r.status}, ${r.reason}` })
+  res.json({ instance: cfg.sn.instanceUrl, params: state.params ?? null, checks })
+})
+
 // ---- Series for the QBR charts. Every series is a set of live aggregates; the filter
 // behind each point is returned so the page can show it on hover.
 const enc = encodeURIComponent
@@ -184,7 +245,15 @@ const hours = (s: string | null | undefined) => {
   const m = /^(?:(\d+) )?(\d+):(\d+):(\d+)$/.exec(s.trim()); if (!m) return null
   return Number(m[1] ?? 0) * 24 + Number(m[2]) + Number(m[3]) / 60 + Number(m[4]) / 3600
 }
-const monthQ = (f: string, i: number) => `${f}BETWEENjavascript:gs.monthsAgoStart(${i})@javascript:gs.monthsAgoEnd(${i})`
+// A calendar month in UTC, written as literal dates: the same walls the chatbot writes and the Verify link shows.
+// gs.monthsAgoStart/End evaluate in the signed-in account's time zone and moved the walls by hours, so the chart
+// read 4,046 for June where the chatbot read 4,065 (D-010).
+const monthQ = (f: string, i: number) => {
+  const now = new Date(), y = now.getUTCFullYear(), mo = now.getUTCMonth() - i
+  const start = new Date(Date.UTC(y, mo, 1)), end = new Date(Date.UTC(y, mo + 1, 0))
+  const day = (d: Date) => d.toISOString().slice(0, 10)
+  return `${f}BETWEEN${day(start)} 00:00:00@${day(end)} 23:59:59`
+}
 const monthLabel = (i: number) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i); return d.toLocaleString('en', { month: 'short' }) }
 
 app.get('/api/series', async (req, res) => {
@@ -198,13 +267,16 @@ app.get('/api/series', async (req, res) => {
       const m: any = { label: monthLabel(i), opened_q: monthQ('opened_at', i), resolved_q: monthQ('resolved_at', i) }
       out.months.push(m)
       jobs.push(async () => { m.opened = await count('incident', m.opened_q) }, async () => { m.resolved = await count('incident', m.resolved_q) },
-        async () => { m.met = await count('task_sla', `${monthQ('sys_created_on', i)}^${slaBase0}^has_breached=false`) },
-        async () => { m.breached = await count('task_sla', `${monthQ('sys_created_on', i)}^${slaBase0}^has_breached=true`) })
+        // Bucketed by when the SLA ended, like the tiles and the Period control. By creation date June showed
+        // 17,957 met: the demo data's load date, not performance (D-010).
+        async () => { m.met = await count('task_sla', `${monthQ('end_time', i)}^${slaBase0}^has_breached=false`) },
+        async () => { m.breached = await count('task_sla', `${monthQ('end_time', i)}^${slaBase0}^has_breached=true`) })
     }
     for (const p of [1, 2, 3, 4]) {
       const q = `${slaBase}^task.priority=${p}`, a: any = { priority: `P${p}`, q }; out.attainment.push(a)
       jobs.push(async () => { a.met = await count('task_sla', `${q}^has_breached=false`); a.all = await count('task_sla', q); a.pct = a.met !== null && a.all ? 100 * a.met / a.all : null })
-      const mq = `stateIN6,7^priority=${p}${rangeClause(range, 'resolved_at')}`, mt: any = { priority: `P${p}`, q: mq }; out.mttr.push(mt)
+      // Over incidents with a non-zero recorded duration, so n is the average's basis (D-010); closed states from the scan (D-011).
+      const mq = `stateIN${closedStates()}^priority=${p}^calendar_duration>1970-01-01 00:00:00${rangeClause(range, 'resolved_at')}`, mt: any = { priority: `P${p}`, q: mq }; out.mttr.push(mt)
       jobs.push(async () => { const r = await stats.run({ table: 'incident', filter: mq, aggregate: 'avg', field: 'calendar_duration' }).catch(() => null); mt.hours = hours(r ? String(r.value) : null); mt.raw = r?.value ?? null; mt.n = await count('incident', mq) })
     }
     const buckets: [string, string][] = [['0–7 d', 'opened_at>=javascript:gs.daysAgoStart(7)'], ['7–30 d', 'opened_at<javascript:gs.daysAgoStart(7)^opened_at>=javascript:gs.daysAgoStart(30)'], ['30–90 d', 'opened_at<javascript:gs.daysAgoStart(30)^opened_at>=javascript:gs.daysAgoStart(90)'], ['90+ d', 'opened_at<javascript:gs.daysAgoStart(90)']]
@@ -352,19 +424,22 @@ app.get('/api/next', async (req, res) => {
     const months: any[] = [], jobs: (() => Promise<void>)[] = []
     for (let i = 5; i >= 0; i--) { const m: any = { label: monthLabel(i), q: monthQ('opened_at', i) }; months.push(m); jobs.push(async () => { m.requests = await count('sc_req_item', m.q) }) }
     // MTTR and automation share are period figures (resolved in the range); unassigned and stale articles are as of now.
-    const uq = `stateIN${open}^assigned_toISEMPTY`, mq = `stateIN6,7^priorityIN1,2${rc}`, aq = `stateIN6,7^resolved_by.name=AURA Agent${rc}`, rq = `stateIN6,7^resolved_byISNOTEMPTY${rc}`
+    // Closed states and automation accounts come from the scan (D-011); no account name is assumed.
+    const closed = closedStates(), bots = state.params?.automation_accounts ?? ''
+    const uq = `stateIN${open}^assigned_toISEMPTY`, mq = `stateIN${closed}^priorityIN1,2^calendar_duration>1970-01-01 00:00:00${rc}`, aq = `stateIN${closed}^resolved_byIN${bots || 'none'}${rc}`, rq = `stateIN${closed}^resolved_byISNOTEMPTY${rc}`, nq = `stateIN${closed}^resolved_byISEMPTY${rc}`
     const sq = 'workflow_state=published^sys_updated_on<javascript:gs.daysAgoStart(180)', kq = 'workflow_state=published'
-    let unassigned: number | null = null, majorN: number | null = null, majorRaw: string | null = null, autoN: number | null = null, resolvedN: number | null = null, staleN: number | null = null, kbN: number | null = null
+    let unassigned: number | null = null, majorN: number | null = null, majorRaw: string | null = null, autoN: number | null = null, resolvedN: number | null = null, noResolverN: number | null = null, staleN: number | null = null, kbN: number | null = null
     jobs.push(async () => { unassigned = await count('incident', uq) },
       async () => { majorN = await count('incident', mq); const r = await stats.run({ table: 'incident', filter: mq, aggregate: 'avg', field: 'calendar_duration' }).catch(() => null); majorRaw = r?.value == null ? null : String(r.value) },
-      async () => { autoN = await count('incident', aq) }, async () => { resolvedN = await count('incident', rq) },
+      async () => { autoN = await count('incident', aq) }, async () => { resolvedN = await count('incident', rq) }, async () => { noResolverN = await count('incident', nq) },
       async () => { staleN = await count('kb_knowledge', sq) }, async () => { kbN = await count('kb_knowledge', kq) })
     await pool(jobs, 6, (j) => j())
     const share = autoN === null || !resolvedN ? null : `${(100 * autoN / resolvedN).toFixed(1)}%`
     return { months, tiles: {
       unassigned: tile('unassigned', 'Unassigned incidents', 'incident', uq, 'Open incidents with nobody assigned', unassigned),
       major_mttr: tile('major_mttr', 'MTTR, P1 and P2', 'incident', mq, 'Average calendar duration of resolved P1 and P2 incidents', majorRaw, { aggregate: 'avg', field: 'calendar_duration', detail: `${(majorN ?? 0).toLocaleString('en-US')} incidents`, period: true, range }),
-      automation_share: tile('automation_share', 'Resolved by automation', 'incident', aq, 'Resolved incidents whose resolver is the AURA automation account, over all resolved incidents with a named resolver', share, { kind: 'ratio', detail: `${(autoN ?? 0).toLocaleString('en-US')} ÷ ${(resolvedN ?? 0).toLocaleString('en-US')}`, filter_resolved: `${aq}  ÷  ${rq}`, period: true, range }),
+      // The share's basis is shown on the tile: most resolved incidents here name no resolver at all (D-010).
+      automation_share: tile('automation_share', 'Resolved by automation', 'incident', aq, 'Resolved incidents whose resolver is the AURA automation account, over resolved incidents with a named resolver. Incidents with no resolver recorded are outside the share.', share, { kind: 'ratio', detail: `${(autoN ?? 0).toLocaleString('en-US')} of ${(resolvedN ?? 0).toLocaleString('en-US')} with a named resolver; ${(noResolverN ?? 0).toLocaleString('en-US')} resolved incidents name none`, filter_resolved: `${aq}  ÷  ${rq}`, period: true, range, ...(bots ? {} : { status: 'not configured', reason: 'no automation account was found resolving incidents on this instance; mark one in Settings' }) }),
       kb_stale: tile('kb_stale', 'Stale articles', 'kb_knowledge', sq, 'Published articles not updated in 180 days', staleN, { detail: `of ${(kbN ?? 0).toLocaleString('en-US')} published` }),
     } }
   }))
@@ -374,13 +449,14 @@ app.get('/api/next', async (req, res) => {
 // Resolve: the fulfiller's page. Everything below reads the instance live. The rules that
 // rank a queue are data (id, meaning, query) so the page can show the reason behind every
 // position, the way dashboard tiles show their recipe. The model is optional: when it is
-// unreachable, or LLM_MODE=stub, drafts are assembled from the same records by rules and
+// unreachable, drafts are assembled from the same records by rules and
 // labelled as such. Writes are off unless RESOLVE_WRITES=true; otherwise they are dry runs.
 // =====================================================================================
 const llm = makeLlm(cfg)
 const search = makeSearch(sn)
 const WRITES = process.env.RESOLVE_WRITES === 'true'
 const openStates = () => state.params?.open_states ?? '1,2,3'
+const closedStates = () => state.params?.closed_states ?? '6,7'
 type Dv = { value: string; display_value: string }
 type Row = Record<string, Dv>
 const dv = (r: Row | undefined, f: string) => r?.[f]?.display_value ?? ''
@@ -433,7 +509,7 @@ const RULES = [
   { id: 'past_due', name: 'Past its due date', meaning: 'A request item whose due date has passed and is still active', q: 'active=true^due_date<javascript:gs.nowDateTime()' },
 ]
 
-app.get('/api/resolve/rules', (_req, res) => res.json({ rules: RULES, writes: WRITES, llm: cfg.llmMode }))
+app.get('/api/resolve/rules', (_req, res) => res.json({ rules: RULES, writes: WRITES, llm: 'live' }))
 
 /** People with open tickets, so a reviewer can look at the queue as one of them. */
 app.get('/api/resolve/people', async (_req, res) => {
@@ -594,7 +670,7 @@ async function ticketDetail(number: string) {
     // for a request item, completed ones for the same catalog item, which is what a fulfiller reuses.
     const catField = 'cat_item', catId = kind === 'incident' ? '' : vv(raw0, catField)
     const textQ = `123TEXTQUERY321=${title.replace(/[\^=&]/g, ' ').slice(0, 150)}`
-    const simQ = kind === 'incident' ? `stateIN6,7^close_notesISNOTEMPTY^sys_id!=${id}^${textQ}` : catId ? `${catField}=${catId}^state=3^close_notesISNOTEMPTY^sys_id!=${id}` : `state=3^close_notesISNOTEMPTY^sys_id!=${id}^${textQ}`
+    const simQ = kind === 'incident' ? `stateIN${closedStates()}^close_notesISNOTEMPTY^sys_id!=${id}^${textQ}` : catId ? `${catField}=${catId}^state=3^close_notesISNOTEMPTY^sys_id!=${id}` : `state=3^close_notesISNOTEMPTY^sys_id!=${id}^${textQ}`
     const simFields = kind === 'incident' ? 'sys_id,number,short_description,close_notes,close_code,resolved_by,assignment_group,resolved_at,opened_at,category,caller_id' : `sys_id,number,short_description,close_notes,closed_by,assignment_group,closed_at,opened_at,${catField},requested_for`
     const sameQ = `active=true^short_description=${title}^sys_id!=${id}`
     const ritmId = kind === 'sc_req_item' ? id : ''
@@ -755,7 +831,6 @@ function facts(d: Detail) {
 const logAudit = (who: string, what: string, record: string, evidence: string) => console.log(`[resolve] ${who} · ${what} · ${record} · ${evidence}`)
 /** One model call, logged with what it saw. Null when the model is off or unreachable. */
 async function model(kind: string, d: Detail, system: string, user: string) {
-  if (cfg.llmMode === 'stub') return null
   const out = await llm.draft(system, user)
   logAudit('NowOps', `Model call: ${kind}. ${d.journal.length} journal entries, ${d.kb.length} articles, ${d.similar.length} similar tickets in prompt (${user.length} chars).`, d.number, out ? 'answered' : 'no answer, rules used')
   return out
@@ -775,7 +850,6 @@ app.post('/api/resolve/brief/:number', async (req, res) => {
   const d = await ticketDetail(String(req.params.number).toUpperCase()); if (!d) return res.status(404).json({ error: 'not found' })
   const enough = (d.fields.description || '').length > 300 || d.journal.length >= 3 || Number(d.raw.reopen_count) > 0
   if (!enough) return res.json({ text: null, reason: 'short ticket, the record speaks for itself' })
-  if (cfg.llmMode === 'stub') return res.json({ text: null, reason: 'model off' })
   const slaLine = d.slas.map((s) => `${s.name}: ${s.breached ? 'breached' : Math.round(s.pct) + '% used'}`).join('; ') || 'none'
   const out = await model('brief', d, BRIEF_SYSTEM, `${facts(d)}\n\nSLAs: ${slaLine}\nReopened: ${d.raw.reopen_count || 0} times`)
   res.json({ text: out ? out.trim().split(/\n+/).slice(0, 2).join(' ') : null, reason: out ? undefined : 'model gave no answer' })
@@ -836,7 +910,7 @@ app.post('/api/resolve/draft/:number', async (req, res) => {
     html = `${esc(d.title)}\n\n${d.sameTitle.length + 1} open incidents share this exact title: ${[d.number, ...d.sameTitle.map((s) => s.number)].join(', ')}.${sim ? ` ${d.similar.length} earlier one${d.similar.length > 1 ? 's were' : ' was'} closed (${d.similar.map((s) => s.number).join(', ')}); the recorded resolution on ${sim.number} was: ${esc(first((section(sim.close_notes, 'Resolution') || sim.close_notes).replace(/\s+/g, ' '), 300))}` : ''}`
     title = `Recurring: ${d.title}`
   } else return res.status(400).json({ error: 'kind must be close, kb, message or problem' })
-  res.json({ kind, title, html, source: cfg.llmMode === 'stub' ? 'rules' : 'model or rules' })
+  res.json({ kind, title, html, source: 'model or rules' })
 })
 
 // ---- Writes. A whitelist of incident fields, one PATCH, always audited. Dry run unless RESOLVE_WRITES=true.

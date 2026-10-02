@@ -2,11 +2,10 @@ import { readFileSync } from 'node:fs'
 import { loadConfig } from '../src/config.js'
 import { makeSnClient } from '../src/servicenow/client.js'
 import { makeSearch } from '../src/servicenow/search.js'
-import { makeStats } from '../src/servicenow/stats.js'
 import { hasEnoughTokens } from '../src/guard.js'
-import { makeLlm, type Reply } from '../src/llm/client.js'
 import { makeDefinitions } from '../src/definitions.js'
 import { relevant, parseContext } from '../src/server.js'
+import { runAgent, makeAgentModel, type AgentOutcome } from '../src/llm/agent.js'
 
 interface EvalQ {
   id: string
@@ -16,217 +15,156 @@ interface EvalQ {
   acceptableSysIds?: string[]
 }
 
-/** Baseline from spec §9. Falling below this is a regression. */
-const BASELINE_AT1 = 26
+/** Recall@1 the retrieval suite must not fall below. Set 2026-10-01 after the query scrub (was 26). */
+const BASELINE_AT1 = 29
 
 const cfg = loadConfig()
 const client = makeSnClient(cfg)
 const sn = makeSearch(client)
-const stats = makeStats(client)
 // The same definitions the standalone server runs with: no scan, standard open states.
-const kpis = makeDefinitions(() => ({ params: { open_states: cfg.openStates }, tables: null, confirmed: false }))
+const kpis = makeDefinitions(() => ({ params: { open_states: cfg.openStates, in_progress_states: '2', on_hold_states: '3', closed_states: '6,7', cancelled_states: '8', time_zone: 'UTC', automation_accounts: '' }, tables: null, confirmed: false }))
 const catalogue = kpis.catalogue()
 
-const data = JSON.parse(readFileSync('tests/fixtures/retrieval-eval.json', 'utf8')) as {
-  inScope: EvalQ[]
-  outOfScope: EvalQ[]
-}
-
 /**
- * Four modes, one script:
- *   (default)      search only — deterministic, free, and the regression guard
- *   --with-retry   the full D13 path; costs Claude calls and varies run to run
- *   --metrics      composed-query correctness against tests/fixtures/metric-eval.json
- *   --routing      does the model name the right definition, compose only where no tile fits,
- *                  and decline what it must not guess? tests/fixtures/routing-eval.json
+ * Three modes, one script:
+ *   (default)   retrieval: search only, deterministic, free, the regression guard for the knowledge path
+ *   --agent     the question fixtures through the tool loop against the live model (tests/fixtures/*-eval.json)
+ *   --resolve   Resolve's next steps, grounding-checked against a live mockup (MOCKUP_URL)
  */
-const METRICS = process.argv.includes('--metrics')
-const ROUTING = process.argv.includes('--routing')
+const AGENT = process.argv.includes('--agent')
 const RESOLVE = process.argv.includes('--resolve')
-const WITH_RETRY = process.argv.includes('--with-retry')
-const llm = METRICS || ROUTING || WITH_RETRY ? makeLlm(cfg) : null
 
 const accept = (q: EvalQ) => q.acceptableSysIds ?? (q.expectedSysId ? [q.expectedSysId] : [])
 
-/** Exactly what the server does before the model sees a question: search, then the relevance floor. */
+/** Exactly what search_knowledge does: the scrubbed search, then the relevance floor. */
 const retrieve = async (question: string) => relevant(question, await sn.search(question))
 
 type FixtureHistory = ['user' | 'assistant', string][]
-
 type FixtureContext = { page?: string; ticket?: string; facts?: unknown }
 
-/** One model call as the server makes it: articles, catalogue, optional history and page context, facts clamped as the server clamps them. */
-const decide = (question: string, articles = [] as Awaited<ReturnType<typeof retrieve>>, context?: FixtureContext, history: FixtureHistory = []) =>
-  llm!.decide({ question, articles, history: history.map(([role, content]) => ({ role, content })), catalogue, context: context ? parseContext(context) : undefined })
-
-/** Mirrors the server's retry branch so the eval measures what users actually get. */
-async function lookup(question: string) {
-  let articles = await retrieve(question)
-  let retried = false
-
-  if (llm) {
-    const reply = await decide(question, articles)
-    if (reply.kind === 'search') {
-      retried = true
-      const second = await retrieve(reply.query)
-      const seen = new Set(second.map((a) => a.id))
-      articles = [...second, ...articles.filter((a) => !seen.has(a.id))]
-    }
+/**
+ * --agent: every question fixture through the tool loop (rev 10). A pick is right when run_definition
+ * ran with the expected id (narrowed as named); a composition when count ran on the expected table; a
+ * breakdown when aggregate did; a list when list_records did; an article answer when a cited result
+ * carried one of the expected articles; a page answer when the reply carries the fact; a decline when
+ * the reply cited nothing, cited only a lookup, or asked the user. Every answer must be grounded.
+ */
+async function runAgentEval(): Promise<void> {
+  type Pick = { id: string; question: string; definition: string; group?: string; narrow?: { kind: string; text: string }; context?: FixtureContext; history?: FixtureHistory }
+  type Fixture = {
+    shouldPick?: Pick[]
+    shouldCompose?: { id: string; question: string; table: string }[]
+    shouldBreakDown?: { id: string; question: string; table: string }[]
+    shouldList?: { id: string; question: string; table: string; orCount?: boolean }[]
+    shouldAnswerFromArticle?: { id: string; question: string; articles: string[] }[]
+    shouldAnswerFromPage?: { id: string; question: string; expect: string; context?: FixtureContext }[]
+    shouldDecline?: { id: string; question: string; why: string }[]
   }
-  return { articles, retried }
-}
-
-/** Clause order carries no meaning: active=true^priority=1 equals priority=1^active=true. */
-const clauses = (f: string) =>
-  f.split('^').map((c) => c.trim()).filter(Boolean).sort().join('^')
-
-const describe = (r: Reply) =>
-  r.kind === 'definition' ? `DEFINITION ${r.id}${r.group ? ' + GROUP ' + r.group : ''}` : r.kind === 'metric' ? `METRIC ${r.request.table} · ${r.request.filter || '(all)'}` : r.kind === 'no_answer' ? `NO_ANSWER ${r.about}` : r.kind.toUpperCase()
-
-/** --routing: the guard for what the regex used to do by hand. */
-async function runRouting(): Promise<void> {
-  const fx = JSON.parse(readFileSync('tests/fixtures/routing-eval.json', 'utf8')) as {
-    shouldPick: { id: string; question: string; definition: string; group?: string; context?: FixtureContext; history?: FixtureHistory }[]
-    shouldCompose: { id: string; question: string; table: string }[]
-    shouldAnswerFromPage: { id: string; question: string; expect: string; context?: FixtureContext }[]
-    shouldDecline: { id: string; question: string; why: string }[]
+  // The core fixture (the questions that broke earlier designs) plus the paraphrase fixture.
+  const files = ['tests/fixtures/routing-eval.json', 'tests/fixtures/agent-eval.json'].map((f) => JSON.parse(readFileSync(f, 'utf8')) as Fixture)
+  // --only=r-21,pp-0,ls- runs the ids with any of these prefixes: the misses from a full run, re-checked in minutes.
+  const only = process.argv.find((a) => a.startsWith('--only='))?.slice(7).split(',').filter(Boolean)
+  const sel = <T extends { id: string }>(key: keyof Fixture): T[] => files.flatMap((f) => (f[key] ?? []) as unknown as T[]).filter((q) => !only?.length || only.some((p) => q.id.startsWith(p)))
+  const fx = {
+    shouldPick: sel<Pick>('shouldPick'),
+    shouldCompose: sel<{ id: string; question: string; table: string }>('shouldCompose'),
+    shouldBreakDown: sel<{ id: string; question: string; table: string }>('shouldBreakDown'),
+    shouldList: sel<{ id: string; question: string; table: string; orCount?: boolean }>('shouldList'),
+    shouldAnswerFromArticle: sel<{ id: string; question: string; articles: string[] }>('shouldAnswerFromArticle'),
+    shouldAnswerFromPage: sel<{ id: string; question: string; expect: string; context?: FixtureContext }>('shouldAnswerFromPage'),
+    shouldDecline: sel<{ id: string; question: string; why: string }>('shouldDecline'),
   }
+  const model = makeAgentModel(cfg)
+  const ask = (question: string, context?: FixtureContext, history?: FixtureHistory) => {
+    const ctx = context ? parseContext(context) : undefined
+    return runAgent(model, {
+      question, history: (history ?? []).map(([role, content]) => ({ role, content })), context: ctx, catalogue,
+      ctx: { sn: client, kpis, scanned: null, openStates: cfg.openStates, user: ctx?.user, facts: ctx?.facts },
+    })
+  }
+  const tools = (o: AgentOutcome) => o.results.map((r) => `${r.tool}${'error' in r.data ? '!' : ''}${r.tool === 'run_definition' ? `(${String(r.args.id)})` : ['count', 'aggregate', 'list_records'].includes(r.tool) ? `(${String(r.args.table)})` : ''}`).join(' → ')
+  const text = (o: AgentOutcome) => ('text' in o ? o.text : o.reason).replace(/\s+/g, ' ').slice(0, 90)
+  const ran = (o: AgentOutcome, tool: string, pred: (r: { args: Record<string, unknown>; data: Record<string, unknown> }) => boolean) => o.results.some((r) => r.tool === tool && !('error' in r.data) && pred(r))
+  let picked = 0, composed = 0, fromPage = 0, declined = 0, ungrounded = 0, brokeDown = 0, listed = 0, fromArticle = 0
 
-  let picked = 0, composed = 0, declined = 0, fromPage = 0
-  console.log('=== SHOULD PICK A DEFINITION ===')
+  console.log('=== SHOULD RUN THE DEFINITION ===')
   for (const q of fx.shouldPick) {
-    const r = await decide(q.question, await retrieve(q.question), q.context, q.history)
-    const ok = r.kind === 'definition' && r.id === q.definition && (q.group ? r.group?.toLowerCase() === q.group.toLowerCase() : !r.group)
+    const o = await ask(q.question, q.context, q.history)
+    if (o.kind === 'ungrounded') ungrounded++
+    const want = (q.group ?? q.narrow?.text)?.toLowerCase()
+    const hit = ran(o, 'run_definition', (r) => r.args.id === q.definition && (want ? String(r.data.narrowed ?? '').toLowerCase().includes(want) : !r.data.narrowed))
+    const ok = o.kind === 'answer' && hit
     if (ok) picked++
-    const where = q.context ? `  (from ${q.context.page}${q.context.ticket ? ' ' + q.context.ticket : ''})` : q.history ? '  (follow-up)' : ''
-    console.log(`${q.id}  ${ok ? 'ok      ' : 'WRONG   '} ${describe(r).padEnd(40)} expected ${q.definition}${q.group ? ' + GROUP ' + q.group : ''}${where}`)
+    console.log(`${q.id}  ${ok ? 'ok      ' : 'WRONG   '} ${tools(o).padEnd(60)} expected ${q.definition}${want ? ' for ' + want : ''}  "${text(o)}"`)
   }
-
   console.log('\n=== SHOULD COMPOSE (no tile fits) ===')
   for (const q of fx.shouldCompose) {
-    const r = await decide(q.question, await retrieve(q.question))
-    const ok = r.kind === 'metric' && r.request.table === q.table
+    const o = await ask(q.question)
+    if (o.kind === 'ungrounded') ungrounded++
+    const ok = o.kind === 'answer' && (ran(o, 'count', (r) => r.args.table === q.table) || ran(o, 'aggregate', (r) => r.args.table === q.table) || ran(o, 'list_records', (r) => r.args.table === q.table))
     if (ok) composed++
-    console.log(`${q.id}  ${ok ? 'ok      ' : r.kind === 'definition' ? 'REACHED FOR A TILE' : 'WRONG   '} ${describe(r).padEnd(40)} expected METRIC on ${q.table}`)
+    console.log(`${q.id}  ${ok ? 'ok      ' : 'WRONG   '} ${tools(o).padEnd(60)} expected a query on ${q.table}  "${text(o)}"`)
   }
-
+  console.log('\n=== SHOULD BREAK DOWN (aggregate) ===')
+  for (const q of fx.shouldBreakDown) {
+    const o = await ask(q.question)
+    if (o.kind === 'ungrounded') ungrounded++
+    const ok = o.kind === 'answer' && ran(o, 'aggregate', (r) => r.args.table === q.table)
+    if (ok) brokeDown++
+    console.log(`${q.id}  ${ok ? 'ok      ' : 'WRONG   '} ${tools(o).padEnd(60)} expected aggregate on ${q.table}  "${text(o)}"`)
+  }
+  console.log('\n=== SHOULD LIST (list_records) ===')
+  for (const q of fx.shouldList) {
+    const o = await ask(q.question)
+    if (o.kind === 'ungrounded') ungrounded++
+    // Some "what are the X" questions read equally as a figure; orCount accepts a definition, count or aggregate on the same table.
+    const asCount = q.orCount && (ran(o, 'run_definition', (r) => r.data.table === q.table) || ran(o, 'count', (r) => r.args.table === q.table) || ran(o, 'aggregate', (r) => r.args.table === q.table))
+    const ok = o.kind === 'answer' && (ran(o, 'list_records', (r) => r.args.table === q.table) || !!asCount)
+    if (ok) listed++
+    console.log(`${q.id}  ${ok ? 'ok      ' : 'WRONG   '} ${tools(o).padEnd(60)} expected list_records on ${q.table}${q.orCount ? ' (or its figure)' : ''}  "${text(o)}"`)
+  }
+  console.log('\n=== SHOULD ANSWER FROM AN ARTICLE ===')
+  for (const q of fx.shouldAnswerFromArticle) {
+    const o = await ask(q.question)
+    if (o.kind === 'ungrounded') ungrounded++
+    const cited = o.kind === 'answer' ? o.cited.flatMap((r) => (r.articles ?? []).map((a) => a.label ?? '')) : []
+    const ok = cited.some((l) => q.articles.includes(l))
+    if (ok) fromArticle++
+    console.log(`${q.id}  ${ok ? 'ok      ' : 'WRONG   '} ${tools(o).padEnd(50)} cited ${cited.join(',') || '-'}; expected one of ${q.articles.join(',')}  "${text(o)}"`)
+  }
   console.log('\n=== SHOULD ANSWER FROM PAGE FACTS ===')
-  for (const q of fx.shouldAnswerFromPage ?? []) {
-    const r = await decide(q.question, await retrieve(q.question), q.context)
-    // "NO_ANSWER <type>" expects a decline of that type; anything else expects a PAGE answer carrying the fact.
-    const declineOf = /^NO_ANSWER (\w+)$/.exec(q.expect)?.[1]
-    const ok = declineOf ? r.kind === 'no_answer' && r.about === declineOf : r.kind === 'page' && r.text.includes(q.expect)
+  for (const q of fx.shouldAnswerFromPage) {
+    const o = await ask(q.question, q.context)
+    if (o.kind === 'ungrounded') ungrounded++
+    const declineOf = /^NO_ANSWER (\w+)$/.exec(q.expect)
+    // Without page facts the loop may still answer through my_queue or get_ticket; that is progress, not a miss.
+    const ok = declineOf ? o.kind !== 'ungrounded' && o.kind !== 'failed' : o.kind === 'answer' && o.text.includes(q.expect)
     if (ok) fromPage++
-    console.log(`${q.id}  ${ok ? 'ok      ' : 'WRONG   '} ${(r.kind === 'page' ? `PAGE "${r.text.slice(0, 60)}"` : describe(r)).padEnd(70)} expected ${q.expect}`)
+    console.log(`${q.id}  ${ok ? 'ok      ' : 'WRONG   '} ${tools(o).padEnd(60)} expected ${q.expect}  "${text(o)}"`)
   }
-
-  console.log('\n=== SHOULD DECLINE ===')
+  console.log('\n=== SHOULD NOT GUESS ===')
   for (const q of fx.shouldDecline) {
-    const r = await decide(q.question, await retrieve(q.question))
-    const ok = r.kind === 'no_answer'
+    const o = await ask(q.question)
+    if (o.kind === 'ungrounded') ungrounded++
+    // A reply that cites only a lookup is not an answer: it either asks which candidate or says nothing matched.
+    const asked = o.kind === 'answer' && o.cited.length > 0 && o.cited.every((r) => r.tool === 'resolve_reference')
+    const ok = o.kind === 'clarify' || asked || (o.kind === 'answer' && o.cited.length === 0)
     if (ok) declined++
-    console.log(`${q.id}  ${ok ? 'declined' : 'ANSWERED <- investigate'} ${describe(r).padEnd(40)} (${q.why})`)
+    console.log(`${q.id}  ${ok ? 'declined' : o.kind === 'answer' ? 'ANSWERED <- check' : o.kind.toUpperCase().padEnd(8)} ${tools(o).padEnd(60)} (${q.why})  "${text(o)}"`)
   }
-
   console.log('\n=== SUMMARY ===')
-  console.log(`Picked the right definition : ${picked}/${fx.shouldPick.length}`)
-  console.log(`Composed where no tile fits : ${composed}/${fx.shouldCompose.length}`)
-  console.log(`Answered from page facts    : ${fromPage}/${(fx.shouldAnswerFromPage ?? []).length}`)
-  console.log(`Declined what it must not guess: ${declined}/${fx.shouldDecline.length}`)
-  console.log('\nA wrong pick is the quiet failure this fixture exists for: the number would look right')
-  console.log('and disagree with the tile. Read every WRONG line.')
-
-  // The gate: a wrong definition is a wrong number shown with a tile's name on it.
-  if (picked < fx.shouldPick.length) {
-    console.error(`\nREGRESSION: ${fx.shouldPick.length - picked} questions routed to the wrong definition or none`)
-    process.exit(1)
-  }
-}
-
-/** --metrics: does the model compose a query that runs, against the right table? */
-async function runMetrics(): Promise<void> {
-  const data = JSON.parse(readFileSync('tests/fixtures/metric-eval.json', 'utf8')) as {
-    shouldAnswer: {
-      id: string; question: string; table: string
-      aggregate: string; field?: string; expectedFilter: string
-    }[]
-    shouldDecline: { id: string; question: string; why: string }[]
-  }
-
-  let executed = 0
-  let exactFilter = 0
-  let rightTable = 0
-  let viaDefinition = 0
-
-  console.log('=== SHOULD ANSWER ===')
-  for (const q of data.shouldAnswer) {
-    // Real conditions: every question retrieves articles first, and for a count they are
-    // usually irrelevant. The model must not be distracted by them.
-    const articles = await retrieve(q.question)
-    const reply = await decide(q.question, articles)
-
-    // A definition is the better answer when one fits: run it through the same code as the tile.
-    let r: { table: string; filter: string; aggregate: string; field?: string }
-    if (reply.kind === 'definition') {
-      const k = kpis.byId(reply.id)
-      if (!k?.request) { console.log(`${q.id}  DEFINITION ${reply.id} ${k ? `unavailable: ${k.unavailable}` : 'UNKNOWN ID'}`); continue }
-      viaDefinition++
-      r = k.request
-    } else if (reply.kind === 'metric') {
-      r = reply.request
-    } else {
-      console.log(`${q.id}  NOT A METRIC (${describe(reply)})`)
-      continue
-    }
-
-    const tableOk = r.table === q.table
-    const filterOk = clauses(r.filter) === clauses(q.expectedFilter)
-    if (tableOk) rightTable++
-    if (tableOk && filterOk) exactFilter++
-
-    let value: string | number | 'ERROR' = 'ERROR'
-    try {
-      value = (await stats.run({ ...r, aggregate: r.aggregate as 'count' })).value
-      executed++
-    } catch (e) {
-      console.log(`         execution failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
-
-    console.log(
-      `${q.id}  ${reply.kind === 'definition' ? `def ${reply.id}` : 'composed'}  ${tableOk ? 'table ok' : `table BAD(${r.table})`} ` +
-        `${filterOk ? 'filter ok' : 'filter ~'}  = ${value}`,
-    )
-    if (!filterOk) {
-      console.log(`         expected: ${q.expectedFilter}`)
-      console.log(`         actual  : ${r.filter}`)
-    }
-  }
-
-  console.log('\n=== SHOULD DECLINE ===')
-  let declined = 0
-  for (const q of data.shouldDecline) {
-    const articles = await retrieve(q.question)
-    const reply = await decide(q.question, articles)
-    const ok = reply.kind !== 'metric' && reply.kind !== 'definition'
-    if (ok) declined++
-    console.log(`${q.id}  ${ok ? 'declined' : 'INVENTED A QUERY <- investigate'}  ${describe(reply).padEnd(36)} (${q.why})`)
-  }
-
-  const n = data.shouldAnswer.length
-  console.log('\n=== SUMMARY ===')
-  console.log(`Executed cleanly  : ${executed}/${n}   (${viaDefinition} through a definition, the rest composed)`)
-  console.log(`Right table       : ${rightTable}/${n}`)
-  console.log(`Exact filter      : ${exactFilter}/${n}`)
-  console.log(`Correctly declined: ${declined}/${data.shouldDecline.length}`)
-  console.log('\nA "filter ~" is not automatically wrong — read it. A definition\'s filter is the tile\'s,')
-  console.log('and differs from the fixture\'s hand-written one on purpose. What matters is that it')
-  console.log('executes and says what it counted. Baseline before rev 9 (2026-09-30): 11/15 executed.')
-
-  // Whether the model chooses to answer wobbles run to run; a composed query that does not run does not.
-  if (executed < rightTable) {
-    console.error(`\nREGRESSION: ${rightTable - executed} queries on the right table failed to execute`)
-    process.exit(1)
-  }
+  const total = fx.shouldPick.length + fx.shouldCompose.length + fx.shouldBreakDown.length + fx.shouldList.length + fx.shouldAnswerFromArticle.length + fx.shouldAnswerFromPage.length + fx.shouldDecline.length
+  const right = picked + composed + brokeDown + listed + fromArticle + fromPage + declined
+  console.log(`Ran the right definition      : ${picked}/${fx.shouldPick.length}`)
+  console.log(`Composed where no tile fits   : ${composed}/${fx.shouldCompose.length}`)
+  console.log(`Broke down with aggregate     : ${brokeDown}/${fx.shouldBreakDown.length}`)
+  console.log(`Listed with list_records      : ${listed}/${fx.shouldList.length}`)
+  console.log(`Answered from the right article: ${fromArticle}/${fx.shouldAnswerFromArticle.length}`)
+  console.log(`Answered from page or tools   : ${fromPage}/${fx.shouldAnswerFromPage.length}`)
+  console.log(`Declined or asked              : ${declined}/${fx.shouldDecline.length}`)
+  console.log(`Ungrounded answers withheld   : ${ungrounded}`)
+  console.log(`\nOverall: ${right}/${total} (${Math.round(100 * right / total)}%). Readiness bar: 95% with zero wrong numbers shown.`)
+  if (picked < fx.shouldPick.length) { console.error(`\nREGRESSION: ${fx.shouldPick.length - picked} questions did not run the expected definition`); process.exit(1) }
 }
 
 /**
@@ -274,73 +212,46 @@ async function runResolve(): Promise<void> {
   if (failures) { console.error(`\nREGRESSION: ${failures} tickets with grounding problems`); process.exit(1) }
 }
 
-async function main() {
-  if (ROUTING) return runRouting()
-  if (METRICS) return runMetrics()
-  if (RESOLVE) return runResolve()
-
+/** Default: retrieval recall over the live search, no model. The guard for the knowledge path. */
+async function runRetrieval(): Promise<void> {
+  const data = JSON.parse(readFileSync('tests/fixtures/retrieval-eval.json', 'utf8')) as { inScope: EvalQ[]; outOfScope: EvalQ[] }
   const ranks: { id: string; rank: number; source: string }[] = []
 
-  console.log(`=== IN-SCOPE ${WITH_RETRY ? '(with D13 retry)' : '(search only)'} ===`)
-  let retryCount = 0
+  console.log('=== IN-SCOPE (search only) ===')
   for (const q of data.inScope) {
-    const { articles: results, retried } = await lookup(q.question)
-    if (retried) retryCount++
+    const results = await retrieve(q.question)
     const ok = accept(q)
     const rank = results.findIndex((a) => ok.includes(a.id)) + 1
     ranks.push({ id: q.id, rank, source: q.source })
-    console.log(
-      `${q.id.padEnd(9)} ${(rank ? `#${rank}` : 'MISS').padEnd(6)} ` +
-        `${retried ? 'retry ' : '      '}${results[0]?.label ?? '-'}`,
-    )
+    console.log(`${q.id.padEnd(9)} ${(rank ? `#${rank}` : 'MISS').padEnd(6)} ${results[0]?.label ?? '-'}`)
   }
 
-  // Noise rejection is Claude's judgement. Without a model all we can report is which
-  // questions the token guard catches for free.
+  // Noise rejection is the model's judgement in the loop; here only the token guard's free catches are reported.
   console.log('\n=== OUT-OF-SCOPE ===')
   let guarded = 0
-  let declined = 0
   for (const q of data.outOfScope) {
-    if (!hasEnoughTokens(q.question)) {
-      guarded++
-      console.log(`${q.id.padEnd(12)} guarded (no model call)`)
-      continue
-    }
-    if (!llm) {
-      console.log(`${q.id.padEnd(12)} needs a model call to judge`)
-      continue
-    }
-    const reply = await decide(q.question, await retrieve(q.question))
-    const good = reply.kind === 'no_answer'
-    if (good) declined++
-    console.log(`${q.id.padEnd(12)} ${good ? `declined (${reply.about})` : `ANSWERED (${describe(reply)}) <- check this`}`)
+    if (!hasEnoughTokens(q.question)) { guarded++; console.log(`${q.id.padEnd(12)} guarded (no model call)`) }
+    else console.log(`${q.id.padEnd(12)} judged by the model in --agent`)
   }
 
+  const at1 = ranks.filter((r) => r.rank === 1).length
+  const at5 = ranks.filter((r) => r.rank >= 1 && r.rank <= 5).length
+  const by = (src: string) => { const xs = ranks.filter((r) => r.source === src); return `${xs.filter((r) => r.rank >= 1 && r.rank <= 5).length}/${xs.length}` }
   const n = ranks.length
-  const at = (k: number) => ranks.filter((r) => r.rank >= 1 && r.rank <= k).length
-  const bySrc = (s: string) => {
-    const all = ranks.filter((r) => r.source === s)
-    return `${all.filter((r) => r.rank >= 1).length}/${all.length}`
-  }
-
   console.log('\n=== SUMMARY ===')
-  console.log(`Mode     : ${WITH_RETRY ? 'with D13 retry' : 'search only (deterministic)'}`)
-  console.log(`Recall@1 : ${at(1)}/${n} (${Math.round((100 * at(1)) / n)}%)`)
-  console.log(`Recall@5 : ${at(5)}/${n} (${Math.round((100 * at(5)) / n)}%)`)
-  console.log(`incident : ${bySrc('incident')}   synthetic: ${bySrc('synthetic')}`)
+  console.log('Mode     : search only (deterministic)')
+  console.log(`Recall@1 : ${at1}/${n} (${Math.round(100 * at1 / n)}%)`)
+  console.log(`Recall@5 : ${at5}/${n} (${Math.round(100 * at5 / n)}%)`)
+  console.log(`incident : ${by('incident')}   synthetic: ${by('synthetic')}`)
   console.log(`Misses   : ${ranks.filter((r) => !r.rank).map((r) => r.id).join(', ') || 'none'}`)
-  console.log(`Noise    : ${guarded} guarded free${llm ? `, ${declined} declined by the model` : ''}`)
-  if (WITH_RETRY) {
-    console.log(`Retries  : ${retryCount}/${n} questions triggered a rewrite`)
-    console.log('Baseline without retry was 26/35 (74%) recall@1 — compare against that.')
-  }
-
-  // The guard applies only to the deterministic mode. Retry varies run to run, and a
-  // regression gate on a wobbling number is worse than none.
-  if (!WITH_RETRY && at(1) < BASELINE_AT1) {
-    console.error(`\nREGRESSION: recall@1 ${at(1)} is below the recorded baseline of ${BASELINE_AT1}`)
-    process.exit(1)
-  }
+  console.log(`Noise    : ${guarded} guarded free`)
+  if (at1 < BASELINE_AT1) { console.error(`\nREGRESSION: recall@1 ${at1} is below the baseline ${BASELINE_AT1}`); process.exit(1) }
 }
 
-main()
+async function main() {
+  if (AGENT) return runAgentEval()
+  if (RESOLVE) return runResolve()
+  return runRetrieval()
+}
+
+main().catch((e) => { console.error(e instanceof Error ? e.message : String(e)); process.exit(1) })

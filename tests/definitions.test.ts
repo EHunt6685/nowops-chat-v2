@@ -17,8 +17,26 @@ describe('makeDefinitions', () => {
   it('adds the meaning only where names alone are ambiguous', () => {
     const k = makeDefinitions(() => ({ params, tables: scanned }))
     const c = k.catalogue()
-    expect(c.find((e) => e.id === 'sla_breached')?.meaning).toBe('Incident SLAs that have breached')
+    expect(c.find((e) => e.id === 'sla_breached')?.meaning).toContain('Completed incident resolution SLAs')
     expect(c.find((e) => e.id === 'open_incidents')?.meaning).toBeUndefined()
+  })
+
+  it('uses a state class from the scan for every state-based tile, and reports the parameter a scan did not set', () => {
+    const k = makeDefinitions(() => ({ params: { ...params, closed_states: '6,7,20', on_hold_states: '3,11', in_progress_states: '2,9', cancelled_states: '8,10' }, tables: scanned, confirmed: true }))
+    expect(k.byId('closed_incidents')?.request?.filter).toBe('stateIN6,7,20')
+    expect(k.byId('on_hold')?.request?.filter).toBe('stateIN3,11')
+    expect(k.byId('backlog')?.request?.filter).toContain('stateIN2,9')
+    expect(k.byId('mttr_p1')?.request?.filter).toBe('stateIN6,7,20^priority=1^calendar_duration>1970-01-01 00:00:00')
+    // Without the scan's cancelled classes the tile is off, with the parameter named, never a guessed state number.
+    const bare = makeDefinitions(() => ({ params, tables: scanned, confirmed: true }))
+    expect(bare.byId('cancelled')?.unavailable).toContain('cancelled_states')
+    expect(k.params().closed_states).toBe('6,7,20')
+  })
+
+  it('exposes the basis of a share so the server can read it live', () => {
+    const k = makeDefinitions(() => ({ params, tables: { ...scanned, cmdb_ci_server: { present: true, missing_fields: [] } }, confirmed: true }))
+    expect(k.byId('warranty_expired')?.basis).toBe('servers_with_warranty')
+    expect(k.byId('servers_with_warranty')?.request?.filter).toBe('warranty_expirationISNOTEMPTY')
   })
 
   it('resolves tenant parameters into the tile query', () => {
@@ -32,7 +50,8 @@ describe('makeDefinitions', () => {
     const k = makeDefinitions(() => ({ tables: null }))
     expect(k.byId('open_p1')?.unavailable).toMatch(/tenant parameters not set/)
     // Rows without a parameter work with no scan at all: tables are assumed present.
-    expect(k.byId('sla_breached')?.request?.filter).toBe('has_breached=true^task.sys_class_name=incident')
+    // Completed, type SLA, breached: the same population as the attainment tiles (D-010).
+    expect(k.byId('sla_breached')?.request?.filter).toBe('stage=completed^sla.type=SLA^task.sys_class_name=incident^has_breached=true')
   })
 
   it('returns null for an id that is not a definition', () => {

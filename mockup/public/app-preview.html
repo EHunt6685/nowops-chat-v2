@@ -983,6 +983,13 @@ main:where(:not(#studio *, #rwrap *, #cwrap *))::after { content: ''; position: 
 :is(#rwrap, #cwrap) .ans .go, :is(#rwrap, #cwrap) .ans .srcs a {display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;color:var(--ink);text-decoration:none;border:1px solid var(--line2);background:var(--card);border-radius:8px;padding:5px 10px}
 :is(#rwrap, #cwrap) .ans .go {margin-top:10px}:is(#rwrap, #cwrap) .ans .go:hover, :is(#rwrap, #cwrap) .ans .srcs a:hover {background:var(--card2)}
 :is(#rwrap, #cwrap) .ans .srcs {display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px;font-size:12px;color:var(--muted)}
+:is(#rwrap, #cwrap) .trace {margin-top:8px;font-size:12px;color:var(--muted)}
+:is(#rwrap, #cwrap) .trace summary {cursor:pointer;color:var(--ai-ink);font-weight:500}
+:is(#rwrap, #cwrap) .trace ol {margin:6px 0 0;padding-left:18px;display:grid;gap:4px}
+:is(#rwrap, #cwrap) .trace li b {color:var(--ink);font-weight:600}
+:is(#rwrap, #cwrap) .trace li.err span {color:#b3261e}
+:is(#rwrap, #cwrap) .trace li small {display:block;font-family:ui-monospace,monospace;font-size:11px;opacity:.75;overflow-wrap:anywhere}
+:is(#rwrap, #cwrap) .trace li a {margin-left:6px}
 :is(#rwrap, #cwrap) .ans.note {display:flex;gap:10px;align-items:flex-start;background:none;padding:0;margin:0;color:inherit;border-radius:0;font-size:14px}
 :is(#rwrap, #cwrap) .ans.note>i {flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-style:normal;font-size:12px;font-weight:700;background:var(--warn-bg);color:var(--warn-ink);margin-top:1px}
 :is(#rwrap, #cwrap) .ans.note.off>i {background:var(--neg-bg);color:var(--neg-ink)}
@@ -1905,11 +1912,12 @@ body.studio-on { overflow: hidden }
       lede: 'Tiles marked for attention are ranked so the top one is the one to pick up.',
       blocks: [
         { cards: [
-          stat('approaching_breach', 'SLAs at risk', 146, { sub: 'past 80% of their time, not yet breached', status: 'watch', scale: { watch: 50, attention: 200, max: 260 }, meaning: 'Active, unbreached SLAs past 80% of their time', table: 'task_sla', agg: 'count', filter: 'active=true^has_breached=false^business_percentage>80', span: 3 }),
+          stat('approaching_breach', 'SLAs at risk', 5, { sub: 'in progress, past 80% of their time, not yet breached', status: 'watch', scale: { watch: 10, attention: 40, max: 60 }, meaning: 'In-progress, unbreached incident SLAs past 80% of their time', table: 'task_sla', agg: 'count', filter: 'active=true^stage=in_progress^has_breached=false^business_percentage>80', span: 3 }),
           stat('active_major', 'Major incidents open', 67, { sub: 'priority 1 or 2', status: 'attention', scale: { watch: 20, attention: 50, max: 80 }, meaning: 'Open incidents with priority 1 or 2', table: 'incident', agg: 'count', filter: `${OPEN}^priorityIN1,2`, span: 3 }),
           stat('open_p1', 'Open P1s', 10, { sub: 'critical priority', status: 'watch', scale: { watch: 5, attention: 15, max: 20 }, meaning: 'Open incidents with priority 1', table: 'incident', agg: 'count', filter: `${OPEN}^priority=1`, span: 3 }),
           stat('unassigned', 'Unassigned incidents', 4103, { sub: 'open with nobody assigned', status: 'attention', scale: { watch: 200, attention: 1000, max: 5000 }, meaning: 'Open incidents with nobody assigned', table: 'incident', agg: 'count', filter: `${OPEN}^assigned_toISEMPTY`, span: 3 }),
-          stat('due_72h', 'Due in 72 hours', 49, { sub: 'unbreached, planned end within 72 hours', meaning: 'Active, unbreached SLAs whose planned end is in the next 72 hours (deterministic, not predicted)', table: 'task_sla', agg: 'count', filter: 'active=true^has_breached=false^planned_end_time<javascript:gs.hoursAgoStart(-72)', span: 6 }),
+          stat('due_72h', 'Due in 72 hours', 3, { sub: 'in progress, unbreached, planned end in the next 72 hours', meaning: 'In-progress, unbreached SLAs whose planned end falls in the next 72 hours (deterministic, not predicted)', table: 'task_sla', agg: 'count', filter: 'active=true^stage=in_progress^has_breached=false^planned_end_time>javascript:gs.nowDateTime()^planned_end_time<javascript:gs.hoursAgoStart(-72)', span: 3 }),
+          stat('sla_stale', 'Past planned end, not breached', 50, { sub: 'paused or stale SLA data, worth a look', meaning: 'Active SLAs whose planned end has passed without the breach being recorded', table: 'task_sla', agg: 'count', filter: 'active=true^has_breached=false^planned_end_time<javascript:gs.nowDateTime()', span: 3 }),
           stat('open_incidents', 'Open incidents', 5405, { sub: 'in a state this client counts as open', meaning: 'Incidents in a state the client counts as open', table: 'incident', agg: 'count', filter: OPEN, span: 6 }),
         ] },
         { h: 'Where the open work is', p: 'Which team is carrying it, how severe it is, and who holds it.', cards: [
@@ -1999,7 +2007,8 @@ body.studio-on { overflow: hidden }
           { k: 'gauge', id: 'sla_attainment', title: 'SLA attainment', sub: 'resolution SLAs, all incidents', value: 77.7, target: 80, num: 25348, den: 32641, meaning: 'Met ÷ completed, all incident SLAs. Counted from task_sla, never from incident.made_sla, which disagrees by 20 points on this instance.', table: 'task_sla', agg: 'ratio', numFilter: `${SLA_INC}^has_breached=false`, denFilter: SLA_INC, span: 4 },
           { k: 'target', id: 'attainment_by_priority', title: 'Attainment by priority', sub: 'Only P4 clears the 80% target', target: 80, rows: [['P1', 4788, 6912], ['P2', 6693, 9491], ['P3', 2206, 3095], ['P4', 11484, 12936]], table: 'task_sla', by: 'task.priority', filter: SLA_INC, span: 8 },
           stat('sla_p1_attainment', 'P1 attainment', '69.3%', { sub: 'against the matched P1 resolution SLA', num: 4786, den: 6910, meaning: 'P1 met ÷ P1 completed, using the matched P1 resolution SLA record', table: 'task_sla', agg: 'ratio', numFilter: 'sla=35420982d732220035ae23c7ce610393^stage=completed^has_breached=false', denFilter: 'sla=35420982d732220035ae23c7ce610393^stage=completed', span: 6 }),
-          stat('sla_breached', 'SLA breaches', 24380, { sub: 'completed resolution SLAs that breached', meaning: 'Incident SLAs that have breached', table: 'task_sla', agg: 'count', filter: 'has_breached=true^task.sys_class_name=incident', span: 6 }),
+          stat('sla_breached', 'SLA breaches', 7293, { sub: 'completed resolution SLAs that breached; with SLAs met this adds up to SLAs completed', meaning: 'Completed incident resolution SLAs (type SLA) that breached', table: 'task_sla', agg: 'count', filter: 'stage=completed^sla.type=SLA^task.sys_class_name=incident^has_breached=true', span: 3 }),
+          stat('sla_breached_open', 'Breaches still running', 16324, { sub: 'breached SLAs on incidents that are still active', meaning: 'Incident SLAs (any type) that have breached and are still active', table: 'task_sla', agg: 'count', filter: 'active=true^has_breached=true^task.sys_class_name=incident', span: 3 }),
         ] },
         { h: 'Trend and where breaches land', cards: [
           { k: 'cols', id: 'sla_by_month', title: 'SLAs met and breached, per month', sub: 'Completed incident resolution SLAs by created month', labels: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'], series: [{ name: 'Met', values: [0, 0, 17957, 108, 43, 7240] }, { name: 'Breached', values: [189, 216, 6130, 0, 99, 6] }], note: 'April, May, July and August hold far fewer records than the other months. That is how this instance was loaded, not a change in service.', table: 'task_sla', filter: SLA_INC, by: 'sys_created_on month', period: 'months', span: 6 },
@@ -2021,9 +2030,9 @@ body.studio-on { overflow: hidden }
         { h: 'How fast and how well', p: 'How long resolution takes, how often work is handed on, and how much automation closes.', cards: [
           stat('mtta', 'Time to assign', '2d 19h', { sub: 'ServiceNow metric, Assigned to Duration', meaning: 'Average time an incident spent before or while being assigned: the ServiceNow metric "Assigned to Duration"', table: 'metric_instance', agg: 'avg(duration)', filter: 'definition.name=Assigned to Duration^calculation_complete=true', span: 4 }),
           stat('reassignment_rate', 'Reassigned', '9.8%', { sub: 'of all incidents, at least once', num: 3527, den: 36050, meaning: 'Reassigned incidents ÷ all incidents', table: 'incident', agg: 'ratio', numFilter: 'reassignment_count>0', denFilter: '', span: 4 }),
-          stat('ttr_major', 'Time to resolve, P1 and P2', '245d 1h', { sub: 'over 17,876 incidents', meaning: 'Average calendar duration of resolved P1 and P2 incidents', table: 'incident', agg: 'avg(calendar_duration)', filter: 'stateIN6,7^priorityIN1,2', span: 4 }),
+          stat('ttr_major', 'Time to resolve, P1 and P2', '245d 1h', { sub: 'over resolved P1/P2 incidents with a recorded duration', meaning: 'Average calendar duration of resolved P1 and P2 incidents that have a recorded duration', table: 'incident', agg: 'avg(calendar_duration)', filter: 'stateIN6,7^priorityIN1,2^calendar_duration>1970-01-01 00:00:00', span: 4 }),
           stat('ritm_incomplete_pct', 'Closed incomplete', '13.7%', { sub: 'of closed request items', num: 100, den: 728, meaning: 'Closed incomplete ÷ all closed request items', table: 'sc_req_item', agg: 'ratio', numFilter: 'state=4', denFilter: 'stateIN3,4', span: 4 }),
-          stat('automation_share', 'Resolved by automation', '5.0%', { sub: 'by the AURA automation account', num: 472, den: 9369, meaning: 'Resolved incidents whose resolver is the AURA automation account, over all resolved incidents with a named resolver', table: 'incident', agg: 'ratio', numFilter: 'stateIN6,7^resolved_by.name=AURA Agent', denFilter: 'stateIN6,7^resolved_byISNOTEMPTY', span: 4 }),
+          stat('automation_share', 'Resolved by automation', '5.0%', { sub: 'of resolved incidents with a named resolver', num: 472, den: 9371, meaning: 'Resolved incidents whose resolver is the AURA automation account, over resolved incidents with a named resolver', table: 'incident', agg: 'ratio', numFilter: 'stateIN6,7^resolved_by.name=AURA Agent', denFilter: 'stateIN6,7^resolved_byISNOTEMPTY', span: 4 }),
           stat('ritm_fulfilment_time', 'Fulfilment time', null, { off: 'no data yet', reason: 'The table and field exist, but calendar_duration is never populated on close here.', meaning: 'Average calendar time from opened to closed complete on request items', table: 'sc_req_item', agg: 'avg(calendar_duration)', filter: 'state=3', span: 4 }),
         ] },
       ],
@@ -2111,7 +2120,7 @@ body.studio-on { overflow: hidden }
         { cards: [
           stat('cis_updated_30d', 'CIs updated in 30 days', 203, { sub: '184 of them are AI records', meaning: 'Configuration items whose record changed in the last 30 days', table: 'cmdb_ci', agg: 'count', filter: 'sys_updated_on>=javascript:gs.daysAgoStart(30)', span: 3 }),
           stat('orphan_cis', 'Orphan CIs', null, { off: 'no data yet', reason: 'Zero rows means the CMDB Health job has not run, not that there are no orphans.', meaning: 'CMDB Health results for the orphan metric', table: 'cmdb_health_result', agg: 'count', filter: 'metric=c6272b5137130200f212cc028e41f168^active=true', span: 3 }),
-          stat('warranty_expired', 'Warranty expired', 75, { sub: 'servers past their warranty date', status: 'attention', scale: { watch: 20, attention: 60, max: 90 }, meaning: 'Servers whose warranty date is in the past', table: 'cmdb_ci_server', agg: 'count', filter: 'warranty_expiration<javascript:gs.beginningOfToday()', span: 3 }),
+          stat('warranty_expired', 'Warranty expired', 76, { sub: 'of the servers with a warranty date on record', status: 'attention', scale: { watch: 20, attention: 60, max: 90 }, meaning: 'Servers whose warranty date is in the past, out of the servers that have one', table: 'cmdb_ci_server', agg: 'count', filter: 'warranty_expiration<javascript:gs.beginningOfToday()', span: 3 }),
           stat('warranty_90d', 'Warranty ends in 90 days', 21, { sub: 'servers', meaning: 'Servers whose warranty ends in the next 90 days', table: 'cmdb_ci_server', agg: 'count', filter: 'warranty_expiration>=javascript:gs.beginningOfToday()^warranty_expiration<javascript:gs.daysAgoStart(-90)', span: 3 }),
           bars('updated_by_class', 'CIs updated in 30 days, by class', [['AI Function', 144], ['AI Model Deployment', 40], ['Manual Endpoint', 6], ['ServiceNow App Component', 5], ['Computer', 5], ['ServiceNow Application', 1], ['Other', 2]], { table: 'cmdb_ci', by: 'sys_class_name', filter: 'sys_updated_on>=javascript:gs.daysAgoStart(30)', highlight: 0, span: 6 }),
           bars('ci_by_location', 'CIs by location', [['3 Whitehall Court, London', 79], ['27 Boulevard Vitton, Paris', 78], ['615 North Bush St, Santa Ana', 50], ['Bockenheimer Landstraße 123, Frankfurt', 49], ['Paradise Road, Richmond', 42], ['2-10-1 Yurakucho, Tokyo', 38], ['Via Nomentana 56, Rome', 36], ['815 E Street, San Diego', 33], ['30 Katharinenstr, Hamburg', 32]], { sub: 'Top 9 of 63 locations; 468 more across the rest', table: 'cmdb_ci', by: 'location', filter: 'locationISNOTEMPTY', span: 6 }),
@@ -3156,10 +3165,10 @@ const dayGreeting = () => { const h = new Date().getHours(); return h < 12 ? 'Go
   // what the chat shows about the model and the instance, and who is signed in
   async function modeLite() {
     const h = await api('/api/health').catch(() => null)
-    const stub = !h || h.llmMode === 'stub', up = !!(h && h.servicenow && h.servicenow.ok)
+    const stub = !h || (h.llm && !h.llm.ok), up = !!(h && h.servicenow && h.servicenow.ok)
     const host = window.NOWOPS_LIVE_ON || (window.NOWOPS && NOWOPS.INSTANCE && NOWOPS.INSTANCE.host || 'instance').split('.')[0]
     const inst = id_('fsinst'); inst.innerHTML = '<span class="dot"></span><span>' + esc(host) + (up ? '' : ' · offline') + '</span>'; inst.className = 'chip' + (up ? '' : ' off')
-    for (const m of [id_('cmode'), id_('fsmode')]) { m.textContent = !h ? 'Offline' : stub ? 'Stub mode' : (h.model || 'Live'); m.className = 'pill ' + (stub ? 'warn' : 'up'); m.title = !h ? 'The mockup server is not reachable' : stub ? 'Canned answers over live data' : 'Live model' }
+    for (const m of [id_('cmode'), id_('fsmode')]) { m.textContent = !h ? 'Offline' : stub ? 'Model offline' : (h.model || 'Live'); m.className = 'pill ' + (stub ? 'warn' : 'up'); m.title = !h ? 'The mockup server is not reachable' : stub ? 'The model is not answering: chat is unavailable, the dashboard and Resolve still work' : 'Live model' }
     id_('fsname').textContent = USER.name; id_('fsorg').textContent = USER.org; id_('fsav').textContent = initials(USER.name)
   }
 const R = { view: 'dash', ticket: null, cur: null, queue: null, qp: {}, qview: 'ranked', meta: { rules: [], writes: false, llm: 'stub' }, steps: {}, people: [], ok: null, ready: null, draft: null, arg: null }
@@ -3546,7 +3555,7 @@ try { convos = JSON.parse(localStorage.getItem(KEY) || '[]') } catch { convos = 
 let active = null, showAll = false, filterText = ''
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(convos.slice(0, 50))) } catch {} }
 const clip = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s
-const kindOf = (d) => d?.kind === 'metric' ? (d.definition ? 'NowOps definition' : 'live count') : d?.kind === 'article' ? 'knowledge base' : d?.kind === 'local' || d?.kind === 'page' ? 'from this page' : 'no answer'
+const kindOf = (d) => d?.kind === 'metric' ? (d.definition ? 'NowOps definition' : 'live count') : d?.kind === 'article' ? ((d.sources || []).length ? 'knowledge base' : 'from the instance') : d?.kind === 'clarify' ? 'question for you' : d?.kind === 'local' || d?.kind === 'page' ? 'from this page' : 'no answer'
 const kindIcon = (c) => { const k = c.turns.find((t) => t.role === 'bot' && t.data)?.data.kind; return icon(k === 'metric' ? 'sigma' : k === 'article' ? 'doc' : 'flat') }
 const replay = (n) => { n.style.animation = 'none'; void n.offsetWidth; n.style.animation = '' }
 function newChat() { active = { id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2)), title: '', at: Date.now(), turns: [] }; paint(); animateGreeting() }
@@ -3554,6 +3563,12 @@ function newChat() { active = { id: (crypto.randomUUID ? crypto.randomUUID() : S
 const note = (tone, titleHtml, why, tries = []) => `<div class="ans note ${tone}"><i>${tone === 'off' ? '!' : '?'}</i><div><div>${titleHtml}</div><div class="why">${esc(why)}</div>${tries.length ? `<div class="try">${tries.map((x) => `<button type="button" data-ask="${esc(x)}">${esc(x)}</button>`).join('')}</div>` : ''}</div></div>`
 const reveal = (s, on) => { if (!on) return esc(s); let n = 0; return String(s ?? '').split(/(\s+)/).map((w) => /\S/.test(w) && n < 120 ? `<span class="w" style="animation-delay:${n++ * 14}ms">${esc(w)}</span>` : esc(w)).join('') + '<span class="caret"></span>' }
 const kindBadge = (k) => k === 'metric' ? `<div class="kindb">${icon('sigma')}Live count</div>` : k === 'article' ? `<div class="kindb">${icon('doc')}Knowledge base</div>` : k === 'local' ? `<div class="kindb" style="color:var(--ai-ink);background:var(--ai-bg)">${icon('inbox')}Resolve</div>` : ''
+// How the answer was produced: one line per tool call, with its Verify link. Collapsed by default; this is the audit trail.
+function traceHtml(trace) {
+  if (!Array.isArray(trace) || !trace.length) return ''
+  const line = (t) => `<li class="${t.error ? 'err' : ''}"><b>${esc(t.tool)}</b> <span>${esc(t.error || t.summary || '')}</span>${t.url ? ` <a href="${esc(t.url)}" target="_blank" rel="noopener">Verify</a>` : ''}<small>${esc(JSON.stringify(t.args || {}).slice(0, 160))}</small></li>`
+  return `<details class="trace"><summary>How I got this · ${trace.length} step${trace.length === 1 ? '' : 's'}</summary><ol>${trace.map(line).join('')}</ol></details>`
+}
 function countUp(n) {
   const end = Number(n.dataset.count); if (!isFinite(end)) return
   if (REDUCED) { n.textContent = end.toLocaleString('en-US'); return }
@@ -3568,18 +3583,23 @@ function replyHtml(t, fresh = false) {
   if (d.kind === 'metric' && d.metric) {
     const m = d.metric
     const v = typeof m.value === 'number' ? `<span data-count="${m.value}">${fresh ? '0' : m.value.toLocaleString('en-US')}</span>` : esc(String(m.value))
-    return `<div class="ans metric"><div class="num">${v}${m.label ? `<small>${esc(m.label)}</small>` : ''}</div>${d.definition ? `<div class="sub" style="margin:4px 0 6px">${esc(d.definition.name)}: ${esc(d.definition.meaning)}. The same query as the dashboard tile.</div>` : ''}<a class="go" href="${esc(m.url)}" target="_blank" rel="noopener">Verify in ServiceNow ${icon('link')}</a></div>`
+    return `<div class="ans metric"><div class="num">${v}${m.label ? `<small>${esc(m.label)}</small>` : ''}</div>${d.definition ? `<div class="sub" style="margin:4px 0 6px">${esc(d.definition.name)}: ${esc(d.definition.meaning)}. The same query as the dashboard tile.</div>` : ''}<a class="go" href="${esc(m.url)}" target="_blank" rel="noopener">Verify in ServiceNow ${icon('link')}</a>${traceHtml(d.trace)}</div>`
   }
   if (d.kind === 'article') {
     const srcs = (d.sources || []).map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener" title="${esc(s.title)}">${icon('doc')}${esc(s.label || s.title)}</a>`).join('')
-    return `<div class="ans article">${kindBadge('article')}<div>${reveal(d.answer, fresh)}</div>${srcs ? `<div class="srcs">Sources${srcs}</div>` : ''}</div>`
+    // An answer from queries (a list, a breakdown, a ticket) has no article sources: it is badged as the instance's, with its Verify links.
+    const verify = !srcs && Array.isArray(d.verify) ? d.verify.filter(Boolean).map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener">${icon('link')}Verify${d.verify.length > 1 ? ` ${i + 1}` : ''}</a>`).join('') : ''
+    const badge = srcs ? kindBadge('article') : `<div class="kindb">${icon('sigma')}From the instance</div>`
+    return `<div class="ans article">${badge}<div>${reveal(d.answer, fresh)}</div>${srcs ? `<div class="srcs">Sources${srcs}</div>` : verify ? `<div class="srcs">${verify}</div>` : ''}${traceHtml(d.trace)}</div>`
   }
+  // The model asked one clarifying question; the user answers in the same conversation.
+  if (d.kind === 'clarify') return `<div class="ans note soft"><i>?</i><div><div>${reveal(d.answer, fresh)}</div><div class="why">Reply in this conversation and I will continue.</div></div></div>${traceHtml(d.trace)}`
   // Answered from records already on the Resolve page: no model call, nothing fetched.
   if (d.kind === 'local') return `<div class="ans">${kindBadge('local')}<div>${d.html}</div></div>`.replace('>Resolve</div>', '>From this page</div>')
   // The model answered from what this page had loaded (PAGE FACTS): labelled as the page's, with the load time.
   if (d.kind === 'page') return `<div class="ans">${kindBadge('local').replace('>Resolve</div>', '>From this page</div>')}<div>${reveal(d.answer, fresh)}</div><div class="sub" style="margin-top:6px">From what this page had loaded${d.loadedAt ? ` at ${new Date(d.loadedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}. Not a live query.</div></div>`
   const [why, tone] = REASON[d.gateReason] ?? ['No response.', 'soft']
-  return note(tone, reveal(d.answer ?? d.error ?? 'No answer', fresh), why, tone === 'soft' ? CAPS.map((c) => c.ex[0]) : [])
+  return note(tone, reveal(d.answer ?? d.error ?? 'No answer', fresh), why, tone === 'soft' ? CAPS.map((c) => c.ex[0]) : []) + traceHtml(d.trace)
 }
 function drawerEmpty() {
   const recent = convos.filter((c) => c.turns.length && c !== active).slice(0, 2)
@@ -3660,12 +3680,12 @@ async function loadWho() {
 }
 async function loadMode() {
   const [h, c] = await Promise.all([api('/api/health').catch(() => null), api('/api/connection').catch(() => null)])
-  const stub = h?.llmMode === 'stub', up = !!h?.servicenow?.ok
+  const stub = !h || (h.llm && !h.llm.ok), up = !!h?.servicenow?.ok
   let host = 'instance'; try { host = new URL(c.instance_url).hostname.split('.')[0] } catch {}
   id_('insthost').textContent = host; id_('instchip').title = h?.servicenow?.detail ?? ''
   id_('livechip').classList.toggle('off', !up); id_('when').textContent = up ? id_('when').textContent : 'Instance offline'
   const inst = id_('fsinst'); inst.innerHTML = `<span class="dot"></span><span>${esc(host)}${up ? '' : ' · offline'}</span>`; inst.className = `chip${up ? '' : ' off'}`
-  for (const m of [id_('cmode'), id_('fsmode')]) { m.textContent = stub ? 'Stub mode' : (h?.model ?? 'Live'); m.className = `pill ${stub ? 'warn' : 'up'}`; m.title = stub ? 'Canned answers over live data' : 'Live model' }
+  for (const m of [id_('cmode'), id_('fsmode')]) { m.textContent = stub ? 'Model offline' : (h?.model ?? 'Live'); m.className = `pill ${stub ? 'warn' : 'up'}`; m.title = stub ? 'The model is not answering: chat is unavailable, the dashboard and Resolve still work' : 'Live model' }
 }
 
 const showFull = (on) => { fs.hidden = !on; document.body.style.overflow = on ? 'hidden' : ''; document.body.classList.toggle('fsopen', on) }
@@ -3811,6 +3831,8 @@ paintHistory(); modeLite()
   // ---- a stat tile from a /api/dashboard or /api/next row
   function setStat(c, d) {
     if (!c || !d) return false
+    // Thin data: the figure is shown, with the reason as its subtitle, so a mean over three records is never read as solid.
+    if (d.status === 'thin data') { d = { ...d, status: 'available', detail: d.reason } ; c.sub = '' }
     if (d.status !== 'available') { c.value = null; c.off = /unavailable|not available|error/.test(d.status) ? 'unavailable' : 'no data yet'; c.reason = d.reason || 'not measurable on this instance'; return true }
     // a ratio over an empty period: nothing to divide, so say so rather than show a dash
     if ((d.kind === 'ratio' || c.agg === 'ratio') && String(d.value) === '—') { c.value = null; c.off = 'no data yet'; c.reason = d.period && range !== 'all' ? 'nothing recorded in this period' : 'nothing to divide'; c.period = !!d.period; return true }
@@ -3826,7 +3848,8 @@ paintHistory(); modeLite()
     // a ratio's two filters, so the detail panel shows the range clause on both parts
     if (c.agg === 'ratio' && /  ÷  /.test(d.filter_resolved || '')) { const [n, m] = d.filter_resolved.split('  ÷  '); c.numFilter = n === '(all)' ? '' : n; c.denFilter = m === '(all)' ? '' : m }
     if (d.url) c.url = d.url
-    if (d.detail && !/÷/.test(d.detail) && c.sub === '') c.sub = d.detail
+    // A live detail (the record count under an average, the basis under a share) replaces whatever the static page said.
+    if (d.detail && !/÷/.test(d.detail)) c.sub = d.detail
     scrubSub(c); restatus(c)
     return true
   }

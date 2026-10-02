@@ -159,6 +159,46 @@ Each entry: what was decided, why, what follows from it, and what would make us 
 
 ---
 
+## D-010 · SLA, MTTR and state definitions corrected after an audit against the instance
+
+**Date:** 2026-10-02 · **Status:** Active
+
+**Decision.** Nine dashboard figures were audited against abhrademo4 and corrected. Each correction is a change to the shared definitions table or to the series endpoint, so the dashboard and the chatbot change together.
+
+1. **SLA Breaches (incidents)** is completed, type SLA, breached. Breached plus met now equals completed, and the Period control applies to every record. The old count (24,397) included 16,177 SLAs still running and 3,357 OLAs. A new tile, **SLA breaches still running**, carries the live figure.
+2. **SLA by month** buckets on `end_time`, as the tiles do. By creation date June 2026 showed 17,957 met: the demo data's load date.
+3. **SLAs at risk now** and **SLAs due within 72 h** require `stage=in_progress`, and the 72-hour tile has a lower bound of now. 143 of 148 "at risk" records were completed; 50 of 53 "due" records were already past their planned end. Those 50 are a new tier B tile, **SLAs past planned end, not breached**.
+4. **MTTR P1, MTTR P2, Time-to-Restore** average only incidents with a recorded `calendar_duration`, and say so. Here that is 1,330 of 7,520 resolved P1s. The Create to Resolve metric has 26,457 complete rows but cannot be split by priority through the Stats API, so it is not used yet.
+5. **Cancelled Tickets** reads `{{cancelled_states}}` from the scan. The scan classifies each custom state by its label: cancelled, closed or open. State 9 "Cancelled" was counted as both open and cancelled; the chatbot showed 5,417 open incidents where the standard three states give 5,413.
+6. **Approvals pending** is scoped to change requests and request items. The unscoped count carried approvals with no source record and single approvals on a user, an article and an incident.
+7. **Resolved by automation**, **Server warranty expired** and **Time to resolve** show the basis of the figure on the tile: the named-resolver count, the servers with a date, the incidents with a duration.
+
+**Why.** A number that is right by its own definition and wrong by the page's other numbers is the quiet failure D-004 exists to prevent. The audit method (every tile and chart query run against the instance and cross-checked against its neighbours) is the one to repeat when a client instance is first connected.
+
+**Revisit when.** The Stats API can split a metric by task priority (then MTTR moves to the Create to Resolve metric), or a client's SLA setup uses OLAs as commitments.
+
+---
+
+## D-011 · Built for any instance: nothing about abhrademo4 lives in the code
+
+**Date:** 2026-10-02 · **Status:** Active
+
+**Decision.** A second, unrelated demo instance (ven06951) was connected as a portability test. Everything that only worked because the instance was abhrademo4 was removed or made instance-derived. abhrademo4 remains the development and demo instance; it is evidence, never a constant.
+
+1. **No number in prose.** Definition meanings and tile subtitles carry no figures. The basis of a figure is read live: an average carries the count of records it rests on (`n`, "over 1,330 records with calendar_duration"); a share carries its denominator through a `basis` definition ("76 of 96 servers with a warranty date"). Zero basis is "no data yet"; fewer than ten records is "thin data", shown with the reason. The chatbot's grounding check no longer counts a definition's description as evidence.
+2. **Every incident state class comes from the scan,** which classifies each state by its label on the instance: new, in progress, on hold, resolved, closed, cancelled. Filters use `{{open_states}}`, `{{in_progress_states}}`, `{{on_hold_states}}`, `{{closed_states}}`, `{{cancelled_states}}`. No state number is assumed anywhere. The chatbot is told the classes and composes "open" as the open states, never `active=true`.
+3. **Absent plugins are named as such.** HTTP 400 "Invalid table" from the instance means not installed; only a network failure is "unreachable".
+4. **Automation accounts are discovered, not named.** The scan proposes users that resolve incidents and look like automation; the tile is "not configured" until one exists. The account name AURA Agent is gone from the code.
+5. **Time zone is read from the instance** (`glide.sys.default.tz`) and kept as a tenant parameter; month charts and the chatbot's date rules use UTC calendar bounds and say so.
+6. **Zero durations are not durations.** Averages over `calendar_duration` require a value greater than zero; the one-record, zero-second MTTR seen on ven06951 reads as "no data".
+7. **Connection-time checks** (`/api/checks`) run the audit of D-010 as rules on any instance: breached plus met equals completed; open plus closed plus cancelled equals total; servers with and without a warranty date add up to servers; every average's coverage; every tile that is off, with its reason.
+
+**Still assumed, to be removed when a client needs it.** The names of the standard choice values (emergency, successful, requested, Open/Reopen on alerts) are not yet validated against the instance's choice lists; the SLA matcher still looks for "Priority N" in SLA names and relies on Settings (D-009) for the human pick; Resolve's system vocabulary is a fixed list.
+
+**Why.** On the second instance the chatbot repeated abhrademo4's figures from a definition's wording, the scan called missing plugins "unreachable", open incidents differed between tiles and composed queries, and two averages rested on one record each. None of these were visible on abhrademo4 alone. The product is the scan plus the rules; the instance is input.
+
+---
+
 ## Pending decisions
 
 Open questions that shape the architecture. Each names what it affects. Answered items become numbered entries above.
