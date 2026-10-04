@@ -198,6 +198,35 @@ Each entry: what was decided, why, what follows from it, and what would make us 
 **Why.** On the second instance the chatbot repeated abhrademo4's figures from a definition's wording, the scan called missing plugins "unreachable", open incidents differed between tiles and composed queries, and two averages rested on one record each. None of these were visible on abhrademo4 alone. The product is the scan plus the rules; the instance is input.
 
 ---
+## D-012 · A chart under a tile runs the tile's query
+
+**Date:** 2026-10-04 · **Status:** Active
+
+**Decision.** A chart that breaks a tile down (by group, priority, location) names the tile by definition id (`def`) and takes the tile's query from the definitions table through `/api/breakdown?def=…`. The chart carries no filter of its own; its static filter text is only the snapshot's recipe. The server applies the period range to the definition's own date field, rejects ids that are not definitions, refuses ratios ("break down one of its parts"), and returns the resolved query so the page shows the same recipe as the tile. The bars therefore add up to the tile, and the chatbot's `run_definition` narrowed by the same group gives the same figure.
+
+**Why.** Seen live 2026-10-04 on abhrademo4: "Breached SLAs by support group" showed Network at 5,529 while the chatbot answered 1,635 for the same group. Both were right for their own query. The chart counted every breached incident SLA of any type and any stage (completed resolution SLAs 1,635, still-running breaches 3,814, completed OLA and underpinning-contract SLAs 82); the tile and the chatbot count completed resolution SLAs only (D-010). D-010 aligned the tiles and D-004 made the chatbot run the tile's query, but charts kept inline filters in the page, so this one drifted unseen. Every other chart on the page was checked against its tile and agrees: open-incident charts share the open-states placeholder, the attainment and monthly SLA charts use the completed-resolution population, change and security charts use the open-change and open-security definitions' filter.
+
+**Rule.** When a chart sits beside a tile, it names the tile. A new inline filter on a chart is a review question: which definition is this, and why is it not that one?
+
+---
+## D-013 · The page holds no figures: every number is read from the instance at load
+
+**Date:** 2026-10-04 · **Status:** Active
+
+**Decision.** The dashboard page describes what each card counts and never what it last said. The snapshot of abhrademo4 that lived in the page (every tile value, chart row, month series, note and subtitle with a figure in it; a full application map of 1,731 record ids; a gazetteer of the instance's locations; its custom state labels; the P1 SLA record id; a demo user) is gone. The server scans the instance when it starts and the page asks for a fresh scan on every load, so a restart or a reload always shows the instance as it is now. Until the scan answers, tiles show "…" and charts a "Reading the instance" placeholder; if the instance does not answer, the page says so and stays empty. Nothing falls back to a stored figure.
+
+1. **Scan at startup, scan on load.** `scan()` runs when the server listens and whenever the page connects; the server's figure cache is cleared on every scan. Before the first scan completes a figure route answers 409 "instance not scanned yet", never a count built on a guessed state list. The `'1,2,3'` and `'6,7'` defaults are removed.
+2. **Everything the page shows about the instance is read then:** host name, tenant label, state labels (merged into the recipe vocabulary from the scan), coordinates for the location charts (`/api/places`, from `cmn_location`), the list of business services for Application 360 (`/api/services`), and the application map per service (`/api/graph`).
+3. **No record id in a definition.** The orphan-CI tile filters by the health metric's name (`metric.name=Orphan`), not by its sys_id; the P1 attainment recipe uses `{{sla_p1_resolution}}` from the scan.
+4. **Charts with no data draw as placeholders,** not as charts of zeros, so an empty read cannot be mistaken for a measurement.
+
+**Still fixed in the page, by design or pending.** Tile thresholds (watch / attention / scale) are product choices tuned on the demo instance and belong in Settings (D-009); the standard ServiceNow choice values (request item states 3 and 4, install status 1 and 6, risk ratings 1 and 2) are shipped values, still to be validated against the instance's choice lists (D-011 open item 8); the demo sign-in account is the product's own, not the instance's.
+
+**Why.** Seen 2026-10-04: with the server restarted and not yet scanned, the dashboard showed the September snapshot's figures as if current, and a chart's subtitle quoted a figure from another instance. The product is the scan plus the rules (D-011); a stored figure anywhere in the page is a second source of truth that drifts. Removing it also removes the "replay" mode: the page is served by its server or it reads nothing.
+
+---
+
+
 
 ## Pending decisions
 

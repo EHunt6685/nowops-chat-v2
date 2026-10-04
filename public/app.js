@@ -31,7 +31,7 @@ function renderSources(el, data) {
     const m = data.metric
     const agg = m.aggregate === 'count' ? 'count' : `${m.aggregate}(${m.field})`
     line.append(`Source: ${m.table} · ${agg} · `)
-    line.appendChild(link(m.url, 'open in abhrademo4 →'))
+    line.appendChild(link(m.url, 'open in ServiceNow →'))
     el.appendChild(line)
 
     const f = document.createElement('div')

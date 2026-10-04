@@ -46,13 +46,16 @@ for (const d of DEFINITIONS) if (d.kind !== 'ratio') TABLES[d.table] = [...new S
 
 // Who is signed in, for the app header. Null until /api/signin has run; the page falls back to its own default.
 // Sign-in is on the page, not the server: the page keeps the signed-in name itself and reads only the tenant here.
-app.get('/api/me', (_req, res) => res.json({ user: null, tenant: 'Acme (demo tenant)' }))
+app.get('/api/me', (_req, res) => res.json({ user: null, tenant: new URL(cfg.sn.instanceUrl).hostname.split('.')[0] }))
 
 app.get('/api/connection', (_req, res) => res.json({
   instance_url: cfg.sn.instanceUrl, client_id: mask(cfg.sn.clientId), credential: 'held in secrets store (prefilled from .env)',
 }))
 
-app.post('/api/scan', async (_req, res) => {
+/** Read the instance: every table the definitions need, incident states, SLA definitions, time zone, automation
+ *  candidates. Runs at startup and whenever the page asks, so the dashboard never shows anything older than the
+ *  server's own start, and nothing about any instance has to live in the code. */
+async function scan() {
   const t0 = Date.now(), c0 = snCalls
   const tables: Record<string, any> = {}
   // Five tables at a time: the read is watched live, and one at a time took most of it.
@@ -108,8 +111,17 @@ app.post('/api/scan', async (_req, res) => {
   state.profile = { scanned_at: new Date().toISOString(), took_ms, requests, tables, standard_states, custom_states, sla_definitions: slaList, sla_matches, time_zone, automation_candidates }
   log('scan.done', { instance: cfg.sn.instanceUrl, requests, took_ms, tables_present: Object.values(tables).filter((t: any) => t.present).length, tables: Object.keys(tables).length })
   state.params = undefined; state.confirmed = undefined
-  res.json(state.profile)
-})
+  cache.clear()  // figures read under the previous scan are not this scan's figures
+  return state.profile
+}
+app.post('/api/scan', async (_req, res) => res.json(await scan()))
+/** Accept the scan's own reading of the instance as the tenant parameters. Settings (D-009) is where a human corrects it. */
+function acceptScan() {
+  const p = state.profile
+  const slas = Object.fromEntries(Object.entries(p.sla_matches).map(([k, m]: [string, any]) => [k, m.selected]))
+  applyParams(slas, false)
+  return state.params
+}
 
 /** Build tenant parameters from the confirm step (or from the scan's defaults when skipped). */
 /** Tenant parameters from the scan's classification of every state, its time zone and its automation accounts. Nothing is assumed from a state's number. */
@@ -127,10 +139,8 @@ function applyParams(slas: Record<string, string>, confirmed: boolean) {
   state.confirmed = confirmed
 }
 app.post('/api/skip-confirm', (_req, res) => {
-  const p = state.profile
-  const slas = Object.fromEntries(Object.entries(p.sla_matches).map(([k, m]: [string, any]) => [k, m.selected]))
-  applyParams(slas, false) // the scan's own reading of the instance; Settings (D-009) is where a human corrects it
-  res.json({ ...state.params, confirmed: false })
+  if (!state.profile) return res.status(409).json({ error: 'instance not scanned yet' })
+  res.json({ ...acceptScan(), confirmed: false })
 })
 // Definitions, validation and the tenant parameters live in src/definitions.ts, shared with the
 // standalone chatbot server. The chatbot no longer matches questions to tiles by word: the model
@@ -257,7 +267,7 @@ const monthQ = (f: string, i: number) => {
 const monthLabel = (i: number) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i); return d.toLocaleString('en', { month: 'short' }) }
 
 app.get('/api/series', async (req, res) => {
-  const open = state.params?.open_states ?? '1,2,3', range = rangeOf(req.query.range)
+  const open = openStates(), range = rangeOf(req.query.range)
   const out = await cached(`series:${open}:${range}`, async () => {
     // Attainment and MTTR are period figures and take the range; the monthly lines and the aging buckets keep their own windows.
     const slaBase0 = 'stage=completed^sla.type=SLA^task.sys_class_name=incident', slaBase = slaBase0 + rangeClause(range, 'end_time')
@@ -292,8 +302,19 @@ app.get('/api/series', async (req, res) => {
 
 // Generic breakdown: one GROUP BY over a live table, display values, top N with the rest folded.
 app.get('/api/breakdown', async (req, res) => {
-  const table = String(req.query.table ?? ''), by = String(req.query.by ?? ''), top = Number(req.query.top ?? 8)
-  const q = resolved(String(req.query.q ?? ''))
+  const by = String(req.query.by ?? ''), top = Number(req.query.top ?? 8), def = String(req.query.def ?? '')
+  let table = String(req.query.table ?? ''), q = resolved(String(req.query.q ?? ''))
+  // A chart that sits under a tile names the tile (def) and takes the tile's own query from the definitions
+  // table, never a filter of its own, so the bars add up to the tile and agree with the chatbot. Seen live
+  // 2026-10-04: "Breached SLAs by support group" counted every breached incident SLA of any type and stage
+  // (Network 5,529) while the tile and the chatbot counted completed resolution SLAs (Network 1,635).
+  if (def) {
+    const k = defs.byId(def)
+    if (!k) return res.status(400).json({ error: `"${def}" is not a definition id` })
+    if (!k.request || k.ratio) return res.status(409).json({ error: k.ratio ? `${k.name} is a ratio: break down one of its parts instead` : `${k.name} is not available on this instance: ${k.unavailable}` })
+    table = k.request.table
+    q = (k.request.filter + rangeClause(rangeOf(req.query.range), validate().find((r) => r.id === def)?.when)).replace(/^\^/, '')
+  }
   if (!/^[a-z0-9_]+$/.test(table) || !/^[a-z0-9_.]+(,[a-z0-9_.]+)?$/.test(by)) return res.status(400).json({ error: 'bad table or field' })
   // Before the scan, {{open_states}} is still a placeholder; sending it would return nothing and look like "no rows".
   if (/\{\{/.test(q)) return res.status(409).json({ error: 'instance not scanned yet: run the onboarding scan, then reload' })
@@ -313,6 +334,16 @@ app.get('/api/breakdown', async (req, res) => {
   }
 })
 
+/** Coordinates for the location charts, read from cmn_location. Where a client's sites are is the instance's to say. */
+app.get('/api/places', async (_req, res) => {
+  res.json(await cached('places', async () => {
+    const r = await get<{ result: Record<string, string>[] }>(`/api/now/table/cmn_location?sysparm_query=${enc('latitudeISNOTEMPTY^longitudeISNOTEMPTY')}&sysparm_fields=name,latitude,longitude&sysparm_limit=2000`)
+    const out: Record<string, [number, number]> = {}
+    for (const l of r?.result ?? []) { const la = Number(l.latitude), lo = Number(l.longitude); if (l.name && Number.isFinite(la) && Number.isFinite(lo)) out[l.name] = [la, lo] }
+    return out
+  }))
+})
+
 // ---- Estate lens (Application 360): services, one application's picture, a generic read-only list.
 const ID = /^[a-f0-9]{32}$/
 app.get('/api/services', async (_req, res) => {
@@ -327,7 +358,7 @@ app.get('/api/app', async (req, res) => {
   const id = String(req.query.service ?? '')
   if (!ID.test(id)) return res.status(400).json({ error: 'bad service id' })
   res.json(await cached(`app:${id}:${state.params?.open_states}`, async () => {
-    const open = state.params?.open_states ?? '1,2,3'
+    const open = openStates()
     const q: Record<string, string> = {
       incidents_all: `business_service=${id}`, incidents_open: `business_service=${id}^stateIN${open}`, incidents_p1p2_open: `business_service=${id}^stateIN${open}^priorityIN1,2`,
       changes: `cmdb_ci=${id}`, problems: `business_service=${id}`, sla_breached: `task.business_service=${id}^has_breached=true`,
@@ -346,7 +377,7 @@ app.get('/api/graph', async (req, res) => {
   const id = String(req.query.service ?? ''), depth = Math.min(4, Math.max(1, Number(req.query.depth) || 3))
   if (!ID.test(id)) return res.status(400).json({ error: 'bad service id' })
   res.json(await cached(`graph:${id}:${depth}:${state.params?.open_states}`, async () => {
-    const open = state.params?.open_states ?? '1,2,3'
+    const open = openStates()
     // The walk goes downward only: what the service contains, depends on and runs on. Things that merely share a
     // server with it (sibling services, other applications) are not drawn; they are listed per node as "also used by".
     const MAX = 40
@@ -416,7 +447,7 @@ app.get('/api/list', async (req, res) => {
 /** Figures beyond the core catalogue that the dashboard's live loader applies by tile id.
     Tiles come back in the same shape as /api/dashboard rows so the page renders them with stat(). */
 app.get('/api/next', async (req, res) => {
-  const open = state.params?.open_states ?? '1,2,3', range = rangeOf(req.query.range), rc = rangeClause(range, 'resolved_at')
+  const open = openStates(), range = rangeOf(req.query.range), rc = rangeClause(range, 'resolved_at')
   res.json(await cached(`next:${open}:${range}`, async () => {
     const url = (t: string, q: string) => `${cfg.sn.instanceUrl}/${t}_list.do?sysparm_query=${enc(q)}`
     const tile = (id: string, name: string, table: string, filter: string, meaning: string, value: unknown, extra: Record<string, unknown> = {}) =>
@@ -439,7 +470,7 @@ app.get('/api/next', async (req, res) => {
       unassigned: tile('unassigned', 'Unassigned incidents', 'incident', uq, 'Open incidents with nobody assigned', unassigned),
       major_mttr: tile('major_mttr', 'MTTR, P1 and P2', 'incident', mq, 'Average calendar duration of resolved P1 and P2 incidents', majorRaw, { aggregate: 'avg', field: 'calendar_duration', detail: `${(majorN ?? 0).toLocaleString('en-US')} incidents`, period: true, range }),
       // The share's basis is shown on the tile: most resolved incidents here name no resolver at all (D-010).
-      automation_share: tile('automation_share', 'Resolved by automation', 'incident', aq, 'Resolved incidents whose resolver is the AURA automation account, over resolved incidents with a named resolver. Incidents with no resolver recorded are outside the share.', share, { kind: 'ratio', detail: `${(autoN ?? 0).toLocaleString('en-US')} of ${(resolvedN ?? 0).toLocaleString('en-US')} with a named resolver; ${(noResolverN ?? 0).toLocaleString('en-US')} resolved incidents name none`, filter_resolved: `${aq}  ÷  ${rq}`, period: true, range, ...(bots ? {} : { status: 'not configured', reason: 'no automation account was found resolving incidents on this instance; mark one in Settings' }) }),
+      automation_share: tile('automation_share', 'Resolved by automation', 'incident', aq, 'Resolved incidents whose resolver is one of the automation accounts the scan found, over resolved incidents with a named resolver. Incidents with no resolver recorded are outside the share.', share, { kind: 'ratio', detail: `${(autoN ?? 0).toLocaleString('en-US')} of ${(resolvedN ?? 0).toLocaleString('en-US')} with a named resolver; ${(noResolverN ?? 0).toLocaleString('en-US')} resolved incidents name none`, filter_resolved: `${aq}  ÷  ${rq}`, period: true, range, ...(bots ? {} : { status: 'not configured', reason: 'no automation account was found resolving incidents on this instance; mark one in Settings' }) }),
       kb_stale: tile('kb_stale', 'Stale articles', 'kb_knowledge', sq, 'Published articles not updated in 180 days', staleN, { detail: `of ${(kbN ?? 0).toLocaleString('en-US')} published` }),
     } }
   }))
@@ -455,8 +486,11 @@ app.get('/api/next', async (req, res) => {
 const llm = makeLlm(cfg)
 const search = makeSearch(sn)
 const WRITES = process.env.RESOLVE_WRITES === 'true'
-const openStates = () => state.params?.open_states ?? '1,2,3'
-const closedStates = () => state.params?.closed_states ?? '6,7'
+/** Tenant parameters from the scan. Before it has run there is nothing to count with: the route answers 409, never a guessed state list. */
+const param = (k: string) => { const v = state.params?.[k]; if (!v) throw new NotScanned(k); return v }
+class NotScanned extends Error { constructor(k: string) { super(`instance not scanned yet (${k} is not set): the scan runs at startup; wait a few seconds and reload`) } }
+const openStates = () => param('open_states')
+const closedStates = () => param('closed_states')
 type Dv = { value: string; display_value: string }
 type Row = Record<string, Dv>
 const dv = (r: Row | undefined, f: string) => r?.[f]?.display_value ?? ''
@@ -969,11 +1003,20 @@ app.post('/api/resolve/write', async (req, res) => {
 // On Windows a second bind to a port that another Node process already serves does not fail: the
 // new process prints its banner and exits with code 0, which reads as "it turned off instantly".
 // Probe the port first so a running copy is named, and treat any listen error as fatal and loud.
+// A route that throws answers in JSON. "Not scanned yet" is a state, not a failure: 409.
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  res.status(err instanceof NotScanned ? 409 : 500).json({ error: err.message })
+})
+
 const PORT = Number(process.env.MOCKUP_PORT) || 3100
 fetch(`http://localhost:${PORT}/api/health`, { signal: AbortSignal.timeout(1500) }).then(
   () => { console.error(`Another NowOps mockup is already serving http://localhost:${PORT}. Use that one, or stop it and start again.`); process.exit(1) },
   () => {
-    const srv = app.listen(PORT, () => console.log(`mockup at http://localhost:${PORT}`))
+    const srv = app.listen(PORT, () => {
+      console.log(`mockup at http://localhost:${PORT}`)
+      // The first read of the instance starts now, so a page opened a few seconds later finds a scan already done.
+      scan().then(() => { acceptScan(); log('scan.startup', { instance: cfg.sn.instanceUrl }) }).catch((e: Error) => log('scan.startup_failed', { error: e.message }))
+    })
     srv.on('error', (e: Error) => { console.error(`Cannot listen on port ${PORT}: ${e.message}`); process.exit(1) })
   },
 )

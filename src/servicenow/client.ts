@@ -47,7 +47,7 @@ export function makeSnClient(cfg: Config, fetchImpl: typeof fetch = fetch): SnCl
       throw new ServiceNowUnavailableError(
         `ServiceNow rejected the refresh token (HTTP ${res.status}). ` +
           `Refresh tokens last ~100 days and may have expired. ` +
-          `Fix: run Connect-SnOAuth -Instance abhrademo4, then Export-SnEnvFile. ${detail}`,
+          `Fix: run Connect-SnOAuth -Instance <your instance>, then Export-SnEnvFile. ${detail}`,
       )
     }
 
