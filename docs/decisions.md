@@ -1,6 +1,6 @@
 # NowOps Standalone — Decision Log
 
-Running record of product and architecture decisions for the NowOps standalone application. One entry per decision. Entries are appended, not rewritten; a reversed decision gets a new entry that names the one it supersedes. Updated only when the owner asks.
+Product and architecture decisions for the NowOps standalone application that are in force now. One entry per decision. An entry that is superseded is rewritten or removed; a pending question that is answered becomes an entry and leaves the table. Earlier wording is in git history. Updated only when the owner asks.
 
 Each entry: what was decided, why, what follows from it, and what would make us revisit it.
 
@@ -8,31 +8,22 @@ Each entry: what was decided, why, what follows from it, and what would make us 
 
 ## D-001 · ServiceNow is the only platform for now; Jira is deferred
 
-**Date:** 2026-09-16 · **Status:** Active
+**Date:** 2026-09-16 · **Status:** Active, with the exception in D-017
 
 **Decision.** The standalone NowOps product is built against ServiceNow only. Jira (and any other platform) stays in the pipeline for a much later phase and is not designed for now.
 
 **Why.** Every piece of complexity discussed in the platform-agnostic designs existed only to make two platforms look alike: a canonical ticket schema, a sync database, a connector interface, a core-versus-pack dashboard split, a neutral query language. With one platform none of it is needed. ServiceNow's aggregate endpoint answers every dashboard tile live; the KPI data pull (2026-09-14) computed all of them in minutes.
 
-**Consequences.** No sync database, no canonical schema, no connector abstraction, no packs. ServiceNow code stays plain ServiceNow code. UST holds no copy of client ticket data, only aggregates, definitions, conversations and audit logs.
+**Consequences.** No sync database, no canonical schema, no connector abstraction, no packs. ServiceNow code stays plain ServiceNow code. UST holds no copy of client ticket records; what NowOps does store is listed in D-017.
 
-**Kept cheap for later.** Three habits, costing nothing now: (1) every line that knows ServiceNow lives in the `servicenow/` folder or the definitions table; (2) the definitions table has a `platform` column even though every row says `servicenow`; (3) the audit log and API response shapes stay platform-neutral (entity, filter, aggregate, value, link). When a second platform is actually signed, build it deliberately similar in shape, then extract the seam from two working implementations. Do not build the seam from one implementation and a guess.
+**Kept cheap for later.** Three habits, costing nothing now:
+1. every line that knows ServiceNow lives in the `servicenow/` folder or the definitions table;
+2. the definitions table has a `platform` column even though every row says `servicenow`;
+3. API response shapes stay platform-neutral (entity, filter, aggregate, value, link).
+
+When a second platform is actually signed, build it deliberately similar in shape, then extract the seam from two working implementations. Do not build the seam from one implementation and a guess.
 
 **Revisit when.** A second platform is contractually real, or a measured dashboard chart is too slow to serve live (then snapshot that chart, not everything).
-
----
-
-## D-002 · Scope of the first product release: dashboards and the chatbot
-
-**Date:** 2026-09-16 · **Status:** Active
-
-**Decision.** The first release contains the three NowOps dashboards (SDM QBR, Application 360, Backlog Beacon) recreated in the standalone app, and the NowOps Assistant chatbot. Workflow-automation agents and a self-service catalog are the next two features in the pipeline and are out of scope for this release.
-
-**Why.** Dashboards are where the definition problem lives (three meanings of "open" on one instance) and where the cross-client portfolio view comes from; those are the two things an in-instance dashboard cannot provide. The chatbot is already built and measured against abhrademo4.
-
-**Consequences.** Everything in the first release is read-only against the client instance. Write-side controls (per-user credentials, confirm-before-commit action cards) are designed for when agents arrive, not now. The audit log is designed so writes can be added to it without restructuring.
-
-**Build order within the release.** Tenancy and connections, the definitions table, then the QBR dashboard first. Application 360's CMDB, licence and security tiles are later additions within the release because they depend on optional plugins.
 
 ---
 
@@ -40,11 +31,11 @@ Each entry: what was decided, why, what follows from it, and what would make us 
 
 **Date:** 2026-09-16 · **Status:** Active
 
-**Decision.** Dashboard tiles and chatbot metrics run live against the client instance through the ServiceNow stats API, with results cached per tenant for a few minutes. Trends are computed live by date bucket (as the KPI data pull did), not from a synced store.
+**Decision.** Dashboard tiles and chatbot metrics run live against the client instance through the ServiceNow stats API, with results cached for a few minutes. Trends are computed live by date bucket (as the KPI data pull did), not from a synced store.
 
 **Why.** ServiceNow aggregates server-side, so live is fast enough. A sync database was justified only by Jira's inability to aggregate (see D-001).
 
-**Consequences.** The dashboard and the chatbot always show the same number for the same definition because both run the same query. Client instance downtime means the dashboard is unavailable for that tenant; this is accepted for a read-only proof of value.
+**Consequences.** The dashboard and the chatbot always show the same number for the same definition because both run the same query. Client instance downtime means the dashboard is unavailable for that tenant; this is accepted.
 
 **Revisit when.** A specific chart is measured too slow. The fix is a nightly snapshot of that chart only, added when measured, not up front.
 
@@ -54,36 +45,49 @@ Each entry: what was decided, why, what follows from it, and what would make us 
 
 **Date:** 2026-09-16 · **Status:** Active
 
-**Decision.** Each KPI has a definition owned by NowOps: identifier, display name, owner, plain-language meaning, encoded query, aggregate, field, permitted dashboard filters, `platform` column, version. Definitions live in a table, editable without deployment. Dashboards run them; the chatbot matches a question against them before composing its own query.
+**Decision.** Each KPI has a definition owned by NowOps: identifier, display name, owner, plain-language meaning, encoded query, aggregate, field, permitted dashboard filters, `platform` column, version. Definitions live in a table, editable without deployment. Dashboards run them; the assistant runs the matching definition before composing its own query (D-015).
 
-**Why.** The KPI inventory established that access is not the constraint, definition is. Stored `sys_report` definitions on abhrademo4 were inconsistent (three meanings of "open") and several were wrong (relationship counts labelled as CI counts; an SLA tile reading 0 because of a close-notes clause; "TCO" counting apps with zero cost; "Tickets Approaching SLA Breach" never reading `task_sla`). NowOps cannot read definitions out of the client's reporting tables and be trusted.
+**Why.** The KPI inventory established that access is not the constraint, definition is. Stored `sys_report` definitions on abhrademo4 were inconsistent (three meanings of "open") and several were wrong:
+- relationship counts labelled as CI counts;
+- an SLA tile reading 0 because of a close-notes clause;
+- "TCO" counting apps with zero cost;
+- "Tickets Approaching SLA Breach" never reading `task_sla`.
+
+NowOps cannot read definitions out of the client's reporting tables and be trusted.
 
 **Consequences.** Every number is rendered with its definition (filter) and a deep link to the records counted. Where a client's house definition differs, both are visible; NowOps never silently substitutes.
 
-**Open.** Whether clients may override standard definitions, and whether overrides are visible in UST portfolio views (see Pending decisions).
+**Open.** Whether clients may override standard definitions (P-3).
 
 ---
 
-## D-005 · Multi-tenant across ServiceNow instances: automated instance scan, no onboarding checklist
+## D-005 · Tiles are built once for every client; what each instance has switches them on
 
-**Date:** 2026-09-16 · **Status:** Active in part (reworded 2026-09-16; supersedes the "onboarding checklist" wording). The upfront scan step, the human confirm step and the scheduled refresh are superseded by D-008; the rest stands.
+**Date:** 2026-09-16 · **Status:** Active (rewritten 2026-10-08 to drop the parts replaced by D-008, D-011 and D-016)
 
-**Decision.** A tenant is one client; a connection is that client's instance URL plus a service credential held in a secrets store. On connection, the product **scans the instance itself**: it reads ServiceNow's own metadata (`sys_db_object`, `sys_dictionary`, `sys_choice`, `contract_sla`, `kb_knowledge_base`, installed plugins) for the ~25 standard tables NowOps uses and produces a per-connection summary and an onboarding report. No consultant fills in a form. The only human step is confirming two or three **meanings** the scan can detect but not decide: which of the client's SLA definitions is "P1 resolution" (sys_ids differ per instance), and whether any client-added states count as open or closed. These are pre-filled with the standard answer.
+**Decision.** A tenant is one client with one ServiceNow instance. The product does not build tiles per client.
+- **Core tiles** (incident, problem, change, request, `task_sla`, `cmdb_ci` counts) are always defined; every ITSM instance has these tables.
+- **Plugin tiles** (licences and entitlements, security incidents, vulnerable items) exist once in the product and apply only when the instance has the table.
+- **Never a silent wrong number.** A tile whose definition references a missing table or field is unavailable with its reason, never an empty or full-table count. How such tiles are shown is in D-008.
 
-**Why.** The product uses only fields that ship with ServiceNow ITSM (D-006), so per-client field inspection is unnecessary. What still differs between instances is (a) **licensed plugins**: Software Asset Management, Security Incident Response and Vulnerability Response are separately licensed; a client without them has no `alm_license`, `sn_si_incident` or `sn_vul_vulnerable_item` table at all; (b) **instance-specific record identifiers** such as SLA definition sys_ids; (c) **choice values** where a client has added states (abhrademo4 has an incident in state 15). Measured on abhrademo4: ServiceNow silently drops a filter clause whose field does not exist and returns the whole table with HTTP 200 (the three licence tiles read 202, the full table, because `product_type` is not a column). The scan is what stops a confident wrong number reaching a client.
+Per-client facts (tables present, state classes, SLA match, time zone) are data in the tenant profile, read from the instance (D-011), never code.
 
-**Tiles are built once; the scan switches them on.** The product does not build tiles per client.
-- **Core tiles** (incident, problem, change, request, `task_sla`, `cmdb_ci` counts) are always on; every ITSM instance has these tables.
-- **Plugin tiles** (licences and entitlements, security incidents, vulnerable items) exist once in the product and are enabled only when the scan finds the table. When missing: the onboarding report lists them as "not available — requires <plugin>", so SDM and client know why; the daily dashboard hides them by default with a "show unavailable" toggle, because a permanent grey tile is noise for daily users. Whether the unavailable list becomes a commercial conversation is a sales decision.
-- **Never a silent wrong number.** A tile whose definition references a missing table or field is shown as unavailable, not as an empty or full-table count.
+**Why.** The product uses only fields that ship with ServiceNow ITSM (D-006). What still differs between instances:
+- **licensed plugins:** Software Asset Management, Security Incident Response and Vulnerability Response are separately licensed, and a client without them has no `alm_license`, `sn_si_incident` or `sn_vul_vulnerable_item` table at all;
+- **instance-specific record identifiers,** such as SLA definition sys_ids;
+- **choice values,** where a client has added states (abhrademo4 has an incident in state 15).
 
-**Alternatives rejected.** Assume the standard schema and fix on report (failures are silent). Hand-configure each client via a checklist (slow, drifts, does not scale, and unnecessary once custom fields are out of scope). Mirror all instance metadata (heavy, mostly unused). Build tiles per client according to what they have (a fork per client).
+Measured on abhrademo4: ServiceNow silently drops a filter clause whose field does not exist and returns the whole table with HTTP 200. The three licence tiles read 202, the full table, because `product_type` is not a column.
 
-**Fallback.** If the service account cannot read metadata tables, the one-record field probe already used by the chatbot answers table and field existence without metadata access.
+**Alternatives rejected.**
+- Assume the standard schema and fix on report: the failures are silent.
+- Hand-configure each client with a checklist: slow, drifts, does not scale.
+- Mirror all instance metadata: heavy, mostly unused.
+- Build tiles per client according to what they have: a fork per client.
 
-**Consequences.** Same code for every client; per-client facts as data. The summary also grounds the chatbot's per-tenant prompt and is refreshed on a schedule with drift alerts. The chatbot keeps its per-request field probe as a safety net for the gap between refreshes. Agents and the catalog later extend the same scan (write permissions, `sc_cat_item`), not a new system.
+**Fallback.** Where metadata tables cannot be read, the one-record field probe answers table and field existence without metadata access. The assistant keeps the same probe on every composed query.
 
-**Open.** Whether clients want the plugin-dependent data at all is unknown; abhrademo4's Application 360 content is largely demo data (0.5% CI linkage, all vulnerable items at risk zero, sample licence data). Build order in D-002 therefore puts QBR core first and plugin tiles only when a client with those products asks. Developer interview question: which dashboards do clients actually open.
+**Open.** Whether clients want the plugin-dependent data at all is unknown; abhrademo4's Application 360 content is largely demo data (0.5% CI linkage, all vulnerable items at risk zero, sample licence data). The build order in D-014 therefore puts the QBR core first and plugin tiles only when a client with those products asks.
 
 ---
 
@@ -95,47 +99,33 @@ Each entry: what was decided, why, what follows from it, and what would make us 
 
 **Why.** Measured on abhrademo4: only the Backlog Beacon dashboard depends on UST fields. The application-category field is empty on all 36,030 incidents. Aging fields (`u_priority_aging`) are derivable from `opened_at`. The `past_incidents` clause does not describe the ticket; it records whether UST's AI job has processed it, shrinking the count from 5,377 to 239 for a reason unrelated to operations. A product that owns its definitions should not mix an AI-processing artefact into a business KPI.
 
-**Consequences.** Backlog Beacon in the standalone app reduces to standard-field tiles: corrected backlog count, SLA active split, backlog by assignee, plain backlog list. The Next Best Action and Relevant Knowledge Articles columns are a later feature computed by NowOps itself (same gateway, same guardrails, same citation rules, results in our database), so it works for any client regardless of installed UST apps. Automation accounts such as "AURA Agent" (1,207 open assignments on abhrademo4) need a presentation decision in people-oriented tiles.
+**Consequences.** Backlog Beacon in the standalone app reduces to standard-field tiles: corrected backlog count, SLA active split, backlog by assignee, plain backlog list. The Next Best Action and Relevant Knowledge Articles columns are a later feature computed by NowOps itself (same LLM, same guardrails, same citation rules), so it works for any client regardless of installed UST apps. Automation accounts such as "AURA Agent" (1,207 open assignments on abhrademo4) need a presentation decision in people-oriented tiles (P-5).
 
 ---
 
-## D-007 · Chatbot keeps the single-call design; tool use is the planned evolution, gated on measurement
+## D-008 · No confirm step and no scheduled rescan; tiles with nothing to show are hidden; admins correct, never approve
 
-**Date:** 2026-09-16 · **Status:** Active
+**Date:** 2026-09-23 · **Status:** Active (rewritten 2026-10-08: onboarding steps moved to D-016; how states and SLAs are resolved is D-010 and D-011)
 
-**Decision.** The chatbot proven against abhrademo4 is carried into the product as is: token guard, one speculative knowledge search, one model call with four reply forms (ANSWER / METRIC / SEARCH / NO_ANSWER), at most one retry, citation verification, guardrails at query execution, every number shown with its filter and link. Two additions for the product: a definitions-table match before composition (D-004) and per-tenant prompt grounding from the schema summary (D-005). Model-driven tool use (the model chooses `search_knowledge` or `run_metric`; the server executes with the same guardrails) is the intended next step, not built now.
+**Decision.**
+- **No confirm step.** Nobody approves the instance's definitions before the first dashboard. The definitions engine resolves what it needs from the instance's own data and keeps the result in the tenant profile.
+- **Two settings pages** take the place of a confirm step:
+  - **Connection health** shows what was resolved and why, with an override for each choice;
+  - **Tiles** lists every definition with an on/off switch.
 
-**Why.** The single-call design isolates each component for measurement and costs one wasted ~200 ms search on counting questions. Tool use removes that waste and supports compound questions, at two to four model calls per turn and nondeterministic call counts. The trade depends on the share of counting questions in real traffic, which is unmeasured.
+**No scheduled rescan.** Resolved values are re-derived when the tenant cache expires, so a change on the instance (a new state, a retired SLA, a plugin added or removed, an access rule tightened) is picked up on a later load. When a freshly resolved value differs from the stored one, the difference is recorded and shown as a change notice on Connection health. There is no scheduler and nobody has to run anything. Who the re-derivation runs as is open in D-016.
 
-**Gates for moving to tool use.** (1) A spike confirming client-side tool use passes through the UST LLM gateway. (2) The metric evaluation (`npm run eval -- --metrics`, needs the gateway key) showing whether irrelevant articles distract the model from composing queries ("NOT A METRIC" count). If either shows a problem, the move is a rework of the request flow and parser only, a few days.
+**Tile visibility.** Tiles are built once for every client (D-005), but a tile that has nothing to show is hidden from the dashboard rather than displayed as "not available" or "no data yet". Two cases hide by default:
+- the table or field is absent on the instance;
+- the table exists but holds no records for the definition (the Tier B case, for example orphan CIs and reopened incidents on abhrademo4).
 
-**Invariants that do not change with the design.** The model supplies data, never a request; our code validates and executes read-only; every number is shown with the query that produced it; malformed output is declined, never repaired.
-
----
-
-## D-008 · Zero-touch onboarding: definitions resolve themselves on first run; no scan step, no confirm step, no scheduled rescan
-
-**Date:** 2026-09-23 · **Status:** Active (supersedes the scan, confirm and scheduled-refresh parts of D-005)
-
-**Decision.** Onboarding is sign in, connect the instance, dashboard. There is no scan phase, no profile or validation screen, and no human confirmation. The definitions engine resolves everything it needs the first time a definition runs, from the instance's own data, and keeps the result in the tenant profile. Two settings pages replace the removed steps: **Connection health**, which shows what was resolved and why, with an override for each choice; and **Tiles**, which lists every definition with an on/off switch.
-
-**How each former human decision is made automatically.**
-- **Table and field availability.** The first run of each definition is the scan. A definition whose table or field is missing is marked "not available" with the reason, using the one-record probe and missing-table check that already exist. Nothing is probed ahead of time.
-- **Which custom states count as open.** Not read from the label. For each non-standard state value, the engine measures the share of records in that state that have no resolution date. Above about 90 percent unresolved the state counts as open; above about 90 percent resolved it does not. A mixed state defaults to open and is noted in the tile recipe and on Connection health. The instance's own behaviour decides, not our guess.
-- **Which SLA definition is "P1 resolution".** Structural match: SLA definitions on the incident table, type SLA, active, condition referencing priority 1, name containing "resolution" or "resolve". One match is used. Several matches: the one with the most `task_sla` records attached, because that is the one the instance actually runs. The reason is written into the tile recipe ("chosen because it carries 6,910 of 7,100 P1 resolution SLA records"). A near tie is noted, never blocking.
-- **Priority labels and other choice lists.** Read from `sys_choice` on first use, cached in the profile.
-
-**No scheduled rescan.** Resolved values are re-derived whenever the tenant cache expires (minutes), so any change on the instance (a new state, a retired SLA, a plugin added or removed, an access rule tightened) is picked up on the next load. When a freshly resolved value differs from the stored one, the difference is recorded and shown as a change notice on Connection health. That replaces the weekly job and its drift alert; there is no scheduler and nobody has to run anything.
-
-**Tile visibility.** Tiles are still built once for every client (D-005), but a tile that has nothing to show is hidden from the dashboard rather than displayed as "not available" or "no data yet". Two cases hide by default: the table or field is absent on the instance, and the table exists but holds no records for the definition (the Tier B case, for example orphan CIs and reopened incidents on abhrademo4). The Tiles settings page lists every definition with its current state and an on/off switch, so an admin can turn a tile on when the client starts recording that data, or turn off a tile the client does not want. Turning a tile on that still has nothing to show renders it with its reason, as today. Hidden tiles are still listed on Connection health so nobody mistakes an absent tile for an absent problem.
+The Tiles page lists every definition with its current state and an on/off switch. An admin can turn a tile on when the client starts recording that data, or turn off a tile the client does not want. A tile turned on that still has nothing to show renders with its reason. Hidden tiles are still listed on Connection health, so nobody mistakes an absent tile for an absent problem.
 
 **Admin override, not approval.** Connection health shows every automatic choice with the evidence behind it and lets an admin change it. This is a correction path used rarely, not a gate on the first dashboard. Overrides are stored in the profile and survive re-resolution; a change notice is raised if the evidence later contradicts an override.
 
-**Why.** The confirm step asked an admin to decide from labels what the instance's records already show. The scan duplicated the failure handling the engine has to do at run time anyway. The weekly job was a coarse way to detect change that the cache expiry already detects finely. Removing all three leaves credentials and identity as the only onboarding inputs, which is the promise made to clients: connect once and read.
+**Why.** A confirm step asks an admin to decide from labels what the instance's records already show. A weekly job is a coarse way to detect change that the cache expiry detects finely.
 
-**Consequences.** The mockup's scan, confirm and skip screens become dead code and are retired with the old page. Tenant profile gains: resolved placeholders with evidence, overrides, change notices, tile visibility. The definitions engine gains: lazy placeholder resolution, the unresolved-share test for states, the structural SLA match with usage tiebreak. The chatbot's per-tenant grounding (D-005, D-007) reads the same profile.
-
-**Revisit when.** A client's instance has a state that the unresolved-share test cannot classify and the default causes a wrong open count that the recipe did not make obvious; or a client asks for a formal sign-off step on definitions for contractual reasons, in which case Connection health gains an "approved by" stamp without becoming a gate.
+**Revisit when.** A client asks for a formal sign-off on definitions for contractual reasons. Connection health would then gain an "approved by" stamp without becoming a gate.
 
 ---
 
@@ -143,17 +133,21 @@ Each entry: what was decided, why, what follows from it, and what would make us 
 
 **Date:** 2026-09-24 · **Status:** Active, build deferred
 
-**Decision.** The gear icon already in the top bar of the app is the single entry to settings. Settings open as a page at the `#settings` hash, inside the same frame as Dashboard and Resolve, so the top bar, the tenant switch and the assistant stay in place. There is no separate admin site and no settings inside individual tiles.
+**Decision.** The gear icon in the top bar is the single entry to settings. Settings open as a page at the `#settings` hash, inside the same frame as Dashboard and Resolve, so the top bar and the assistant stay in place. There is no separate admin site and no settings inside individual tiles. Settings are for admins (D-014).
 
 **Sections, in this order.**
-1. **Connection.** Instance URL, credential status, last successful call. The automatic choices from D-008 with their evidence: the SLA definition picked and why; each custom state with the unresolved share that classified it. An override beside each choice. Change notices when a re-resolved value differs from the stored one.
-2. **Tiles.** Every definition, grouped by page, with its current state (available, not available with reason, no data yet) and an on/off switch. Tiles hidden by default under D-008 show as off here and can be turned on when the client starts recording that data.
-3. **Resolve.** The "Writes on" and "Model off" pills shown on the queue page become real switches here, with the audit log of writes beneath them.
-4. **Appearance.** The theme toggle moves in from the top bar; the bar keeps a shortcut.
+1. **Connection.** Instance URL, OAuth client status, last successful call. The automatic choices from D-008 with their evidence: the SLA definition picked and why, and each state with the class it was given (D-011). An override beside each choice. Change notices when a re-resolved value differs from the stored one.
+2. **Tiles.** Every definition, grouped by page, with its current state (available, not available with reason, no data yet) and an on/off switch. Tiles hidden by default under D-008 show as off here.
+3. **Resolve.** The "Model off" pill on the queue page becomes a real switch here: drafts by rules only. The writes dry-run switch is a deployment setting outside production (D-014), not a Settings control.
+4. **Appearance.** Light or dark theme (`docs/design-system.md`). The top bar keeps a shortcut.
 
-**Why.** The mockup already has the gear and a working theme button beside it, so the gear is where a user will look. D-008 removes onboarding screens and needs a home for the override and visibility controls it introduces; a page in the existing frame reuses the layout and the endpoints (validate, connection, profile) rather than adding a surface.
+**Why.** The mockup already has the gear and a working theme button beside it, so the gear is where a user will look. A page in the existing frame reuses the layout and the endpoints (validate, connection, profile) rather than adding a surface.
 
-**Status of the build.** Not built. In the mockup the gear is a dead link. Sections 1 and 2 need one small server addition each: exposing the resolution evidence with the profile, and a per-tenant tile visibility map with a filter in the dashboard render. Sections 3 and 4 are re-homing controls that exist. Deferred until the dashboard tile set settles; building settings for tiles that are still moving would be rework.
+**Status of the build.** Not built; in the mockup the gear is a dead link.
+- Sections 1 and 2 each need one small server addition: the resolution evidence exposed with the profile, and a per-tenant tile visibility map with a filter in the dashboard render.
+- Sections 3 and 4 move controls that already exist.
+
+The build waits until the dashboard tile set settles; building settings for tiles that are still moving would be rework.
 
 **Revisit when.** The tile list stabilises after the Operational and Strategic split is agreed, or a client needs the override path before then.
 
@@ -220,35 +214,180 @@ Each entry: what was decided, why, what follows from it, and what would make us 
 3. **No record id in a definition.** The orphan-CI tile filters by the health metric's name (`metric.name=Orphan`), not by its sys_id; the P1 attainment recipe uses `{{sla_p1_resolution}}` from the scan.
 4. **Charts with no data draw as placeholders,** not as charts of zeros, so an empty read cannot be mistaken for a measurement.
 
-**Still fixed in the page, by design or pending.** Tile thresholds (watch / attention / scale) are product choices tuned on the demo instance and belong in Settings (D-009); the standard ServiceNow choice values (request item states 3 and 4, install status 1 and 6, risk ratings 1 and 2) are shipped values, still to be validated against the instance's choice lists (D-011 open item 8); the demo sign-in account is the product's own, not the instance's.
+**Still fixed in the page, by design or pending.** Tile thresholds (watch / attention / scale) are product choices tuned on the demo instance and belong in Settings (D-009); the standard ServiceNow choice values (request item states 3 and 4, install status 1 and 6, risk ratings 1 and 2) are shipped values, still to be validated against the instance's choice lists (D-011, "Still assumed"); the demo sign-in account is the product's own, not the instance's.
 
 **Why.** Seen 2026-10-04: with the server restarted and not yet scanned, the dashboard showed the September snapshot's figures as if current, and a chart's subtitle quoted a figure from another instance. The product is the scan plus the rules (D-011); a stored figure anywhere in the page is a second source of truth that drifts. Removing it also removes the "replay" mode: the page is served by its server or it reads nothing.
 
 ---
 
+## D-014 · Release 1: dashboards, assistant and Resolve with writes, used by whoever the client's instance signs in
 
+**Date:** 2026-10-08 · **Status:** Active
 
-## Pending decisions
+**Decision.** The first release contains the three dashboards (SDM QBR, Application 360, Backlog Beacon), the NowOps Assistant, and the Resolve fulfiller page **with writes**.
 
-Open questions that shape the architecture. Each names what it affects. Answered items become numbered entries above.
+**Users.** The client's staff, and UST staff (SDMs, agents) who hold an account on the client's ServiceNow instance. Everyone signs in on the client's own subdomain through that instance (OAuth authorization code), and therefore through the client's SSO. There is no separate UST login and no view across clients in release 1. Workflow-automation agents and a self-service catalog stay out of scope.
 
-| # | Question | Affects |
+**Every read and write runs as the signed-in user,** with that user's ServiceNow token. ServiceNow's ACLs decide what each person sees and may change. No shared service credential reads or writes for users.
+
+**Writes in release 1** are the Resolve actions the mockup has today (`mockup/server.ts`, `/api/resolve/write`). Each is a fixed, whitelisted request body:
+
+| Action | Applies to | What is written |
 |---|---|---|
-| P-1 | One deployment for all clients, or one per client | Tenancy layer, secrets isolation, operations |
-| P-2 | Hosting confirmation (AWS assumed) and identity provider for SSO; do client users log in, or UST staff only | Deployment, federation |
-| P-3 | May clients override standard definitions; are overrides visible to UST portfolio views | D-004, support burden |
-| P-4 | Expected client and user counts in year one | Cache and scheduling design |
-| P-5 | Whether automation accounts (AURA Agent) appear in people-oriented tiles | Backlog and assignment tiles |
-| P-6 | Observability sources (Dynatrace, Datadog) — uptime and latency exist in no ticketing platform | Scope of a later release |
-| P-7 | Write access for agents: credential model and confirm-before-commit controls | Agents release (D-002) |
-| P-8 | Server-side cache for model output (suggested steps, brief, drafts), keyed by tenant, ticket and the ticket's `sys_updated_on`, with a time backstop of about 24 h for changes outside the ticket (new articles, new look-alikes). Regenerates only when the record changed; shared across agents. Mockup uses an in-memory map; the product needs a small persistent table in the per-tenant store or a cache service, since instances restart and scale out. Not a copy of ServiceNow data, so it does not reopen D-003. Open: where it lives, TTL, and a per-tenant daily budget with fallback to rules. | Agents release (D-002), D-003, cost and latency of the LLM gateway |
-| P-9 | Chatbot prompt once the model is live: hand the model the NowOps definition catalogue (id, name, meaning, about 60 rows) and have it pick a definition when the question means one, writing a raw query only for what no definition covers. Replaces the word-matching layer built while the gateway was unreachable (normalisation, plural folding, score threshold), which stays only as the zero-cost fast path. Keeps every structural guard: identity context for me/my/this ticket, table whitelist from the instance scan, shown query with a verify link, decline rather than guess. Then run the eval harness (`tools/eval.ts`) against a fixed question set so quality is measured, not found one screenshot at a time. Open: catalogue size in the prompt versus a two-step pick, and how ratios are presented to the model. | D-004, chatbot accuracy, cost per question |
+| Claim | Incident | `assigned_to` = the user, a work note; state New moves to In Progress |
+| Reassign | Incident, request item | `assignment_group` and/or `assigned_to` (looked up by name, active only), a hand-over work note |
+| Hold | Incident | State On Hold with a hold reason (Awaiting Caller, Change, Problem or Vendor), a work note |
+| Resolve / close | Incident: resolved, with close code and close notes. Request item: closed complete or closed incomplete, with close notes | State, close code, close notes, work note |
+| Work note | Incident, request item | `work_notes` |
+| Comment | Incident, request item | `comments` (visible to the caller or requester) |
+| Approve / reject | An approval in Requested state on the request item | `sysapproval_approver` state and a comment |
+| Knowledge article draft | Incident | New `kb_knowledge` record in draft state |
+| Problem | Incident | New `problem` record linked to the incident (`first_reported_by_task`) |
+| Record fixes | Incident, request item | Only `cmdb_ci`, `assignment_group`, `assigned_to` (sys_ids) and `category` (short value), with a work note |
+
+The mockup writes fixed state numbers for these actions. Before release they come from the scanned state classes instead, as D-011 requires.
+
+**Every write needs confirm-before-commit.** The page shows the record, the table and the exact fields and values to be written, and nothing is sent until the user confirms. The dry-run switch (`RESOLVE_WRITES`) stays for non-production use. The assistant has no write tools (D-015).
+
+**No NowOps audit table.** Writes go out under the user's own token, so ServiceNow's own history (`sys_audit`, the journal, `sys_updated_by`) records the real person. NowOps keeps operational logs only. The mockup's "via NowOps by <name>" work-note suffix existed because ServiceNow only saw the service credential; it goes.
+
+**Roles.** A user holding the ServiceNow `admin` or `nowops_admin` role on the client instance is a NowOps admin (D-016); everyone else is a member.
+
+**Build order within the release.**
+1. Tenancy and sign-in.
+2. The definitions table.
+3. The QBR dashboard.
+4. Application 360's plugin-dependent tiles, when a client with those products asks (D-005).
+
+**Why.** The owner set the release-1 scope and users on 2026-10-08. Running as the user removes the shared-credential problems found in the mockup:
+- identity supplied by the browser;
+- every user seeing whatever the service account could see;
+- writes attributed to the service account.
+
+**Consequences.** The OAuth application on the client instance needs a scope that allows these reads and writes. Which scope that is, is still to be verified.
+
+**Revisit when.** UST needs one view across clients (that needs a UST identity path), or a client will not issue per-user OAuth access.
 
 ---
 
-## Sources
+## D-015 · The assistant answers with read-only tools
 
-- NowOps Chatbot V2 design spec, rev 10 — `docs/superpowers/specs/2026-09-13-nowops-chatbot-design.md`
-- NowOps KPI inventory — `docs/2026-09-13-nowops-kpi-inventory.md`
-- NowOps KPI data pull — `docs/2026-09-14-nowops-kpi-data-pull.md`
-- NowOps Standalone solution architecture, draft 0.1 — `docs/2026-09-16-nowops-standalone-solution-architecture.md` (sections 3–4 predate D-001 and D-003 and describe the multi-platform design; treat this log as authoritative where they differ)
+**Date:** 2026-10-08 · **Status:** Active (in the code since 2026-10-02)
+
+**Decision.** The assistant runs a tool loop (`src/llm/agent.ts`, `src/tools/`). For one question the model may make up to six tool calls at temperature 0, then writes an answer. Every number in the answer must cite a tool result that contains it. One retry names any ungrounded numbers; after that the answer is refused.
+
+The tools are:
+- `run_definition`, `count`, `aggregate`, `list_records`;
+- `resolve_reference`, `describe_table`, `list_choices`, `validate_query`;
+- `search_knowledge`, `get_article`;
+- `get_ticket`, `my_queue`;
+- `ask_user`.
+
+All of them read; none writes. The definitions catalogue is in the prompt, and the model runs a definition when one matches exactly (D-004).
+
+**Why.** The earlier single-call design could answer only what the server had a form for: compound questions, lists, breakdowns, and named groups or locations fell through.
+
+**Invariants.**
+- The model supplies tool arguments, never a request.
+- Server code checks every call before it runs: the table allowlist plus scanned tables, denied tables and fields, field existence, query shape, sys_ids only from this question's lookups, and at most 25 rows per list.
+- Every number is shown with the query behind it and a verify link.
+- Malformed output is declined, not repaired.
+- Quality is measured with `tools/eval.ts` against fixed question sets.
+
+**Consequences.**
+- A question can cost up to seven model calls: six tool steps and one grounding retry.
+- Ticket content reaches the model: list rows, and for `get_ticket` a ticket's description, close notes and its latest eight journal entries (see D-017).
+
+**Revisit when.** The measured cost or latency per question is too high, or the evaluation shows the loop picking the wrong tool.
+
+---
+
+## D-016 · Onboarding by invite: UST registers the client, the client's ServiceNow admin connects it
+
+**Date:** 2026-10-08 · **Status:** Active
+
+**Decision.**
+1. UST creates the tenant: its subdomain and the client's instance host.
+2. UST adds that host to the egress allowlist before anything else, so a client cannot point NowOps at a different host without UST.
+3. UST issues a single-use invite link valid for 7 days.
+4. The client's ServiceNow admin creates an OAuth application on the instance with the NowOps callback URL.
+5. The admin opens the invite and enters the instance URL, which must match the recorded host, and the OAuth client id and secret.
+6. The admin signs in through the instance and must hold the ServiceNow `admin` or `nowops_admin` role to activate the tenant.
+7. From then on, definitions resolve themselves as D-008 and D-011 describe, and other users sign in directly to the dashboard.
+
+**Why.**
+- Per-user sign-in (D-014) needs an OAuth application on each instance.
+- Default-deny egress needs the host allowlisted before the first call.
+
+The human steps are the minimum those two require: the client creates the OAuth application, and UST registers the host.
+
+**Consequences.**
+- Onboarding is not zero-touch: each client needs a UST step (tenant and allowlist) and a client step (OAuth application, invite).
+- Nobody confirms definitions (D-008).
+
+**Open.**
+- How the UST person creates the tenant, and how they sign in to do it.
+- Who the instance scan runs as. Architecture §7 flow 2 proposes an admin's token, because a member's ACLs may hide metadata.
+
+**Revisit when.** Clients ask to onboard without a UST step, or the allowlist changes become the bottleneck.
+
+---
+
+## D-017 · Stored chat messages and Resolve drafts may quote ticket text
+
+**Date:** 2026-10-08 · **Status:** Active (exception to D-001)
+
+**Decision.** NowOps copies no ticket records: no sync, no ticket tables, no stored record lists. Two things it does store can contain ticket text:
+- **chat messages:** the user's question and the assistant's answer, which may quote a ticket's description, notes or close notes;
+- **Resolve drafts** in the model-output cache (P-8).
+
+Both are tenant-scoped and kept for a limited, stated time.
+
+What NowOps stores, in full: tenants and their connections, users, definitions, the tenant profile, chats, drafts, LLM usage, sessions, and operational logs. There is no audit table (D-014).
+
+**Why.** The assistant reads ticket content to answer (D-015), and chat history is kept so follow-up questions work. A draft is built from the ticket it is about. Neither can be stored without the text it quotes.
+
+**Consequences.**
+- Retention for chats and drafts must be set and enforced.
+- The data-handling rules (personal data, client agreements) apply to these two stores.
+
+**Open.** Retention periods for chats and drafts.
+
+---
+
+## D-018 · One shared deployment on AWS ap-south-1
+
+**Date:** 2026-10-08 · **Status:** Active (one deployment answered 2026-10-05; hosting 2026-10-08)
+
+**Decision.** One NowOps deployment serves every client, on AWS in ap-south-1. Every tenant-scoped row carries the tenant id. Each client has its own subdomain, and the tenant is taken from the host name. Client staff reach it over the public internet behind AWS WAF.
+
+**Why.** The owner chose a shared deployment over one per client, and AWS ap-south-1 as the hosting region. Users are client staff outside the UST network (D-014), so the app cannot sit behind Zscaler ZPA alone.
+
+**Consequences.**
+- A public surface is a deviation from the NowStudio internal-app protocol NowOps otherwise follows, and needs UST security sign-off.
+- Tenant isolation is enforced in the application and the schema, not by separate deployments.
+
+**Revisit when.** A client requires physical isolation, or UST security does not accept the public surface.
+
+---
+
+## Pending decisions
+
+Open questions that shape the architecture. Each names what it affects. Answered items become entries above and leave this table.
+
+| # | Question | Affects |
+|---|---|---|
+| P-3 | May clients override standard definitions? | D-004, support burden |
+| P-4 | Expected client and user counts in year one | Cache, database and capacity design |
+| P-5 | Whether automation accounts (such as AURA Agent) appear in people-oriented tiles | Backlog and assignment tiles |
+| P-6 | Observability sources (Dynatrace, Datadog): uptime and latency exist in no ticketing platform | Scope of a later release |
+| P-8 | Server-side cache for model output (suggested steps, brief, drafts), keyed by tenant, ticket and the ticket's `sys_updated_on`, regenerated only when the record changed. Open: the time backstop, and how the per-tenant daily budget falls back to rules. `docs/database.md` proposes a Postgres table | Resolve, D-003, D-017, LLM cost and latency |
+| P-10 | LLM provider and token cap. A client may bring its own LLM in release 1 (answered 2026-10-08); then NowOps sets no token cap. With UST's gateway, a per-tenant daily token budget applies, with fallback to rules. Open: the interface a client endpoint must offer; its security and data terms (masking, region, retention); whether a per-user cap is needed on top of the per-tenant budget | Architecture §7 flow 7, §12; `docs/security.md` §8 |
+
+---
+
+## Related documents
+
+- `docs/architecture.md`: how the system is built, with open questions and facts to verify.
+- `docs/database.md`, `docs/security.md`, `docs/design-system.md`.
+- The September research (KPI inventory, KPI data pull, chatbot design spec, solution architecture draft 0.1) is in git history.
